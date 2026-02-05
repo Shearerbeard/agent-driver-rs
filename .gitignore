@@ -1,0 +1,16 @@
+/target
+
+# Environment file with secrets
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Claude Code local settings
+.claude/

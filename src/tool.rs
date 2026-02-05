@@ -1,0 +1,27 @@
+//! Tool system for LLM function calling
+//!
+//! This module provides:
+//! - Tool definitions with JSON Schema input specifications
+//! - A registry for dynamic tool management
+//! - Tool execution traits
+//! - Serialization for different provider formats (Claude, OpenAI)
+
+mod definition;
+mod executor;
+mod registry;
+mod serializer;
+mod types;
+
+// Re-export main types
+pub use definition::{ToolAnnotations, ToolDefinition};
+pub use executor::{DynTool, FnTool, Tool, ToolInput, ToolResult};
+pub use registry::ToolRegistry;
+pub use serializer::ToolFormat;
+pub use types::{ToolSchema, ToolSource};
+
+// MCP support is optional
+#[cfg(feature = "mcp")]
+pub mod mcp;
+
+#[cfg(feature = "mcp")]
+pub use mcp::McpToolProvider;

@@ -1,0 +1,192 @@
+//! Retry logic with exponential backoff for rate limiting
+
+use std::time::Duration;
+
+use backoff::{backoff::Backoff, ExponentialBackoff};
+
+use crate::error::ProviderError;
+
+/// Configuration for retry behavior
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts
+    pub max_retries: u32,
+    /// Initial backoff interval
+    pub initial_interval: Duration,
+    /// Maximum backoff interval
+    pub max_interval: Duration,
+    /// Backoff multiplier
+    pub multiplier: f64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_interval: Duration::from_millis(500),
+            max_interval: Duration::from_secs(30),
+            multiplier: 2.0,
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Create a new retry config
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the maximum number of retries
+    pub fn max_retries(mut self, n: u32) -> Self {
+        self.max_retries = n;
+        self
+    }
+
+    /// Set the initial backoff interval
+    pub fn initial_interval(mut self, d: Duration) -> Self {
+        self.initial_interval = d;
+        self
+    }
+
+    /// Set the maximum backoff interval
+    pub fn max_interval(mut self, d: Duration) -> Self {
+        self.max_interval = d;
+        self
+    }
+
+    /// Set the backoff multiplier
+    pub fn multiplier(mut self, m: f64) -> Self {
+        self.multiplier = m;
+        self
+    }
+
+    /// Convert to an ExponentialBackoff instance
+    pub fn into_backoff(&self) -> ExponentialBackoff {
+        ExponentialBackoff {
+            initial_interval: self.initial_interval,
+            max_interval: self.max_interval,
+            multiplier: self.multiplier,
+            max_elapsed_time: None, // We control via max_retries
+            ..Default::default()
+        }
+    }
+}
+
+/// Execute an async operation with retry logic
+///
+/// Only retries on rate limit errors. Other errors are returned immediately.
+pub async fn with_retry<F, Fut, T>(config: &RetryConfig, mut f: F) -> Result<T, ProviderError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, ProviderError>>,
+{
+    let mut backoff = config.into_backoff();
+    let mut attempts = 0;
+
+    loop {
+        match f().await {
+            Ok(result) => return Ok(result),
+            Err(ProviderError::RateLimited { retry_after }) => {
+                attempts += 1;
+                if attempts >= config.max_retries {
+                    return Err(ProviderError::RateLimited { retry_after });
+                }
+
+                // Use retry_after if provided, otherwise use backoff
+                let delay = retry_after
+                    .or_else(|| backoff.next_backoff())
+                    .unwrap_or(config.max_interval);
+
+                tracing::debug!(
+                    attempts = attempts,
+                    delay_ms = delay.as_millis(),
+                    "Rate limited, retrying after delay"
+                );
+
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => return Err(e), // Don't retry other errors
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn success_on_first_try() {
+        let config = RetryConfig::default();
+        let result = with_retry(&config, || async { Ok::<_, ProviderError>(42) }).await;
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn success_after_retry() {
+        let config = RetryConfig::new()
+            .max_retries(3)
+            .initial_interval(Duration::from_millis(10));
+
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+
+        let result = with_retry(&config, || {
+            let attempts = attempts_clone.clone();
+            async move {
+                let n = attempts.fetch_add(1, Ordering::SeqCst);
+                if n < 2 {
+                    Err(ProviderError::RateLimited { retry_after: None })
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn fail_after_max_retries() {
+        let config = RetryConfig::new()
+            .max_retries(2)
+            .initial_interval(Duration::from_millis(10));
+
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+
+        let result = with_retry(&config, || {
+            let attempts = attempts_clone.clone();
+            async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Err::<i32, _>(ProviderError::RateLimited { retry_after: None })
+            }
+        })
+        .await;
+
+        assert!(matches!(result, Err(ProviderError::RateLimited { .. })));
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn no_retry_on_other_errors() {
+        let config = RetryConfig::default();
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+
+        let result = with_retry(&config, || {
+            let attempts = attempts_clone.clone();
+            async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Err::<i32, _>(ProviderError::Auth("Invalid API key".into()))
+            }
+        })
+        .await;
+
+        assert!(matches!(result, Err(ProviderError::Auth(_))));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+}

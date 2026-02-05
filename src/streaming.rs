@@ -173,6 +173,33 @@ impl CollectedResponse {
         }
     }
 
+    /// Flush any pending (unfinalized) content blocks.
+    ///
+    /// This should be called when the stream ends (e.g., on `Completed`) to ensure
+    /// any accumulated content that wasn't explicitly closed with `ContentBlockStop`
+    /// is captured. Some providers (e.g., OpenRouter) don't emit `ContentBlockStop`.
+    pub fn flush_pending(&mut self) {
+        if !self.pending_text.is_empty() {
+            self.content.push(ContentBlock::Text {
+                text: std::mem::take(&mut self.pending_text),
+            });
+        }
+        if !self.pending_thinking.is_empty() {
+            self.content.push(ContentBlock::Thinking {
+                text: std::mem::take(&mut self.pending_thinking),
+            });
+        }
+        if let Some(pending) = self.pending_tool_use.take() {
+            let input =
+                serde_json::from_str(&pending.input_json).unwrap_or(JsonValue::Null);
+            self.content.push(ContentBlock::ToolUse {
+                id: pending.id,
+                name: pending.name,
+                input,
+            });
+        }
+    }
+
     /// Get text content as a single string (convenience method)
     pub fn text(&self) -> String {
         self.content
@@ -317,6 +344,7 @@ impl StreamHandle {
                                 // Ignored - we use finalize_block on ContentBlockStop instead
                             }
                             StreamEvent::Completed { metadata } => {
+                                response.flush_pending();
                                 response.metadata = metadata;
                                 return Ok(response);
                             }
@@ -326,7 +354,10 @@ impl StreamHandle {
                             }
                         },
                         Some(Err(e)) => return Err(e),
-                        None => return Ok(response), // Stream ended
+                        None => {
+                            response.flush_pending();
+                            return Ok(response); // Stream ended
+                        }
                     }
                 }
             }

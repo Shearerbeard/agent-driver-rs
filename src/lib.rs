@@ -29,11 +29,12 @@ pub mod tool;
 pub mod task;
 pub mod provider;
 pub mod session;
+pub mod agent;
 
 // Re-exports for convenience
 pub use error::{
-    AgentDriverError, ConfigError, McpToolError, ModelIdError, ProviderError, SessionError,
-    StreamError, TaskPoolError, TemperatureError, ToolError, ToolNameError,
+    AgentDriverError, AgentLoopError, ConfigError, McpToolError, ModelIdError, ProviderError,
+    SessionError, StreamError, TaskPoolError, TemperatureError, ToolError, ToolNameError,
 };
 
 pub use types::{

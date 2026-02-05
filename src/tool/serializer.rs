@@ -50,15 +50,19 @@ impl ToolFormat {
                 })
             }
             Self::OpenAi { strict } => {
-                // OpenAI: { type: "function", function: { name, description, parameters, strict } }
+                // OpenAI: { type: "function", function: { name, description, parameters } }
+                let mut function = serde_json::json!({
+                    "name": tool.name.as_str(),
+                    "description": &tool.description,
+                    "parameters": tool.input_schema.to_value()
+                });
+                // Only include strict when true (OpenAI-specific extension)
+                if *strict {
+                    function["strict"] = serde_json::json!(true);
+                }
                 serde_json::json!({
                     "type": "function",
-                    "function": {
-                        "name": tool.name.as_str(),
-                        "description": &tool.description,
-                        "parameters": tool.input_schema.to_value(),
-                        "strict": strict
-                    }
+                    "function": function
                 })
             }
         }

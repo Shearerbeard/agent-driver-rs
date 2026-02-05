@@ -36,10 +36,16 @@ src/
 │   ├── bedrock.rs         # AWS SDK converse_stream
 │   └── (openai.rs, etc.)  # Other providers
 ├── streaming.rs           # StreamEvent, StreamDelta, StreamHandle
+├── agent/                 # Agentic tool loop
+│   ├── mod.rs             # Re-exports
+│   ├── config.rs          # AgentLoopConfig, MaxToolDepth
+│   ├── observer.rs        # AgentObserver trait, AgentEvent, LoopStopReason
+│   └── driver.rs          # AgentLoop struct, AgentOutcome, run()
 ├── tool/                  # Tool system
 │   ├── types.rs           # ToolSchema, ToolDefinition
 │   ├── executor.rs        # Tool trait
-│   └── registry.rs        # Dynamic tool registration
+│   ├── registry.rs        # Dynamic tool registration
+│   └── mcp.rs             # MCP integration (McpConnection, McpManager) [mcp feature]
 ├── task/                  # Task tracking with cancellation
 │   ├── pool.rs            # TaskPool (registration-before-execution)
 │   └── handle.rs          # TaskHandle wrapper
@@ -92,6 +98,20 @@ tokio::select! {
 
 ### 6. No Free Spawning
 All tasks go through `TaskPool` with registration-before-execution guarantee.
+
+### 7. Agent Loop = Typed Infrastructure
+The agent loop (`src/agent/`) is lower-level infrastructure, not a prompting strategy:
+```rust
+// The loop drives: send → detect tool_use → execute → continue
+let outcome = AgentLoop::new(&session)
+    .with_observer(MyObserver)
+    .run("Use tools to answer this")
+    .await?;
+```
+- **Observer-driven streaming**: Loop owns the stream, forwards `TextDelta`/`ThinkingDelta` to observer
+- **Tool depth counting**: Counts tool execution rounds, not model responses. Safety limit via `MaxToolDepth`
+- **Re-reads registry each turn**: `continue_streaming()` snapshots tools, so tools added/removed between turns are picked up
+- ReAct and other strategies compose *on top* of this loop
 
 ## Feature Flags
 
@@ -180,6 +200,15 @@ PROVIDER=bedrock cargo run --bin chat
 # Test specific provider
 cargo test --features openai openai_
 ```
+
+## Architecture Decision Records
+
+Design decisions are documented in `docs/adr/`. Read these before making architectural changes.
+
+- **ADR-0001:** Tool System & MCP Integration — how tools flow through prompts, MCP negotiation
+- See `docs/adr/README.md` for the full index and ADR format
+
+When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on *context and consequences*, not implementation details.
 
 ## Gotchas
 

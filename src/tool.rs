@@ -24,4 +24,4 @@ pub use types::{ToolSchema, ToolSource};
 pub mod mcp;
 
 #[cfg(feature = "mcp")]
-pub use mcp::McpToolProvider;
+pub use mcp::{McpConnection, McpManager};

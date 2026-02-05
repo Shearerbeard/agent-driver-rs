@@ -3,6 +3,7 @@
 //! OpenRouter provides access to multiple LLM providers through a unified API.
 //! Uses OpenAI-compatible format with SSE streaming.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -88,6 +89,7 @@ impl OpenRouterProvider {
         // Add tools (OpenAI function format)
         if !request.tools.is_empty() {
             body["tools"] = ToolFormat::openai().serialize_tools(&request.tools);
+            body["tool_choice"] = serde_json::json!("auto");
         }
 
         // Add provider preferences if configured
@@ -254,6 +256,7 @@ impl Provider for OpenRouterProvider {
             let body = self.build_request_body(&request);
             let headers = self.build_headers();
 
+
             let request_builder = self
                 .client
                 .post(OPENROUTER_API_URL)
@@ -310,67 +313,88 @@ impl Provider for OpenRouterProvider {
     }
 }
 
+/// State for the stream unfold, including a buffer for multi-event SSE messages
+struct UnfoldState {
+    event_source: EventSource,
+    cancellation: tokio_util::sync::CancellationToken,
+    stream_state: StreamState,
+    pending: VecDeque<Result<StreamEvent, StreamError>>,
+}
+
 /// Create a stream from OpenRouter SSE events
 fn create_openrouter_stream(
     event_source: EventSource,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> impl futures::Stream<Item = Result<StreamEvent, StreamError>> {
-    futures::stream::unfold(
-        (event_source, cancellation, StreamState::default()),
-        |(mut es, cancel, mut state)| async move {
-            loop {
-                if cancel.is_cancelled() {
+    let unfold_state = UnfoldState {
+        event_source,
+        cancellation,
+        stream_state: StreamState::default(),
+        pending: VecDeque::new(),
+    };
+
+    futures::stream::unfold(unfold_state, |mut s| async move {
+        // Drain buffered events first
+        if let Some(event) = s.pending.pop_front() {
+            return Some((event, s));
+        }
+
+        loop {
+            if s.cancellation.is_cancelled() {
+                return None;
+            }
+
+            tokio::select! {
+                biased;
+
+                _ = s.cancellation.cancelled() => {
                     return None;
                 }
 
-                tokio::select! {
-                    biased;
+                event = s.event_source.next() => {
+                    match event {
+                        Some(Ok(Event::Open)) => continue,
+                        Some(Ok(Event::Message(msg))) => {
+                            // OpenAI-style [DONE] marker
+                            if msg.data == "[DONE]" {
+                                let event = StreamEvent::Completed {
+                                    metadata: CompletionMetadata {
+                                        model: s.stream_state.model.clone(),
+                                        stop_reason: s.stream_state.stop_reason,
+                                        usage: s.stream_state.usage,
+                                    },
+                                };
+                                return Some((Ok(event), s));
+                            }
 
-                    _ = cancel.cancelled() => {
-                        return None;
-                    }
-
-                    event = es.next() => {
-                        match event {
-                            Some(Ok(Event::Open)) => continue,
-                            Some(Ok(Event::Message(msg))) => {
-                                // OpenAI-style [DONE] marker
-                                if msg.data == "[DONE]" {
-                                    // Send completion event
-                                    let event = StreamEvent::Completed {
-                                        metadata: CompletionMetadata {
-                                            model: state.model.clone(),
-                                            stop_reason: state.stop_reason,
-                                            usage: state.usage,
-                                        },
-                                    };
-                                    return Some((Ok(event), (es, cancel, state)));
-                                }
-
-                                match parse_openrouter_event(&msg.data, &mut state) {
-                                    Some(Ok(events)) => {
-                                        if let Some(first) = events.into_iter().next() {
-                                            return Some((Ok(first), (es, cancel, state)));
+                            match parse_openrouter_event(&msg.data, &mut s.stream_state) {
+                                Some(Ok(events)) => {
+                                    let mut iter = events.into_iter();
+                                    if let Some(first) = iter.next() {
+                                        // Buffer remaining events
+                                        for remaining in iter {
+                                            s.pending.push_back(Ok(remaining));
                                         }
-                                        continue;
+                                        return Some((Ok(first), s));
                                     }
-                                    Some(Err(e)) => {
-                                        return Some((Err(e), (es, cancel, state)));
-                                    }
-                                    None => continue,
+                                    continue;
                                 }
+                                Some(Err(e)) => {
+                                    return Some((Err(e), s));
+                                }
+                                None => continue,
                             }
-                            Some(Err(e)) => {
-                                let err = StreamError::ConnectionLost(e.to_string());
-                                return Some((Err(err), (es, cancel, state)));
-                            }
-                            None => return None,
                         }
+                        Some(Err(e)) => {
+                            let err = StreamError::ConnectionLost(e.to_string());
+                            return Some((Err(err), s));
+                        }
+                        None => return None,
                     }
                 }
             }
-        },
-    )
+        }
+    })
 }
 
 /// State for tracking stream parsing

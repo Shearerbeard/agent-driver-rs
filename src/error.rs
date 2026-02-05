@@ -18,6 +18,8 @@ pub enum AgentDriverError {
     Task(#[from] TaskPoolError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error(transparent)]
+    AgentLoop(#[from] AgentLoopError),
 }
 
 /// Configuration-related errors
@@ -89,6 +91,12 @@ pub enum McpToolError {
     ConnectionFailed(String),
     #[error("Server error: {0}")]
     ServerError(String),
+    #[error("Tool discovery failed: {0}")]
+    ToolDiscoveryFailed(String),
+    #[error("Disconnected from MCP server")]
+    Disconnected,
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
 }
 
 /// Task pool errors
@@ -109,6 +117,21 @@ pub enum SessionError {
     Tool(#[from] ToolError),
     #[error(transparent)]
     Stream(#[from] StreamError),
+    #[error("MCP error: {0}")]
+    Mcp(#[from] McpToolError),
+}
+
+/// Agent loop errors
+#[derive(Debug, Error)]
+pub enum AgentLoopError {
+    #[error(transparent)]
+    Session(#[from] SessionError),
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
+    #[error("Agent loop cancelled")]
+    Cancelled,
+    #[error("Max tool depth reached ({0} iterations)")]
+    MaxToolDepthReached(u32),
 }
 
 // Validation errors for newtypes

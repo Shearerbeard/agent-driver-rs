@@ -298,9 +298,17 @@ impl Provider for BedrockProvider {
             let stream = response.stream;
             let cancellation = ctx.cancellation.clone();
 
+            // Buffer for events: parse_bedrock_event can return multiple events per
+            // Bedrock stream event (e.g. ContentBlockStart + ToolUseStart), so we
+            // drain the buffer before fetching the next raw event.
             let event_stream = futures::stream::unfold(
-                (stream, cancellation.clone(), StreamState::default()),
-                |(mut stream, cancel, mut state)| async move {
+                (stream, cancellation.clone(), StreamState::default(), std::collections::VecDeque::new()),
+                |(mut stream, cancel, mut state, mut pending)| async move {
+                    // Drain pending events first
+                    if let Some(event) = pending.pop_front() {
+                        return Some((event, (stream, cancel, state, pending)));
+                    }
+
                     if cancel.is_cancelled() {
                         return None;
                     }
@@ -315,17 +323,19 @@ impl Provider for BedrockProvider {
                         event = stream.recv() => {
                             match event {
                                 Ok(Some(event)) => {
-                                    let events = parse_bedrock_event(event, &mut state);
-                                    if let Some(first) = events.into_iter().next() {
-                                        Some((first, (stream, cancel, state)))
-                                    } else {
+                                    let mut events = parse_bedrock_event(event, &mut state);
+                                    if events.is_empty() {
                                         // Return a placeholder event to keep the stream going
-                                        Some((Ok(StreamEvent::Started { metadata: CompletionMetadata::default() }), (stream, cancel, state)))
+                                        Some((Ok(StreamEvent::Started { metadata: CompletionMetadata::default() }), (stream, cancel, state, pending)))
+                                    } else {
+                                        let first = events.remove(0);
+                                        pending.extend(events);
+                                        Some((first, (stream, cancel, state, pending)))
                                     }
                                 }
                                 Ok(None) => None,
                                 Err(e) => {
-                                    Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state)))
+                                    Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state, pending)))
                                 }
                             }
                         }
@@ -378,6 +388,8 @@ struct StreamState {
     current_tool_use_id: Option<String>,
     #[allow(dead_code)]
     current_tool_name: Option<String>,
+    /// Stored from MessageStop, emitted with Metadata for a single Completed event
+    stop_reason: Option<StopReason>,
 }
 
 /// Parse a Bedrock streaming event
@@ -458,7 +470,9 @@ fn parse_bedrock_event(
             })]
         }
         ConverseStreamOutput::MessageStop(stop) => {
-            let stop_reason = match stop.stop_reason() {
+            // Store stop_reason in state; emit Completed only from Metadata
+            // to avoid duplicate Completed events.
+            state.stop_reason = match stop.stop_reason() {
                 aws_sdk_bedrockruntime::types::StopReason::EndTurn => Some(StopReason::EndTurn),
                 aws_sdk_bedrockruntime::types::StopReason::MaxTokens => Some(StopReason::MaxTokens),
                 aws_sdk_bedrockruntime::types::StopReason::ToolUse => Some(StopReason::ToolUse),
@@ -467,14 +481,7 @@ fn parse_bedrock_event(
                 }
                 _ => Some(StopReason::EndTurn),
             };
-
-            vec![Ok(StreamEvent::Completed {
-                metadata: CompletionMetadata {
-                    model: None,
-                    stop_reason,
-                    usage: None,
-                },
-            })]
+            vec![]
         }
         ConverseStreamOutput::Metadata(meta) => {
             let usage = meta.usage().map(|u| TokenUsage {
@@ -485,7 +492,7 @@ fn parse_bedrock_event(
             vec![Ok(StreamEvent::Completed {
                 metadata: CompletionMetadata {
                     model: None,
-                    stop_reason: None,
+                    stop_reason: state.stop_reason.take(),
                     usage,
                 },
             })]

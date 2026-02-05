@@ -80,6 +80,11 @@ impl Session {
         *self.system_prompt.write().await = prompt;
     }
 
+    /// Get a reference to the tool registry
+    pub fn tool_registry(&self) -> &Arc<ToolRegistry> {
+        &self.tools
+    }
+
     // Tool management (delegated to ToolRegistry)
 
     /// Register a tool
@@ -142,6 +147,34 @@ impl Session {
         let user_msg = Message::user(msg);
         self.add_message(user_msg).await;
 
+        // Snapshot state (release locks before provider call)
+        let system = self.system_prompt.read().await.clone();
+        let messages = self.messages.read().await.clone();
+        let tools = self.tools.list().await;
+
+        let request = CompletionRequest {
+            model: self.config.model.clone(),
+            system: Some(system),
+            messages,
+            tools,
+            config: self.config.completion_config.clone(),
+        };
+
+        let ctx = ProviderContext::new(
+            self.session_id,
+            self.cancellation.child_token(),
+            self.task_tracker.clone(),
+        );
+
+        Ok(self.provider.complete_stream(request, ctx).await?)
+    }
+
+    /// Continue a streaming conversation without adding a new user message
+    ///
+    /// Use this after processing tool calls: the assistant's tool_use message and
+    /// the tool result messages are already in history, so we just need to send
+    /// the current history back to the provider for the next turn.
+    pub async fn continue_streaming(&self) -> Result<StreamHandle, SessionError> {
         // Snapshot state (release locks before provider call)
         let system = self.system_prompt.read().await.clone();
         let messages = self.messages.read().await.clone();

@@ -2,16 +2,9 @@
 
 ## Next Up
 
-- [ ] **OpenRouter Provider** - SSE streaming via reqwest-eventsource
-  - API: `https://openrouter.ai/api/v1/chat/completions`
-  - Auth: `Authorization: Bearer $OPENROUTER_API_KEY`
-  - Format: OpenAI-compatible with SSE streaming
-  - Config exists: `src/config/openrouter.rs`
-  - Stub exists: `src/provider/openrouter.rs`
+- [ ] **MCP Tool Integration** - Connect rmcp for MCP server tools
 
 ## High Priority
-
-- [ ] **MCP Tool Integration** - Connect rmcp for MCP server tools
 
 ## Medium Priority
 
@@ -50,6 +43,7 @@
 - [x] Bedrock provider (AWS SDK converse_stream)
 - [x] **OpenAI provider** (async-openai with streaming)
 - [x] **Ollama provider** (ollama-rs with streaming, num_ctx support)
+- [x] **OpenRouter provider** (reqwest-eventsource SSE, OpenAI-compatible format)
 - [x] Session with split locks
 - [x] CLI chat client
 - [x] Bedrock inference profile support
@@ -63,7 +57,7 @@
 | Bedrock | ✅ Working | Requires inference profile for new models |
 | OpenAI | ✅ Working | async-openai with streaming |
 | Ollama | ✅ Working | ollama-rs with streaming, num_ctx support |
-| OpenRouter | 🚧 In Progress | SSE similar to Anthropic |
+| OpenRouter | ✅ Working | reqwest-eventsource SSE, OpenAI-compatible |
 
 ### Testing Commands
 ```bash

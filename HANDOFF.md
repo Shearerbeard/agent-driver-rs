@@ -7,6 +7,7 @@
 - **Anthropic Provider**: Fully functional with SSE streaming
 - **OpenAI Provider**: Fully functional with async-openai streaming (GPT-4o, GPT-4o-mini)
 - **Ollama Provider**: Fully functional with ollama-rs streaming (local models)
+- **OpenRouter Provider**: Fully functional with SSE streaming (any OpenRouter model)
 - **Core Infrastructure**: Types, config, streaming, tools, session, task pool
 - **CLI Chat**: Interactive chat with streaming output
 
@@ -31,23 +32,30 @@ cargo test --features bedrock
 echo "What is 2+2?" | cargo run --features bedrock --bin chat
 ```
 
-## Next Task: OpenRouter Provider
+## Next Task: MCP Tool Integration
 
-### Files to Create/Modify
-1. `src/provider/openrouter.rs` - Implement Provider trait with SSE
-2. `src/config/openrouter.rs` - Already exists
-3. `Cargo.toml` - Already has reqwest-eventsource
+### Overview
+Connect the rmcp crate for Model Context Protocol server tools.
+The `mcp` feature flag is already defined in Cargo.toml.
+
+### Files to Modify
+1. `src/tool/mcp.rs` - Implement MCP tool discovery and execution
+2. `src/session.rs` - Add MCP tool registration to session
 
 ### Implementation Notes
+- Use rmcp crate for MCP client functionality
+- Tool discovery from MCP servers
+- Execution via MCP protocol
 
-OpenRouter uses SSE streaming similar to Anthropic. Key considerations:
+## Recently Completed: OpenRouter Provider
 
-1. **API Endpoint**: `https://openrouter.ai/api/v1/chat/completions`
-2. **Auth Header**: `Authorization: Bearer $OPENROUTER_API_KEY`
-3. **Headers**: `HTTP-Referer` and `X-Title` recommended
-4. **Streaming**: SSE format, similar to OpenAI
+The OpenRouter provider is fully functional with:
+- SSE streaming via reqwest-eventsource
+- OpenAI-compatible request format
+- Tool/function calling support
+- Provider preferences routing
 
-### Testing
+### Testing OpenRouter
 ```bash
 PROVIDER=openrouter OPENROUTER_API_KEY=sk-or-... cargo run --features openrouter --bin chat
 ```
@@ -105,6 +113,14 @@ When continuing work:
 5. Continue with next task
 
 ## Recent Changes
+
+### 2026-02-04 (Session 4)
+- Implemented OpenRouter provider with reqwest-eventsource SSE
+- OpenAI-compatible request/response format
+- Tool calling support
+- Provider preferences routing support
+- Set up GitHub repo (Shearerbeard/agent-driver-rs)
+- Established feature branch workflow
 
 ### 2026-02-04 (Session 3)
 - Implemented Ollama provider with ollama-rs

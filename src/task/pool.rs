@@ -31,6 +31,20 @@ struct RegisteredTask {
 /// - Graceful shutdown that waits for all tasks
 ///
 /// Registration happens BEFORE task execution to prevent race conditions.
+///
+/// # Example
+///
+/// ```no_run
+/// use agent_driver_rs::task::TaskPool;
+/// use agent_driver_rs::CorrelationId;
+///
+/// # async fn example() {
+/// let pool = TaskPool::new();
+/// let handle = pool.spawn(CorrelationId::generate(), "my_task", async { 42 }).unwrap();
+/// let result = handle.await.unwrap();
+/// pool.shutdown().await;
+/// # }
+/// ```
 pub struct TaskPool {
     // parking_lot::RwLock is fine here - lock held only for HashMap ops, never across await
     tasks: RwLock<HashMap<CorrelationId, RegisteredTask>>,
@@ -54,6 +68,17 @@ impl TaskPool {
     ///
     /// Registration happens BEFORE task starts executing to prevent race conditions.
     /// Uses a oneshot channel to gate task start until after registration.
+    ///
+    /// # TOCTOU safety
+    ///
+    /// There is an inherent race between the `accepting` check and the task
+    /// insertion: `shutdown()` can flip `accepting` to `false` between our
+    /// load and our insert.  To close this gap, we re-check `accepting` after
+    /// insertion. If shutdown has started in the meantime, we eagerly cancel
+    /// the task's token (so the future observes cancellation immediately) and
+    /// remove it from the map. The task is still tracked by `TaskTracker` and
+    /// will be awaited during `shutdown()`, but it will see cancellation and
+    /// exit promptly.
     pub fn spawn<F, T>(
         self: &Arc<Self>,
         correlation_id: CorrelationId,
@@ -95,6 +120,14 @@ impl TaskPool {
                 name,
             },
         );
+
+        // TOCTOU guard: if shutdown() raced between our initial check and now,
+        // the task snuck in. Cancel it eagerly and remove from the map so
+        // shutdown proceeds cleanly.
+        if !self.accepting.load(Ordering::Acquire) {
+            task_token.cancel();
+            self.tasks.write().remove(&correlation_id);
+        }
 
         // Release the gate - task can now execute
         let _ = start_tx.send(());

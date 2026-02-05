@@ -1,4 +1,12 @@
-//! Message types: Role, Message, ContentBlock
+//! Message types for LLM conversations.
+//!
+//! This module defines the core message primitives used throughout the library:
+//! - [`Role`] -- participant role in a conversation (user, assistant, tool, system)
+//! - [`Message`] -- a single message with role and content blocks
+//! - [`ContentBlock`] -- typed content within a message (text, thinking, tool use, tool result)
+//! - [`ToolName`] -- validated tool name with format constraints
+//! - [`ToolCallId`] -- opaque provider-assigned identifier for tool calls
+//! - [`SystemPrompt`] -- cheap-to-clone system prompt wrapper using `Arc<str>`
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -26,6 +34,7 @@ pub struct ToolName(String);
 
 impl ToolName {
     /// Create a new ToolName with validation
+    #[must_use = "this returns a Result that should be checked"]
     pub fn new(name: impl Into<String>) -> Result<Self, ToolNameError> {
         let name = name.into();
         if name.is_empty() {
@@ -42,6 +51,7 @@ impl ToolName {
     }
 
     /// Get the tool name as a string slice
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -72,11 +82,13 @@ impl ToolCallId {
     /// Create a new ToolCallId
     ///
     /// No validation - this is assigned by providers.
+    #[must_use]
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
     /// Get the ID as a string slice
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -111,8 +123,15 @@ impl SystemPrompt {
     }
 
     /// Check if the prompt is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+impl std::fmt::Display for SystemPrompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -152,7 +171,7 @@ impl<'de> Deserialize<'de> for SystemPrompt {
 #[serde(untagged)]
 pub enum ToolResultContent {
     Text(String),
-    // TODO: Image support
+    // Future: Image support (see TODO.md)
     // Image { data: String, media_type: String },
 }
 
@@ -191,7 +210,7 @@ pub enum ContentBlock {
         content: ToolResultContent,
         is_error: bool,
     },
-    // TODO: Image support
+    // Future: Image support (see TODO.md)
     // Image { source: ImageSource },
 }
 
@@ -207,6 +226,7 @@ impl ContentBlock {
     }
 
     /// Check if this is a text block and get the text
+    #[must_use]
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text { text } => Some(text),
@@ -215,6 +235,7 @@ impl ContentBlock {
     }
 
     /// Check if this is a tool use block
+    #[must_use]
     pub fn as_tool_use(&self) -> Option<(&ToolCallId, &ToolName, &JsonValue)> {
         match self {
             Self::ToolUse { id, name, input } => Some((id, name, input)),
@@ -270,6 +291,7 @@ impl Message {
     }
 
     /// Get all text content concatenated
+    #[must_use]
     pub fn text(&self) -> String {
         self.content
             .iter()
@@ -279,6 +301,7 @@ impl Message {
     }
 
     /// Get all tool use blocks
+    #[must_use]
     pub fn tool_uses(&self) -> Vec<(&ToolCallId, &ToolName, &JsonValue)> {
         self.content
             .iter()

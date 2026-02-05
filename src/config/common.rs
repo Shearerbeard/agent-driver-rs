@@ -34,11 +34,15 @@ impl std::fmt::Debug for ApiKey {
 pub struct AwsRegion(Cow<'static, str>);
 
 impl AwsRegion {
-    // Static constants using Cow::Borrowed
+    /// US East (N. Virginia).
     pub const US_EAST_1: Self = Self(Cow::Borrowed("us-east-1"));
+    /// US West (Oregon).
     pub const US_WEST_2: Self = Self(Cow::Borrowed("us-west-2"));
+    /// EU West (Ireland).
     pub const EU_WEST_1: Self = Self(Cow::Borrowed("eu-west-1"));
+    /// EU Central (Frankfurt).
     pub const EU_CENTRAL_1: Self = Self(Cow::Borrowed("eu-central-1"));
+    /// Asia Pacific (Tokyo).
     pub const AP_NORTHEAST_1: Self = Self(Cow::Borrowed("ap-northeast-1"));
 
     /// Create a new region from a runtime string
@@ -49,6 +53,12 @@ impl AwsRegion {
     /// Get the region as a string slice
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::fmt::Display for AwsRegion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

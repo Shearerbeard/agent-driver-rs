@@ -1,5 +1,7 @@
 //! Agent loop driver — the core orchestrator
 
+use std::collections::HashMap;
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
@@ -26,20 +28,39 @@ pub struct AgentOutcome {
     pub iterations: u32,
 }
 
-/// Agent loop that drives multi-turn tool-calling conversations
+/// Agent loop that drives multi-turn tool-calling conversations.
 ///
-/// Borrows a `&Session` and orchestrates the send → tool_use → execute → continue cycle.
+/// Borrows a `&Session` and orchestrates the send -> tool_use -> execute -> continue cycle.
 /// Streaming events are forwarded to an optional observer in real-time.
+///
+/// The loop counts *tool execution rounds*, not model responses. A single round may
+/// contain multiple tool calls executed in sequence. The loop stops when:
+/// - The model responds without any `tool_use` blocks (normal end-of-turn)
+/// - [`MaxToolDepth`](super::MaxToolDepth) is reached
+/// - The cancellation token fires
 ///
 /// # Example
 ///
 /// ```no_run
-/// # use agent_driver_rs::agent::AgentLoop;
+/// # use agent_driver_rs::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
 /// # use agent_driver_rs::Session;
 /// # async fn example(session: &Session) -> Result<(), agent_driver_rs::AgentLoopError> {
+/// // Basic usage
 /// let outcome = AgentLoop::new(session)
 ///     .run("What time is it?")
 ///     .await?;
+/// println!("Response: {}", outcome.final_response.text());
+///
+/// // With configuration and cancellation
+/// let config = AgentLoopConfig {
+///     max_tool_depth: MaxToolDepth::new(10)?,
+///     continue_on_tool_error: true,
+/// };
+/// let outcome = AgentLoop::new(session)
+///     .with_config(config)
+///     .run("Search for recent news")
+///     .await?;
+/// println!("Completed in {} tool rounds", outcome.iterations);
 /// # Ok(())
 /// # }
 /// ```
@@ -52,6 +73,7 @@ pub struct AgentLoop<'s> {
 
 impl<'s> AgentLoop<'s> {
     /// Create a new agent loop bound to a session
+    #[must_use]
     pub fn new(session: &'s Session) -> Self {
         Self {
             session,
@@ -62,18 +84,21 @@ impl<'s> AgentLoop<'s> {
     }
 
     /// Set the agent loop configuration
+    #[must_use]
     pub fn with_config(mut self, config: AgentLoopConfig) -> Self {
         self.config = config;
         self
     }
 
     /// Set the observer for real-time events
+    #[must_use]
     pub fn with_observer(mut self, observer: impl AgentObserver + 'static) -> Self {
         self.observer = Box::new(observer);
         self
     }
 
     /// Set a cancellation token for the loop
+    #[must_use]
     pub fn with_cancellation(mut self, token: CancellationToken) -> Self {
         self.cancellation = Some(token);
         self
@@ -214,7 +239,11 @@ impl<'s> AgentLoop<'s> {
     }
 }
 
-/// Collect a stream handle into a response while forwarding events to the observer
+/// Collect a stream handle into a response while forwarding events to the observer.
+///
+/// Block types are tracked per index via a HashMap so that interleaved
+/// ContentBlockStart/ContentBlockStop pairs (across different indices)
+/// are finalized with the correct type.
 async fn collect_with_observer(
     handle: crate::streaming::StreamHandle,
     cancellation: &CancellationToken,
@@ -224,7 +253,7 @@ async fn collect_with_observer(
     futures::pin_mut!(stream);
 
     let mut response = CollectedResponse::new();
-    let mut current_block_type: Option<ContentBlockType> = None;
+    let mut block_types: HashMap<usize, ContentBlockType> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -257,14 +286,14 @@ async fn collect_with_observer(
 
                         // Apply to response accumulator
                         match event {
-                            StreamEvent::ContentBlockStart { block_type, .. } => {
-                                current_block_type = Some(block_type);
+                            StreamEvent::ContentBlockStart { index, block_type } => {
+                                block_types.insert(index, block_type);
                             }
                             StreamEvent::Delta(delta) => {
                                 response.apply_delta(delta);
                             }
-                            StreamEvent::ContentBlockStop { .. } => {
-                                if let Some(block_type) = current_block_type.take() {
+                            StreamEvent::ContentBlockStop { index } => {
+                                if let Some(block_type) = block_types.remove(&index) {
                                     response.finalize_block(block_type);
                                 }
                             }
@@ -395,6 +424,7 @@ fn stop_reason_from_metadata(metadata: &CompletionMetadata) -> LoopStopReason {
         Some(StopReason::EndTurn) | Some(StopReason::ToolUse) => LoopStopReason::EndTurn,
         Some(StopReason::MaxTokens) => LoopStopReason::MaxTokens,
         Some(StopReason::StopSequence) => LoopStopReason::StopSequence,
+        Some(StopReason::ContentFilter) => LoopStopReason::EndTurn,
         None => LoopStopReason::EndTurn,
     }
 }

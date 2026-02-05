@@ -3,7 +3,7 @@
 //! OpenRouter provides access to multiple LLM providers through a unified API.
 //! Uses OpenAI-compatible format with SSE streaming.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -69,6 +69,8 @@ impl OpenRouterProvider {
 
         // Add temperature
         if let Some(temp) = request.config.temperature {
+            // Fallback to 1.0 if f32->f64 produces NaN/Inf (shouldn't happen for
+            // validated Temperature values in [0.0, 2.0], but from_f64 returns None for those).
             body["temperature"] = JsonValue::Number(
                 serde_json::Number::from_f64(temp.get() as f64).unwrap_or_else(|| 1.into()),
             );
@@ -144,7 +146,17 @@ impl OpenRouterProvider {
 
         // Handle tool messages specially
         if msg.role == crate::types::Role::Tool {
-            // Tool results in OpenAI format
+            // Tool results in OpenAI format — each tool result must be its own message.
+            // The agent loop creates one ToolResult per message, so we take the first.
+            let tool_result_count = msg.content.iter()
+                .filter(|b| matches!(b, ContentBlock::ToolResult { .. }))
+                .count();
+            if tool_result_count > 1 {
+                tracing::warn!(
+                    count = tool_result_count,
+                    "Tool message contains multiple ToolResult blocks; only the first will be serialized for OpenAI format"
+                );
+            }
             for block in &msg.content {
                 if let ContentBlock::ToolResult {
                     tool_use_id,
@@ -281,30 +293,30 @@ impl Provider for OpenRouterProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // OpenRouter has a models endpoint, but for now return common ones
+            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + slashes/hyphens/dots)
             Ok(vec![
                 ModelInfo {
-                    id: ModelId::new("anthropic/claude-sonnet-4").unwrap(),
+                    id: ModelId::new("anthropic/claude-sonnet-4").expect("hardcoded valid model ID"),
                     name: "Claude Sonnet 4".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("anthropic/claude-opus-4").unwrap(),
+                    id: ModelId::new("anthropic/claude-opus-4").expect("hardcoded valid model ID"),
                     name: "Claude Opus 4".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("openai/gpt-4o").unwrap(),
+                    id: ModelId::new("openai/gpt-4o").expect("hardcoded valid model ID"),
                     name: "GPT-4o".to_string(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("google/gemini-2.0-flash").unwrap(),
+                    id: ModelId::new("google/gemini-2.0-flash").expect("hardcoded valid model ID"),
                     name: "Gemini 2.0 Flash".to_string(),
                     context_window: Some(1_000_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("meta-llama/llama-3.3-70b").unwrap(),
+                    id: ModelId::new("meta-llama/llama-3.3-70b").expect("hardcoded valid model ID"),
                     name: "Llama 3.3 70B".to_string(),
                     context_window: Some(128_000),
                 },
@@ -313,7 +325,17 @@ impl Provider for OpenRouterProvider {
     }
 }
 
-/// State for the stream unfold, including a buffer for multi-event SSE messages
+/// State for the stream unfold, including a buffer for multi-event SSE messages.
+///
+/// # Buffer bound safety
+///
+/// The `pending` VecDeque is bounded in practice because `parse_openrouter_event`
+/// returns at most 2 + (N_tool_calls * 3) events per SSE message, where
+/// N_tool_calls is the number of tool calls in a single chunk (typically 1).
+/// In the worst observed case (first chunk with one tool call):
+///   Started + ContentBlockStart + ContentBlockStart + ToolUseStart + ToolInputDelta = 5
+/// The buffer is fully drained before fetching the next SSE message, so it
+/// never accumulates across messages.
 struct UnfoldState {
     event_source: EventSource,
     cancellation: tokio_util::sync::CancellationToken,
@@ -400,11 +422,13 @@ fn create_openrouter_stream(
 /// State for tracking stream parsing
 #[derive(Default)]
 struct StreamState {
-    model: Option<String>,
+    model: Option<ModelId>,
     stop_reason: Option<StopReason>,
     usage: Option<TokenUsage>,
-    current_tool_call_id: Option<String>,
-    current_tool_name: Option<String>,
+    /// Track tool call IDs per index for parallel tool calls
+    tool_call_ids: HashMap<usize, String>,
+    /// Track tool names per index for parallel tool calls
+    tool_call_names: HashMap<usize, String>,
     started: bool,
 }
 
@@ -413,15 +437,19 @@ fn parse_openrouter_event(
     data: &str,
     state: &mut StreamState,
 ) -> Option<Result<Vec<StreamEvent>, StreamError>> {
-    let parsed: OpenRouterStreamChunk = serde_json::from_str(data)
-        .map_err(|e| StreamError::Deserialize(e.to_string()))
-        .ok()?;
+    let parsed: OpenRouterStreamChunk = match serde_json::from_str(data) {
+        Ok(chunk) => chunk,
+        Err(e) => {
+            tracing::warn!(data = %data, error = %e, "Failed to parse OpenRouter SSE chunk");
+            return None;
+        }
+    };
 
     let mut events = Vec::new();
 
     // Track model
     if state.model.is_none() {
-        state.model = Some(parsed.model.clone());
+        state.model = ModelId::new(&parsed.model).ok();
     }
 
     // Send started event on first chunk
@@ -429,7 +457,7 @@ fn parse_openrouter_event(
         state.started = true;
         events.push(StreamEvent::Started {
             metadata: CompletionMetadata {
-                model: Some(parsed.model.clone()),
+                model: ModelId::new(&parsed.model).ok(),
                 stop_reason: None,
                 usage: None,
             },
@@ -447,7 +475,8 @@ fn parse_openrouter_event(
                 "stop" => StopReason::EndTurn,
                 "length" => StopReason::MaxTokens,
                 "tool_calls" => StopReason::ToolUse,
-                "content_filter" => StopReason::EndTurn,
+                "content_filter" => StopReason::ContentFilter,
+                "function_call" => StopReason::ToolUse,
                 _ => StopReason::EndTurn,
             });
         }
@@ -466,26 +495,29 @@ fn parse_openrouter_event(
             // Tool calls
             if let Some(ref tool_calls) = delta.tool_calls {
                 for tc in tool_calls {
-                    // Tool call start
+                    let tc_index = tc.index.unwrap_or(0);
+
+                    // Tool call start: store ID per index
                     if let Some(ref id) = tc.id {
-                        state.current_tool_call_id = Some(id.clone());
+                        state.tool_call_ids.insert(tc_index, id.clone());
                     }
 
                     if let Some(ref function) = tc.function {
                         // Function name (tool start)
                         if let Some(ref name) = function.name {
-                            state.current_tool_name = Some(name.clone());
+                            state.tool_call_names.insert(tc_index, name.clone());
 
                             events.push(StreamEvent::ContentBlockStart {
-                                index: tc.index.unwrap_or(0),
+                                index: tc_index,
                                 block_type: ContentBlockType::ToolUse,
                             });
 
-                            if let Some(ref id) = state.current_tool_call_id {
+                            if let Some(id) = state.tool_call_ids.get(&tc_index) {
                                 events.push(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                     id: ToolCallId::new(id),
+                                    // Safety: "unknown" is a valid tool name (alphanumeric)
                                     name: ToolName::new(name)
-                                        .unwrap_or_else(|_| ToolName::new("unknown").unwrap()),
+                                        .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
                                 }));
                             }
                         }
@@ -493,7 +525,7 @@ fn parse_openrouter_event(
                         // Function arguments (tool input delta)
                         if let Some(ref args) = function.arguments {
                             if !args.is_empty() {
-                                if let Some(ref id) = state.current_tool_call_id {
+                                if let Some(id) = state.tool_call_ids.get(&tc_index) {
                                     events.push(StreamEvent::Delta(StreamDelta::ToolInputDelta {
                                         id: ToolCallId::new(id),
                                         partial_json: args.clone(),

@@ -63,7 +63,36 @@ impl rmcp::ClientHandler for McpClientHandler {
     }
 }
 
-/// A live connection to one MCP server
+/// A live connection to one MCP server.
+///
+/// Connects to an MCP-compatible tool server via stdio transport, discovers
+/// its tools, and bridges them into the library's [`ToolRegistry`] so the
+/// agent loop can call them automatically.
+///
+/// # Example
+///
+/// ```no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use agent_driver_rs::tool::{McpConnection, ToolRegistry};
+///
+/// let registry = ToolRegistry::new();
+///
+/// // Connect to an MCP server and sync its tools into the registry
+/// let conn = McpConnection::connect_stdio(
+///     "time-server",
+///     "npx",
+///     &["-y", "@anthropic/mcp-server-time"],
+/// ).await?;
+///
+/// let tool_count = conn.sync_tools(&registry).await?;
+/// println!("Loaded {} tools from MCP server", tool_count);
+///
+/// // Keep `conn` alive for the duration of tool usage; dropping it
+/// // terminates the child process.
+/// conn.disconnect().await;
+/// # Ok(())
+/// # }
+/// ```
 pub struct McpConnection {
     name: String,
     service: rmcp::service::RunningService<rmcp::RoleClient, McpClientHandler>,
@@ -241,7 +270,34 @@ fn extract_text_content(content: &[rmcp::model::Content]) -> String {
         .join("\n")
 }
 
-/// Manager for multiple MCP server connections
+/// Manager for multiple MCP server connections.
+///
+/// A convenience wrapper that owns several [`McpConnection`]s and provides
+/// batch operations (connect, sync tools, disconnect). Useful when your
+/// application talks to more than one MCP server.
+///
+/// # Example
+///
+/// ```no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use agent_driver_rs::tool::{McpManager, ToolRegistry};
+///
+/// let registry = ToolRegistry::new();
+/// let mut manager = McpManager::new();
+///
+/// // Connect to multiple servers
+/// manager.connect_stdio("time", "npx", &["-y", "@anthropic/mcp-server-time"]).await?;
+/// manager.connect_stdio("fs", "npx", &["-y", "@anthropic/mcp-server-fs"]).await?;
+///
+/// // Sync all tools from all servers in one call
+/// let total = manager.sync_all_tools(&registry).await?;
+/// println!("{} tools from {} servers", total, manager.server_count());
+///
+/// // Clean up
+/// manager.disconnect_all().await;
+/// # Ok(())
+/// # }
+/// ```
 pub struct McpManager {
     connections: Vec<McpConnection>,
 }

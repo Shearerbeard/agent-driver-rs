@@ -29,10 +29,11 @@ pub struct BedrockConfig {
 }
 
 /// Bedrock model specification
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum BedrockModel {
     ClaudeSonnet4,
+    #[default]
     ClaudeSonnet4_5,
     ClaudeOpus4,
     ClaudeOpus4_5,
@@ -71,12 +72,6 @@ impl BedrockModel {
     }
 }
 
-impl Default for BedrockModel {
-    fn default() -> Self {
-        Self::ClaudeSonnet4_5
-    }
-}
-
 impl BedrockConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, ConfigError> {
@@ -100,7 +95,8 @@ impl BedrockConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .and_then(MaxTokens::new)
-            .unwrap_or_else(|| MaxTokens::new(4096).unwrap());
+            // Safe: 4096 is a hardcoded non-zero constant
+            .unwrap_or_else(|| MaxTokens::new(4096).expect("4096 is non-zero"));
 
         let temperature = std::env::var("BEDROCK_TEMPERATURE")
             .ok()

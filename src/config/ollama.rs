@@ -56,6 +56,12 @@ impl NumCtx {
     }
 }
 
+impl std::fmt::Display for NumCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl<'de> Deserialize<'de> for NumCtx {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

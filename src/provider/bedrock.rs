@@ -1,4 +1,12 @@
-//! AWS Bedrock provider implementation
+//! AWS Bedrock provider implementation using the `converse_stream` API.
+//!
+//! Bedrock uses the AWS SDK's `ConverseStream` operation, which has its own event
+//! format distinct from Anthropic's direct API. This module handles:
+//! - AWS credential loading and region configuration
+//! - Converting between library message types and Bedrock's `ContentBlock`/`Message` types
+//! - Converting `serde_json::Value` to `aws_smithy_types::Document`
+//! - Parsing `ConverseStreamOutput` events into the library's `StreamEvent` enum
+//! - Inference profile support for cross-region routing
 
 use std::future::Future;
 use std::pin::Pin;
@@ -203,7 +211,9 @@ fn json_to_document(value: &serde_json::Value) -> Document {
         serde_json::Value::Null => Document::Null,
         serde_json::Value::Bool(b) => Document::Bool(*b),
         serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
+            if let Some(u) = n.as_u64() {
+                Document::Number(aws_smithy_types::Number::PosInt(u))
+            } else if let Some(i) = n.as_i64() {
                 Document::Number(aws_smithy_types::Number::NegInt(i))
             } else if let Some(f) = n.as_f64() {
                 Document::Number(aws_smithy_types::Number::Float(f))
@@ -234,17 +244,15 @@ impl Provider for BedrockProvider {
         ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<StreamHandle, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Build the model ID - use inference profile if provided
+            // ── Resolve model ID ────────────────────────────────────────
             let model_id = self
                 .config
                 .inference_profile
                 .clone()
                 .unwrap_or_else(|| self.config.model.model_id().to_string());
 
-            // Convert messages
+            // ── Build the Bedrock converse_stream request ────────────────
             let messages = self.convert_messages(&request.messages)?;
-
-            // Build the request
             let mut req = self
                 .client
                 .converse_stream()
@@ -252,7 +260,7 @@ impl Provider for BedrockProvider {
                 .set_messages(Some(messages))
                 .inference_config(
                     aws_sdk_bedrockruntime::types::InferenceConfiguration::builder()
-                        .max_tokens(request.config.max_tokens.get() as i32)
+                        .max_tokens(i32::try_from(request.config.max_tokens.get()).unwrap_or(i32::MAX))
                         .set_temperature(request.config.temperature.map(|t| t.get()))
                         .set_stop_sequences(if request.config.stop_sequences.is_empty() {
                             None
@@ -274,7 +282,7 @@ impl Provider for BedrockProvider {
                 req = req.tool_config(tool_config);
             }
 
-            // Send the request
+            // ── Send request and classify errors ────────────────────────
             let response = req.send().await.map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("AccessDenied") || msg.contains("UnauthorizedException") {
@@ -294,13 +302,20 @@ impl Provider for BedrockProvider {
                 }
             })?;
 
-            // Create stream from response
+            // ── Wrap the SDK stream as a cancellation-aware StreamHandle ─
             let stream = response.stream;
             let cancellation = ctx.cancellation.clone();
 
             // Buffer for events: parse_bedrock_event can return multiple events per
             // Bedrock stream event (e.g. ContentBlockStart + ToolUseStart), so we
             // drain the buffer before fetching the next raw event.
+            //
+            // Buffer bound safety: parse_bedrock_event returns at most 2
+            // events per Bedrock stream event (the worst case is
+            // ContentBlockStart for a tool_use, which emits
+            // ContentBlockStart + ToolUseStart). All other event types produce
+            // 0 or 1 events. The buffer is fully drained before fetching the
+            // next raw event, so it never accumulates across events.
             let event_stream = futures::stream::unfold(
                 (stream, cancellation.clone(), StreamState::default(), std::collections::VecDeque::new()),
                 |(mut stream, cancel, mut state, mut pending)| async move {
@@ -309,33 +324,34 @@ impl Provider for BedrockProvider {
                         return Some((event, (stream, cancel, state, pending)));
                     }
 
-                    if cancel.is_cancelled() {
-                        return None;
-                    }
-
-                    tokio::select! {
-                        biased;
-
-                        _ = cancel.cancelled() => {
-                            None
+                    loop {
+                        if cancel.is_cancelled() {
+                            return None;
                         }
 
-                        event = stream.recv() => {
-                            match event {
-                                Ok(Some(event)) => {
-                                    let mut events = parse_bedrock_event(event, &mut state);
-                                    if events.is_empty() {
-                                        // Return a placeholder event to keep the stream going
-                                        Some((Ok(StreamEvent::Started { metadata: CompletionMetadata::default() }), (stream, cancel, state, pending)))
-                                    } else {
+                        tokio::select! {
+                            biased;
+
+                            _ = cancel.cancelled() => {
+                                return None;
+                            }
+
+                            event = stream.recv() => {
+                                match event {
+                                    Ok(Some(event)) => {
+                                        let mut events = parse_bedrock_event(event, &mut state);
+                                        if events.is_empty() {
+                                            // No events to emit (e.g. MessageStop); keep polling
+                                            continue;
+                                        }
                                         let first = events.remove(0);
                                         pending.extend(events);
-                                        Some((first, (stream, cancel, state, pending)))
+                                        return Some((first, (stream, cancel, state, pending)));
                                     }
-                                }
-                                Ok(None) => None,
-                                Err(e) => {
-                                    Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state, pending)))
+                                    Ok(None) => return None,
+                                    Err(e) => {
+                                        return Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state, pending)));
+                                    }
                                 }
                             }
                         }
@@ -356,24 +372,25 @@ impl Provider for BedrockProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
+            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + dots/hyphens/colons)
             Ok(vec![
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-opus-4-5-20251101-v1:0").unwrap(),
+                    id: ModelId::new("anthropic.claude-opus-4-5-20251101-v1:0").expect("hardcoded valid model ID"),
                     name: "Claude Opus 4.5 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-sonnet-4-5-20250929-v1:0").unwrap(),
+                    id: ModelId::new("anthropic.claude-sonnet-4-5-20250929-v1:0").expect("hardcoded valid model ID"),
                     name: "Claude Sonnet 4.5 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-haiku-4-5-20251001-v1:0").unwrap(),
+                    id: ModelId::new("anthropic.claude-haiku-4-5-20251001-v1:0").expect("hardcoded valid model ID"),
                     name: "Claude Haiku 4.5 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-sonnet-4-20250514-v1:0").unwrap(),
+                    id: ModelId::new("anthropic.claude-sonnet-4-20250514-v1:0").expect("hardcoded valid model ID"),
                     name: "Claude Sonnet 4 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
@@ -410,7 +427,7 @@ fn parse_bedrock_event(
             })]
         }
         ConverseStreamOutput::ContentBlockStart(block) => {
-            let index = block.content_block_index() as usize;
+            let index = usize::try_from(block.content_block_index()).unwrap_or(0);
 
             if let Some(start) = block.start() {
                 match start {
@@ -425,8 +442,9 @@ fn parse_bedrock_event(
                             }),
                             Ok(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                 id: ToolCallId::new(tool.tool_use_id()),
+                                // Safety: "unknown" is a valid tool name (alphanumeric)
                                 name: ToolName::new(tool.name())
-                                    .unwrap_or_else(|_| ToolName::new("unknown").unwrap()),
+                                    .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
                             })),
                         ]
                     }
@@ -466,7 +484,7 @@ fn parse_bedrock_event(
         }
         ConverseStreamOutput::ContentBlockStop(stop) => {
             vec![Ok(StreamEvent::ContentBlockStop {
-                index: stop.content_block_index() as usize,
+                index: usize::try_from(stop.content_block_index()).unwrap_or(0),
             })]
         }
         ConverseStreamOutput::MessageStop(stop) => {
@@ -485,8 +503,8 @@ fn parse_bedrock_event(
         }
         ConverseStreamOutput::Metadata(meta) => {
             let usage = meta.usage().map(|u| TokenUsage {
-                input_tokens: u.input_tokens() as u32,
-                output_tokens: u.output_tokens() as u32,
+                input_tokens: u32::try_from(u.input_tokens()).unwrap_or(0),
+                output_tokens: u32::try_from(u.output_tokens()).unwrap_or(0),
             });
 
             vec![Ok(StreamEvent::Completed {

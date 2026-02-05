@@ -1,4 +1,9 @@
-//! OpenAI provider implementation
+//! OpenAI provider implementation using the `async-openai` crate.
+//!
+//! Supports GPT-4o, GPT-5.x, and o-series reasoning models. Handles:
+//! - Streaming chat completions with tool/function calling
+//! - Reasoning effort configuration for models that support it
+//! - Non-streaming fallback for o3/o3-mini models
 
 use std::future::Future;
 use std::pin::Pin;
@@ -228,13 +233,13 @@ impl OpenAiProvider {
                         ProviderError::InvalidRequest(format!("Failed to build function: {}", e))
                     })?;
 
-                Ok(ChatCompletionToolArgs::default()
+                ChatCompletionToolArgs::default()
                     .r#type(ChatCompletionToolType::Function)
                     .function(function)
                     .build()
                     .map_err(|e| {
                         ProviderError::InvalidRequest(format!("Failed to build tool: {}", e))
-                    })?)
+                    })
             })
             .collect()
     }
@@ -289,7 +294,7 @@ impl Provider for OpenAiProvider {
             req_builder
                 .model(model)
                 .messages(messages)
-                .max_completion_tokens(request.config.max_tokens.get() as u32)
+                .max_completion_tokens(request.config.max_tokens.get())
                 .stream(true);
 
             // Add temperature if supported
@@ -328,12 +333,28 @@ impl Provider for OpenAiProvider {
                 }
             })?;
 
-            // Create cancellation-aware event stream
+            // Create cancellation-aware event stream with pending buffer
+            // to avoid dropping events when parse_openai_chunk returns multiple
+            // events per chunk (e.g. Started + ContentBlockStart, or
+            // ContentBlockStart + ToolUseStart).
+            //
+            // Buffer bound safety: parse_openai_chunk returns at most
+            // 2 + (N_tool_calls * 3) events per chunk, where N_tool_calls
+            // is the number of tool calls in a single SSE chunk (typically 1).
+            // In the worst observed case (first chunk with one tool call):
+            //   Started + ContentBlockStart + ContentBlockStart + ToolUseStart + ToolInputDelta = 5
+            // The buffer is fully drained before fetching the next chunk, so
+            // it never accumulates across chunks.
             let cancellation = ctx.cancellation.clone();
 
             let event_stream = futures::stream::unfold(
-                (stream, cancellation.clone(), StreamState::default()),
-                |(mut stream, cancel, mut state)| async move {
+                (stream, cancellation.clone(), StreamState::default(), std::collections::VecDeque::<Result<StreamEvent, StreamError>>::new()),
+                |(mut stream, cancel, mut state, mut pending)| async move {
+                    // Drain buffered events first
+                    if let Some(event) = pending.pop_front() {
+                        return Some((event, (stream, cancel, state, pending)));
+                    }
+
                     if cancel.is_cancelled() {
                         return None;
                     }
@@ -348,18 +369,20 @@ impl Provider for OpenAiProvider {
                         response_opt = stream.next() => {
                             match response_opt {
                                 Some(Ok(response)) => {
-                                    let events = parse_openai_chunk(response, &mut state);
-                                    if let Some(first) = events.into_iter().next() {
-                                        Some((first, (stream, cancel, state)))
-                                    } else {
+                                    let mut events = parse_openai_chunk(response, &mut state);
+                                    if events.is_empty() {
                                         // Keep stream going with a no-op
                                         Some((Ok(StreamEvent::Started {
                                             metadata: CompletionMetadata::default()
-                                        }), (stream, cancel, state)))
+                                        }), (stream, cancel, state, pending)))
+                                    } else {
+                                        let first = events.remove(0);
+                                        pending.extend(events);
+                                        Some((first, (stream, cancel, state, pending)))
                                     }
                                 }
                                 Some(Err(e)) => {
-                                    Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state)))
+                                    Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state, pending)))
                                 }
                                 None => {
                                     // Stream ended - send completion event
@@ -367,11 +390,11 @@ impl Provider for OpenAiProvider {
                                         state.completed = true;
                                         Some((Ok(StreamEvent::Completed {
                                             metadata: CompletionMetadata {
-                                                model: Some(state.model.clone().unwrap_or_default()),
+                                                model: state.model.clone(),
                                                 stop_reason: state.stop_reason,
                                                 usage: state.usage,
                                             }
-                                        }), (stream, cancel, state)))
+                                        }), (stream, cancel, state, pending)))
                                     } else {
                                         None
                                     }
@@ -395,24 +418,25 @@ impl Provider for OpenAiProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
+            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + hyphens)
             Ok(vec![
                 ModelInfo {
-                    id: ModelId::new("gpt-4o").unwrap(),
+                    id: ModelId::new("gpt-4o").expect("hardcoded valid model ID"),
                     name: "GPT-4o".to_string(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("gpt-4o-mini").unwrap(),
+                    id: ModelId::new("gpt-4o-mini").expect("hardcoded valid model ID"),
                     name: "GPT-4o Mini".to_string(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("o1").unwrap(),
+                    id: ModelId::new("o1").expect("hardcoded valid model ID"),
                     name: "o1".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("o1-mini").unwrap(),
+                    id: ModelId::new("o1-mini").expect("hardcoded valid model ID"),
                     name: "o1 Mini".to_string(),
                     context_window: Some(128_000),
                 },
@@ -424,7 +448,7 @@ impl Provider for OpenAiProvider {
 /// State for tracking stream parsing
 #[derive(Default)]
 struct StreamState {
-    model: Option<String>,
+    model: Option<ModelId>,
     stop_reason: Option<StopReason>,
     usage: Option<TokenUsage>,
     current_tool_call_id: Option<String>,
@@ -442,7 +466,7 @@ fn parse_openai_chunk(
 
     // Track model
     if state.model.is_none() {
-        state.model = Some(response.model.clone());
+        state.model = ModelId::new(&response.model).ok();
     }
 
     // Send started event on first chunk
@@ -450,7 +474,7 @@ fn parse_openai_chunk(
         state.started = true;
         events.push(Ok(StreamEvent::Started {
             metadata: CompletionMetadata {
-                model: Some(response.model.clone()),
+                model: ModelId::new(&response.model).ok(),
                 stop_reason: None,
                 usage: None,
             },
@@ -464,13 +488,16 @@ fn parse_openai_chunk(
     for choice in &response.choices {
         // Check finish reason
         if let Some(ref reason) = choice.finish_reason {
-            state.stop_reason = Some(match reason {
+            #[allow(unreachable_patterns)] // forward-compat: async-openai may add variants
+            let reason = match reason {
                 async_openai::types::FinishReason::Stop => StopReason::EndTurn,
                 async_openai::types::FinishReason::Length => StopReason::MaxTokens,
                 async_openai::types::FinishReason::ToolCalls => StopReason::ToolUse,
-                async_openai::types::FinishReason::ContentFilter => StopReason::EndTurn,
+                async_openai::types::FinishReason::ContentFilter => StopReason::ContentFilter,
+                async_openai::types::FinishReason::FunctionCall => StopReason::ToolUse,
                 _ => StopReason::EndTurn,
-            });
+            };
+            state.stop_reason = Some(reason);
         }
 
         // Process delta
@@ -506,8 +533,9 @@ fn parse_openai_chunk(
                         if let Some(ref id) = state.current_tool_call_id {
                             events.push(Ok(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                 id: ToolCallId::new(id),
+                                // Safety: "unknown" is a valid tool name (alphanumeric)
                                 name: ToolName::new(name)
-                                    .unwrap_or_else(|_| ToolName::new("unknown").unwrap()),
+                                    .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
                             })));
                         }
                     }
@@ -531,8 +559,8 @@ fn parse_openai_chunk(
     // Check for usage in response
     if let Some(ref usage) = response.usage {
         state.usage = Some(TokenUsage {
-            input_tokens: usage.prompt_tokens as u32,
-            output_tokens: usage.completion_tokens as u32,
+            input_tokens: usage.prompt_tokens,
+            output_tokens: usage.completion_tokens,
         });
     }
 

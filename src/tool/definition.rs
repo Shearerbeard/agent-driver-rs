@@ -1,4 +1,8 @@
-//! Tool definition types
+//! Tool definitions and metadata annotations.
+//!
+//! A [`ToolDefinition`] describes a tool's name, purpose, and input schema so that
+//! LLM providers can present it in their function-calling APIs. [`ToolAnnotations`]
+//! provide optional UI hints (destructive, idempotent, requires confirmation).
 
 use super::types::{ToolSchema, ToolSource};
 use crate::types::ToolName;
@@ -32,6 +36,7 @@ impl ToolDefinition {
     }
 
     /// Set the tool source
+    #[must_use]
     pub fn with_source(mut self, source: ToolSource) -> Self {
         self.source = source;
         self
@@ -68,24 +73,28 @@ impl ToolAnnotations {
     }
 
     /// Mark as destructive
+    #[must_use]
     pub fn destructive(mut self) -> Self {
         self.destructive = true;
         self
     }
 
     /// Mark as idempotent
+    #[must_use]
     pub fn idempotent(mut self) -> Self {
         self.idempotent = true;
         self
     }
 
     /// Mark as requiring confirmation
+    #[must_use]
     pub fn requires_confirmation(mut self) -> Self {
         self.requires_confirmation = true;
         self
     }
 
     /// Add a tag
+    #[must_use]
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.push(tag.into());
         self

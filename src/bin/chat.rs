@@ -114,7 +114,12 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max])
+        // Find a char boundary at or before `max` to avoid panicking on multi-byte UTF-8
+        let mut boundary = max;
+        while boundary > 0 && !s.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        format!("{}...", &s[..boundary])
     }
 }
 
@@ -142,7 +147,7 @@ struct McpKeepAlive {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing for debug output
+    // ── Logging ──────────────────────────────────────────────────────
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -152,7 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
 
-    // Load configuration from environment
+    // ── Configuration ─────────────────────────────────────────────────
     let config = ProviderConfig::from_env().map_err(|e| {
         eprintln!("Configuration error: {}", e);
         eprintln!(
@@ -166,7 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Using provider: {}", config.provider_name());
 
-    // Create provider based on config
+    // ── Provider creation ──────────────────────────────────────────────
     let (provider, model_id, completion_config): (Arc<dyn Provider>, ModelId, CompletionConfig) =
         match config {
             ProviderConfig::Anthropic(cfg) => {
@@ -216,9 +221,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ProviderConfig::Ollama(cfg) => {
                 let model_id = ModelId::new(cfg.model.as_str())?;
                 let completion_config = CompletionConfig {
+                    // Safe: 4096 is a hardcoded non-zero constant
                     max_tokens: cfg
                         .max_tokens
-                        .unwrap_or_else(|| agent_driver_rs::MaxTokens::new(4096).unwrap()),
+                        .unwrap_or_else(|| agent_driver_rs::MaxTokens::new(4096).expect("4096 is non-zero")),
                     temperature: cfg.temperature,
                     stop_sequences: vec![],
                 };
@@ -233,7 +239,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Using model: {}", model_id);
 
-    // Build session
+    // ── Session setup ──────────────────────────────────────────────────
     let session = SessionBuilder::new()
         .provider(provider)
         .model(model_id)
@@ -245,7 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .await?;
 
-    // Connect MCP servers if configured
+    // ── MCP server connections (optional) ─────────────────────────────
     #[cfg(feature = "mcp")]
     let _mcp_keepalive = {
         let mut keepalive = McpKeepAlive {
@@ -343,7 +349,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Show registered tools
+    // ── Show registered tools ─────────────────────────────────────────
     let tools = session.list_tools().await;
     if !tools.is_empty() {
         println!("Registered tools: {}", tools.len());
@@ -354,13 +360,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Type your messages below. Press Ctrl+C to exit.\n");
 
-    // Agent loop config
+    // ── Agent loop config ─────────────────────────────────────────────
     let agent_config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(args.max_tool_depth)?,
         continue_on_tool_error: true,
     };
 
-    // Main chat loop
+    // ── Main chat REPL ────────────────────────────────────────────────
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -410,7 +416,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Run the agent loop
-        print!("\n");
+        println!();
         match AgentLoop::new(&session)
             .with_config(agent_config.clone())
             .with_observer(ChatObserver)

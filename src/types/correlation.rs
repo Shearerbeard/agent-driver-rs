@@ -13,6 +13,7 @@ pub struct CorrelationId(Uuid);
 
 impl CorrelationId {
     /// Generate a new unique correlation ID
+    #[must_use]
     pub fn generate() -> Self {
         Self(Uuid::new_v4())
     }
@@ -43,6 +44,7 @@ pub struct CorrelationContext {
 
 impl CorrelationContext {
     /// Create a new correlation context
+    #[must_use]
     pub fn new() -> Self {
         Self {
             id: CorrelationId::generate(),
@@ -52,6 +54,7 @@ impl CorrelationContext {
     }
 
     /// Create a child context with this context as parent
+    #[must_use]
     pub fn child(&self) -> Self {
         Self {
             id: CorrelationId::generate(),
@@ -61,6 +64,7 @@ impl CorrelationContext {
     }
 
     /// Create a child context with a span name
+    #[must_use]
     pub fn child_with_span(&self, span_name: impl Into<String>) -> Self {
         Self {
             id: CorrelationId::generate(),
@@ -70,6 +74,7 @@ impl CorrelationContext {
     }
 
     /// Set the span name
+    #[must_use]
     pub fn with_span(mut self, span_name: impl Into<String>) -> Self {
         self.span_name = Some(span_name.into());
         self

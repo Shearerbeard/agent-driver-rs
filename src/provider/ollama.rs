@@ -1,4 +1,8 @@
-//! Ollama provider implementation
+//! Ollama provider implementation using the `ollama-rs` crate.
+//!
+//! Connects to a local Ollama instance for running open-source models like Llama,
+//! Qwen, Mistral, and DeepSeek. Supports streaming chat completions with configurable
+//! context window size (`num_ctx`) and model keep-alive settings.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -155,13 +159,27 @@ impl Provider for OllamaProvider {
                 .await
                 .map_err(|e| ProviderError::InvalidRequest(format!("Ollama error: {}", e)))?;
 
-            // Wrap stream with cancellation support
+            // Wrap stream with cancellation support and pending buffer
+            // to avoid dropping events when parse_ollama_response returns
+            // multiple events per chunk (e.g. Started + ContentBlockStart + TextDelta).
+            //
+            // Buffer bound safety: parse_ollama_response returns at most 4
+            // events per chunk (the first chunk when done=true could emit:
+            //   Started + ContentBlockStart + TextDelta + ContentBlockStop = 4).
+            // Typical chunks produce 1-2 events. The buffer is fully drained
+            // before the next raw chunk is fetched, so it never accumulates
+            // across chunks.
             let cancellation = ctx.cancellation.clone();
             let model_name = model.clone();
 
             let event_stream = futures::stream::unfold(
-                (stream, cancellation.clone(), StreamState::new(model_name)),
-                |(mut stream, cancel, mut state)| async move {
+                (stream, cancellation.clone(), StreamState::new(model_name), std::collections::VecDeque::<Result<StreamEvent, StreamError>>::new()),
+                |(mut stream, cancel, mut state, mut pending)| async move {
+                    // Drain buffered events first
+                    if let Some(event) = pending.pop_front() {
+                        return Some((event, (stream, cancel, state, pending)));
+                    }
+
                     if cancel.is_cancelled() {
                         return None;
                     }
@@ -176,18 +194,20 @@ impl Provider for OllamaProvider {
                         response_opt = stream.next() => {
                             match response_opt {
                                 Some(Ok(response)) => {
-                                    let events = parse_ollama_response(response, &mut state);
-                                    if let Some(first) = events.into_iter().next() {
-                                        Some((first, (stream, cancel, state)))
-                                    } else {
+                                    let mut events = parse_ollama_response(response, &mut state);
+                                    if events.is_empty() {
                                         // Keep stream going
                                         Some((Ok(StreamEvent::Started {
                                             metadata: CompletionMetadata::default()
-                                        }), (stream, cancel, state)))
+                                        }), (stream, cancel, state, pending)))
+                                    } else {
+                                        let first = events.remove(0);
+                                        pending.extend(events);
+                                        Some((first, (stream, cancel, state, pending)))
                                     }
                                 }
                                 Some(Err(())) => {
-                                    Some((Err(StreamError::ConnectionLost("Stream error".to_string())), (stream, cancel, state)))
+                                    Some((Err(StreamError::ConnectionLost("Stream error".to_string())), (stream, cancel, state, pending)))
                                 }
                                 None => {
                                     // Stream ended
@@ -195,11 +215,11 @@ impl Provider for OllamaProvider {
                                         state.completed = true;
                                         Some((Ok(StreamEvent::Completed {
                                             metadata: CompletionMetadata {
-                                                model: Some(state.model.clone()),
+                                                model: state.model.clone(),
                                                 stop_reason: Some(StopReason::EndTurn),
                                                 usage: state.usage,
                                             }
-                                        }), (stream, cancel, state)))
+                                        }), (stream, cancel, state, pending)))
                                     } else {
                                         None
                                     }
@@ -230,7 +250,8 @@ impl Provider for OllamaProvider {
                         .into_iter()
                         .map(|m| ModelInfo {
                             id: ModelId::new(&m.name)
-                                .unwrap_or_else(|_| ModelId::new("unknown").unwrap()),
+                                // Safety: "unknown" is a valid model ID (alphanumeric)
+                                .unwrap_or_else(|_| ModelId::new("unknown").expect("hardcoded valid model ID")),
                             name: m.name.clone(),
                             context_window: None, // Ollama doesn't report this in list
                         })
@@ -240,19 +261,20 @@ impl Provider for OllamaProvider {
                 Err(e) => {
                     // Fall back to common models if we can't query
                     tracing::warn!("Failed to list Ollama models: {}", e);
+                    // Safety: all model IDs below are hardcoded valid strings
                     Ok(vec![
                         ModelInfo {
-                            id: ModelId::new("llama3.2").unwrap(),
+                            id: ModelId::new("llama3.2").expect("hardcoded valid model ID"),
                             name: "Llama 3.2".to_string(),
                             context_window: Some(8192),
                         },
                         ModelInfo {
-                            id: ModelId::new("qwen3:14b").unwrap(),
+                            id: ModelId::new("qwen3:14b").expect("hardcoded valid model ID"),
                             name: "Qwen3 14B".to_string(),
                             context_window: Some(32768),
                         },
                         ModelInfo {
-                            id: ModelId::new("mistral").unwrap(),
+                            id: ModelId::new("mistral").expect("hardcoded valid model ID"),
                             name: "Mistral".to_string(),
                             context_window: Some(8192),
                         },
@@ -265,7 +287,7 @@ impl Provider for OllamaProvider {
 
 /// State for tracking stream parsing
 struct StreamState {
-    model: String,
+    model: Option<ModelId>,
     started: bool,
     completed: bool,
     usage: Option<TokenUsage>,
@@ -274,7 +296,7 @@ struct StreamState {
 impl StreamState {
     fn new(model: String) -> Self {
         Self {
-            model,
+            model: ModelId::new(model).ok(),
             started: false,
             completed: false,
             usage: None,
@@ -294,7 +316,7 @@ fn parse_ollama_response(
         state.started = true;
         events.push(Ok(StreamEvent::Started {
             metadata: CompletionMetadata {
-                model: Some(state.model.clone()),
+                model: state.model.clone(),
                 stop_reason: None,
                 usage: None,
             },

@@ -1,4 +1,8 @@
-//! Agent loop configuration
+//! Agent loop configuration: safety limits and behavior knobs.
+//!
+//! [`AgentLoopConfig`] controls how the agent loop behaves, including the maximum
+//! number of tool execution rounds ([`MaxToolDepth`]) and whether to continue
+//! when a tool returns an error.
 
 use std::num::NonZeroU32;
 
@@ -23,6 +27,12 @@ impl MaxToolDepth {
     /// Get the inner value
     pub fn get(&self) -> u32 {
         self.0.get()
+    }
+}
+
+impl std::fmt::Display for MaxToolDepth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

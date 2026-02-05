@@ -9,10 +9,24 @@ use crate::types::ToolName;
 use super::definition::ToolDefinition;
 use super::executor::DynTool;
 
-/// Registry for dynamic tool management
+/// Registry for dynamic tool management.
 ///
-/// Tools can be added and removed at runtime. Uses tokio's RwLock
-/// for async-safe access.
+/// Tools can be added and removed at runtime. Uses tokio's `RwLock`
+/// for async-safe concurrent access. The agent loop re-reads the registry
+/// each turn, so tools added/removed between turns are picked up automatically.
+///
+/// # Example
+///
+/// ```no_run
+/// use agent_driver_rs::tool::{ToolRegistry, ToolDefinition, ToolSchema};
+/// use agent_driver_rs::ToolName;
+///
+/// # async fn example() {
+/// let registry = ToolRegistry::new();
+/// // Register, list, unregister tools at runtime
+/// let tools = registry.list().await;
+/// # }
+/// ```
 pub struct ToolRegistry {
     tools: RwLock<HashMap<ToolName, DynTool>>,
 }

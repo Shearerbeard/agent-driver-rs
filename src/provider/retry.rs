@@ -1,4 +1,8 @@
-//! Retry logic with exponential backoff for rate limiting
+//! Retry logic with exponential backoff for rate limiting.
+//!
+//! Provides [`with_retry`] for wrapping provider calls with automatic retries on
+//! [`ProviderError::RateLimited`](crate::error::ProviderError::RateLimited).
+//! Non-rate-limit errors are returned immediately without retrying.
 
 use std::time::Duration;
 
@@ -32,29 +36,34 @@ impl Default for RetryConfig {
 
 impl RetryConfig {
     /// Create a new retry config
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the maximum number of retries
+    #[must_use]
     pub fn max_retries(mut self, n: u32) -> Self {
         self.max_retries = n;
         self
     }
 
     /// Set the initial backoff interval
+    #[must_use]
     pub fn initial_interval(mut self, d: Duration) -> Self {
         self.initial_interval = d;
         self
     }
 
     /// Set the maximum backoff interval
+    #[must_use]
     pub fn max_interval(mut self, d: Duration) -> Self {
         self.max_interval = d;
         self
     }
 
     /// Set the backoff multiplier
+    #[must_use]
     pub fn multiplier(mut self, m: f64) -> Self {
         self.multiplier = m;
         self

@@ -1,4 +1,10 @@
-//! Anthropic/Claude provider implementation
+//! Anthropic/Claude provider implementation using the Messages API with SSE streaming.
+//!
+//! Communicates directly with the Anthropic API (`https://api.anthropic.com/v1/messages`)
+//! using `reqwest` + `reqwest_eventsource` for server-sent events. Supports:
+//! - Streaming text and thinking deltas
+//! - Tool/function calling in Claude's native format
+//! - Extended thinking (when configured via [`ThinkingConfig`](crate::config::ThinkingConfig))
 
 use std::future::Future;
 use std::pin::Pin;
@@ -221,20 +227,20 @@ impl Provider for AnthropicProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Anthropic doesn't have a models endpoint, return known models
+            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + hyphens)
             Ok(vec![
                 ModelInfo {
-                    id: ModelId::new("claude-opus-4-20250514").unwrap(),
+                    id: ModelId::new("claude-opus-4-20250514").expect("hardcoded valid model ID"),
                     name: "Claude Opus 4".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("claude-sonnet-4-20250514").unwrap(),
+                    id: ModelId::new("claude-sonnet-4-20250514").expect("hardcoded valid model ID"),
                     name: "Claude Sonnet 4".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("claude-3-5-haiku-20241022").unwrap(),
+                    id: ModelId::new("claude-3-5-haiku-20241022").expect("hardcoded valid model ID"),
                     name: "Claude 3.5 Haiku".to_string(),
                     context_window: Some(200_000),
                 },
@@ -243,55 +249,84 @@ impl Provider for AnthropicProvider {
     }
 }
 
+/// State for the stream unfold, including a buffer for multi-event SSE messages.
+///
+/// # Buffer bound safety
+///
+/// The `pending` VecDeque is bounded in practice because `parse_anthropic_event`
+/// returns at most 2 events per SSE message (the worst case is `ContentBlockStart`
+/// for a tool_use block, which emits `ContentBlockStart` + `ToolUseStart`). All
+/// other event types produce exactly 0 or 1 events. The buffer is drained one
+/// element per `poll_next` call, so it never accumulates across SSE messages.
+struct UnfoldState {
+    event_source: EventSource,
+    cancellation: tokio_util::sync::CancellationToken,
+    stream_state: StreamState,
+    pending: std::collections::VecDeque<Result<StreamEvent, StreamError>>,
+}
+
 /// Create a stream from Anthropic SSE events
 fn create_anthropic_stream(
     event_source: EventSource,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> impl futures::Stream<Item = Result<StreamEvent, StreamError>> {
-    futures::stream::unfold(
-        (event_source, cancellation, StreamState::default()),
-        |(mut es, cancel, mut state)| async move {
-            loop {
-                if cancel.is_cancelled() {
+    let unfold_state = UnfoldState {
+        event_source,
+        cancellation,
+        stream_state: StreamState::default(),
+        pending: std::collections::VecDeque::new(),
+    };
+
+    futures::stream::unfold(unfold_state, |mut s| async move {
+        // Drain buffered events first
+        if let Some(event) = s.pending.pop_front() {
+            return Some((event, s));
+        }
+
+        loop {
+            if s.cancellation.is_cancelled() {
+                return None;
+            }
+
+            tokio::select! {
+                biased;
+
+                _ = s.cancellation.cancelled() => {
                     return None;
                 }
 
-                tokio::select! {
-                    biased;
-
-                    _ = cancel.cancelled() => {
-                        return None;
-                    }
-
-                    event = es.next() => {
-                        match event {
-                            Some(Ok(Event::Open)) => continue,
-                            Some(Ok(Event::Message(msg))) => {
-                                match parse_anthropic_event(&msg.data, &mut state) {
-                                    Some(Ok(events)) => {
-                                        // Return first event, buffer rest
-                                        if let Some(first) = events.into_iter().next() {
-                                            return Some((Ok(first), (es, cancel, state)));
+                event = s.event_source.next() => {
+                    match event {
+                        Some(Ok(Event::Open)) => continue,
+                        Some(Ok(Event::Message(msg))) => {
+                            match parse_anthropic_event(&msg.data, &mut s.stream_state) {
+                                Some(Ok(events)) => {
+                                    let mut iter = events.into_iter();
+                                    if let Some(first) = iter.next() {
+                                        // Buffer remaining events
+                                        for remaining in iter {
+                                            s.pending.push_back(Ok(remaining));
                                         }
-                                        continue;
+                                        return Some((Ok(first), s));
                                     }
-                                    Some(Err(e)) => {
-                                        return Some((Err(e), (es, cancel, state)));
-                                    }
-                                    None => continue,
+                                    continue;
                                 }
+                                Some(Err(e)) => {
+                                    return Some((Err(e), s));
+                                }
+                                None => continue,
                             }
-                            Some(Err(e)) => {
-                                let err = StreamError::ConnectionLost(e.to_string());
-                                return Some((Err(err), (es, cancel, state)));
-                            }
-                            None => return None,
                         }
+                        Some(Err(e)) => {
+                            let err = StreamError::ConnectionLost(e.to_string());
+                            return Some((Err(err), s));
+                        }
+                        None => return None,
                     }
                 }
             }
-        },
-    )
+        }
+    })
 }
 
 /// State for tracking stream parsing
@@ -299,6 +334,10 @@ fn create_anthropic_stream(
 struct StreamState {
     current_block_index: usize,
     current_block_type: Option<ContentBlockType>,
+    /// Tool call ID per block index, carried from ContentBlockStart to
+    /// subsequent ContentBlockDelta events so that `input_json_delta`
+    /// can reference the correct `ToolCallId` instead of using an empty string.
+    tool_call_ids: std::collections::HashMap<usize, String>,
 }
 
 /// Parse an Anthropic SSE event
@@ -306,15 +345,19 @@ fn parse_anthropic_event(
     data: &str,
     state: &mut StreamState,
 ) -> Option<Result<Vec<StreamEvent>, StreamError>> {
-    let parsed: AnthropicStreamEvent = serde_json::from_str(data)
-        .map_err(|e| StreamError::Deserialize(e.to_string()))
-        .ok()?;
+    let parsed: AnthropicStreamEvent = match serde_json::from_str(data) {
+        Ok(event) => event,
+        Err(e) => {
+            tracing::warn!(data = %data, error = %e, "Failed to parse Anthropic SSE event");
+            return None;
+        }
+    };
 
     let events = match parsed {
         AnthropicStreamEvent::MessageStart { message } => {
             vec![StreamEvent::Started {
                 metadata: CompletionMetadata {
-                    model: Some(message.model),
+                    model: ModelId::new(message.model).ok(),
                     stop_reason: None,
                     usage: message.usage.map(|u| TokenUsage {
                         input_tokens: u.input_tokens,
@@ -335,19 +378,21 @@ fn parse_anthropic_event(
 
             let mut events = vec![StreamEvent::ContentBlockStart { index, block_type }];
 
-            // For tool_use, emit the start delta
+            // For tool_use, store the ID and emit the start delta
             if block_type == ContentBlockType::ToolUse {
                 if let (Some(id), Some(name)) = (content_block.id, content_block.name) {
+                    state.tool_call_ids.insert(index, id.clone());
                     events.push(StreamEvent::Delta(StreamDelta::ToolUseStart {
                         id: ToolCallId::new(id),
-                        name: ToolName::new(name).unwrap_or_else(|_| ToolName::new("unknown").unwrap()),
+                        // Safety: "unknown" is a valid tool name (alphanumeric)
+                        name: ToolName::new(name).unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
                     }));
                 }
             }
 
             events
         }
-        AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
+        AnthropicStreamEvent::ContentBlockDelta { index, delta } => {
             match delta.r#type.as_str() {
                 "text_delta" => {
                     if let Some(text) = delta.text {
@@ -365,8 +410,15 @@ fn parse_anthropic_event(
                 }
                 "input_json_delta" => {
                     if let Some(partial_json) = delta.partial_json {
+                        // Look up the tool call ID stored from the preceding
+                        // ContentBlockStart event for this block index.
+                        let id = state
+                            .tool_call_ids
+                            .get(&index)
+                            .map(ToolCallId::new)
+                            .unwrap_or_else(|| ToolCallId::new(""));
                         vec![StreamEvent::Delta(StreamDelta::ToolInputDelta {
-                            id: ToolCallId::new(""), // ID comes from block start
+                            id,
                             partial_json,
                         })]
                     } else {
@@ -385,6 +437,8 @@ fn parse_anthropic_event(
         }
         AnthropicStreamEvent::ContentBlockStop { index } => {
             let _block_type = state.current_block_type.take().unwrap_or(ContentBlockType::Text);
+            // Clean up stored tool call ID for this block index
+            state.tool_call_ids.remove(&index);
             vec![StreamEvent::ContentBlockStop { index }]
         }
         AnthropicStreamEvent::MessageDelta { delta, usage } => {
@@ -437,7 +491,6 @@ enum AnthropicStreamEvent {
         content_block: ContentBlockData,
     },
     ContentBlockDelta {
-        #[allow(dead_code)]
         index: usize,
         delta: DeltaData,
     },

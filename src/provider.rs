@@ -19,7 +19,19 @@ use crate::streaming::{CollectedResponse, StreamHandle};
 use crate::tool::ToolDefinition;
 use crate::types::{CorrelationId, MaxTokens, Message, ModelId, SystemPrompt, Temperature};
 
-/// Request for completion
+/// Request for an LLM completion.
+///
+/// # Example
+///
+/// ```
+/// use agent_driver_rs::provider::CompletionRequest;
+/// use agent_driver_rs::{ModelId, Message, SystemPrompt};
+///
+/// let request = CompletionRequest::new(
+///     ModelId::new("claude-sonnet-4").unwrap(),
+///     vec![Message::user("Hello!")],
+/// ).with_system(SystemPrompt::new("You are helpful."));
+/// ```
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
     /// Model to use
@@ -47,18 +59,21 @@ impl CompletionRequest {
     }
 
     /// Set the system prompt
+    #[must_use]
     pub fn with_system(mut self, system: SystemPrompt) -> Self {
         self.system = Some(system);
         self
     }
 
     /// Set the tools
+    #[must_use]
     pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
         self.tools = tools;
         self
     }
 
     /// Set the completion config
+    #[must_use]
     pub fn with_config(mut self, config: CompletionConfig) -> Self {
         self.config = config;
         self
@@ -87,12 +102,14 @@ impl CompletionConfig {
     }
 
     /// Set the temperature
+    #[must_use]
     pub fn with_temperature(mut self, temp: Temperature) -> Self {
         self.temperature = Some(temp);
         self
     }
 
     /// Set stop sequences
+    #[must_use]
     pub fn with_stop_sequences(mut self, sequences: Vec<String>) -> Self {
         self.stop_sequences = sequences;
         self
@@ -201,13 +218,46 @@ pub struct ModelInfo {
 /// Core provider trait
 ///
 /// All LLM providers implement this trait. Uses boxed futures for object safety.
+///
+/// # Cancellation contract
+///
+/// Provider implementations **must** respect the `CancellationToken` in
+/// `ctx.cancellation`. Specifically, the stream returned inside the
+/// `StreamHandle` must check for cancellation on every iteration of its
+/// poll loop. The canonical pattern uses `tokio::select!` with the `biased`
+/// hint so cancellation is checked before the next network read:
+///
+/// ```ignore
+/// loop {
+///     tokio::select! {
+///         biased;
+///         _ = ctx.cancellation.cancelled() => return None,
+///         event = inner_stream.next() => {
+///             // ... parse and yield StreamEvent ...
+///         }
+///     }
+/// }
+/// ```
+///
+/// This is a **convention-only** requirement -- there is no compile-time
+/// mechanism to enforce it. The `StreamHandle` wrapper adds a synchronous
+/// `is_cancelled()` check in its own `poll_next`, but that only takes
+/// effect *between* polls.  The provider's stream loop is the first line
+/// of defence for prompt cancellation during a long-running network read.
+///
+/// See [`StreamHandle`] for additional notes on cancellation latency.
 pub trait Provider: Send + Sync {
     /// Get provider information
     fn info(&self) -> &ProviderInfo;
 
-    /// Streaming completion - primary method
+    /// Start a streaming completion.
     ///
-    /// Implementations MUST check `ctx.cancellation` in their stream poll loop.
+    /// Returns a [`StreamHandle`] that yields [`StreamEvent`]s. The returned
+    /// stream **must** honour `ctx.cancellation` -- see the
+    /// [cancellation contract](Provider#cancellation-contract) on the trait
+    /// for the expected pattern and rationale.
+    ///
+    /// [`StreamEvent`]: crate::streaming::StreamEvent
     fn complete_stream(
         &self,
         request: CompletionRequest,

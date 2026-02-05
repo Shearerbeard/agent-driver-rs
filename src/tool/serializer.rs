@@ -1,4 +1,8 @@
-//! Tool serialization for provider APIs
+//! Tool serialization for different provider API formats.
+//!
+//! Each LLM provider expects tools and tool results in a different JSON shape.
+//! [`ToolFormat`] abstracts over these differences, supporting Claude (Anthropic/Bedrock)
+//! and OpenAI (OpenAI/OpenRouter) formats.
 
 use serde_json::Value as JsonValue;
 

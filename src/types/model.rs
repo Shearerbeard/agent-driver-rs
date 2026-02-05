@@ -1,4 +1,10 @@
-//! Model-related types: ModelId, MaxTokens, Temperature
+//! Model-related newtypes with validated construction.
+//!
+//! All types in this module use the newtype pattern with protected constructors
+//! to enforce domain invariants at compile time:
+//! - [`ModelId`] -- non-empty, restricted character set
+//! - [`MaxTokens`] -- guaranteed positive via `NonZeroU32`
+//! - [`Temperature`] -- clamped to \[0.0, 2.0\] to cover all provider ranges
 
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -15,6 +21,7 @@ pub struct ModelId(String);
 
 impl ModelId {
     /// Create a new ModelId with validation
+    #[must_use = "this returns a Result that should be checked"]
     pub fn new(id: impl Into<String>) -> Result<Self, ModelIdError> {
         let id = id.into();
         if id.is_empty() {
@@ -30,6 +37,7 @@ impl ModelId {
     }
 
     /// Get the model ID as a string slice
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -88,6 +96,12 @@ impl MaxTokens {
     }
 }
 
+impl std::fmt::Display for MaxTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl Default for MaxTokens {
     fn default() -> Self {
         // Safe: 4096 is non-zero
@@ -107,6 +121,7 @@ impl Temperature {
     /// Create a new Temperature with validation
     ///
     /// Returns error if value is outside [0.0, 2.0].
+    #[must_use = "this returns a Result that should be checked"]
     pub fn new(temp: f32) -> Result<Self, TemperatureError> {
         if !(0.0..=2.0).contains(&temp) {
             return Err(TemperatureError::OutOfRange(temp));
@@ -115,8 +130,15 @@ impl Temperature {
     }
 
     /// Get the temperature value
+    #[must_use]
     pub fn get(&self) -> f32 {
         self.0
+    }
+}
+
+impl std::fmt::Display for Temperature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

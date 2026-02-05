@@ -1,7 +1,18 @@
-//! Error types for agent-driver-rs
+//! Error types for agent-driver-rs.
 //!
-//! This module defines all error types used throughout the crate.
-//! Error types are defined upfront as other modules depend on them.
+//! All error types are defined in this module so that other modules can depend on them
+//! without circular imports. The hierarchy is:
+//!
+//! - [`AgentDriverError`] -- top-level enum that wraps all other error types
+//!   - [`ConfigError`] -- configuration loading and validation failures
+//!   - [`ProviderError`] -- LLM provider communication errors
+//!   - [`ToolError`] -- tool lookup and execution failures
+//!   - [`TaskPoolError`] -- task spawning and lifecycle errors
+//!   - [`SessionError`] -- session-level operation errors
+//!   - [`AgentLoopError`] -- agent loop orchestration errors
+//!
+//! Newtype validation errors ([`ModelIdError`], [`ToolNameError`], [`TemperatureError`])
+//! are separate because they occur at construction time, not during operations.
 
 use thiserror::Error;
 
@@ -99,12 +110,12 @@ pub enum McpToolError {
     ProtocolError(String),
 }
 
-/// Task pool errors
+/// Task pool errors.
 #[derive(Debug, Error)]
 pub enum TaskPoolError {
-    #[error("Pool has been shut down")]
+    #[error("Task pool has been shut down and is no longer accepting new tasks. Create a new TaskPool to spawn more tasks")]
     Shutdown,
-    #[error("Task not found: {0}")]
+    #[error("Task not found with correlation ID: {0}. The task may have already completed or been removed")]
     TaskNotFound(String),
 }
 
@@ -136,12 +147,12 @@ pub enum AgentLoopError {
 
 // Validation errors for newtypes
 
-/// Error when constructing a ModelId
+/// Error when constructing a [`ModelId`](crate::types::ModelId).
 #[derive(Debug, Clone, Error)]
 pub enum ModelIdError {
-    #[error("Model ID cannot be empty")]
+    #[error("Model ID cannot be empty. Provide a model identifier like \"claude-sonnet-4\" or \"gpt-4o\"")]
     Empty,
-    #[error("Model ID contains invalid characters")]
+    #[error("Model ID contains invalid characters. Only alphanumeric, hyphens (-), underscores (_), forward slashes (/), colons (:), and dots (.) are allowed")]
     InvalidCharacters,
 }
 

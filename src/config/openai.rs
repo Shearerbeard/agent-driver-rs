@@ -33,7 +33,7 @@ pub struct OpenAiConfig {
 }
 
 /// OpenAI model specification
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpenAiModel {
     // GPT-5 series (reasoning models, no temperature)
@@ -44,6 +44,7 @@ pub enum OpenAiModel {
     Gpt5_2,
 
     // GPT-4 series (supports temperature)
+    #[default]
     Gpt4o,
     Gpt4oMini,
 
@@ -99,12 +100,6 @@ impl OpenAiModel {
             Self::O3Mini => "o3-mini",
             Self::Custom(s) => s,
         }
-    }
-}
-
-impl Default for OpenAiModel {
-    fn default() -> Self {
-        Self::Gpt4o
     }
 }
 
@@ -167,7 +162,8 @@ impl OpenAiConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .and_then(MaxTokens::new)
-            .unwrap_or_else(|| MaxTokens::new(4096).unwrap());
+            // Safe: 4096 is a hardcoded non-zero constant
+            .unwrap_or_else(|| MaxTokens::new(4096).expect("4096 is non-zero"));
 
         let temperature = if model.supports_temperature() {
             std::env::var("OPENAI_TEMPERATURE")

@@ -1,4 +1,11 @@
-//! Tool execution types and traits
+//! Tool execution: the [`Tool`] trait, input/output types, and dynamic dispatch.
+//!
+//! This module defines how tools are executed:
+//! - [`ToolInput`] -- validated JSON object wrapper for tool parameters
+//! - [`ToolResult`] -- success or error outcome of tool execution
+//! - [`Tool`] trait -- the async interface all tools implement
+//! - [`DynTool`] -- type-erased `Arc<dyn Tool>` for registry storage
+//! - [`FnTool`] -- convenience wrapper for closure-based tools
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -9,7 +16,16 @@ use crate::error::ToolError;
 
 use super::definition::ToolDefinition;
 
-/// Input for tool execution
+/// Input for tool execution, wrapping a validated JSON object.
+///
+/// # Example
+///
+/// ```
+/// use agent_driver_rs::tool::ToolInput;
+///
+/// let input = ToolInput::from_value(serde_json::json!({"path": "/tmp/test.txt"})).unwrap();
+/// assert_eq!(input.get_str("path"), Some("/tmp/test.txt"));
+/// ```
 #[derive(Debug, Clone)]
 pub struct ToolInput(Map<String, JsonValue>);
 
@@ -19,13 +35,19 @@ impl ToolInput {
         Self(map)
     }
 
-    /// Create from a JSON value (must be an object)
+    /// Create from a JSON value
+    ///
+    /// Accepts a JSON object directly, or treats `null` as an empty object.
+    /// Some LLMs send `null` or omit arguments entirely for tools with no
+    /// required parameters — this avoids wasting a tool iteration on a retry.
     pub fn from_value(value: JsonValue) -> Result<Self, ToolError> {
         match value {
             JsonValue::Object(map) => Ok(Self(map)),
-            _ => Err(ToolError::InvalidInput(
-                "Tool input must be a JSON object".into(),
-            )),
+            JsonValue::Null => Ok(Self(Map::new())),
+            other => Err(ToolError::InvalidInput(format!(
+                "Tool input must be a JSON object, got {}",
+                json_type_name(&other),
+            ))),
         }
     }
 
@@ -66,7 +88,19 @@ impl Default for ToolInput {
     }
 }
 
-/// Result of tool execution
+/// Result of tool execution -- either success with content or an error message.
+///
+/// # Example
+///
+/// ```
+/// use agent_driver_rs::tool::ToolResult;
+///
+/// let ok = ToolResult::text("File contents here");
+/// assert!(ok.is_success());
+///
+/// let err = ToolResult::error("File not found");
+/// assert!(err.is_error());
+/// ```
 #[derive(Debug, Clone)]
 pub enum ToolResult {
     /// Successful execution
@@ -115,21 +149,36 @@ impl ToolResult {
     }
 
     /// Check if this is an error result
+    #[must_use]
     pub fn is_error(&self) -> bool {
         matches!(self, Self::Error { .. })
     }
 
     /// Check if this is a success result
+    #[must_use]
     pub fn is_success(&self) -> bool {
         matches!(self, Self::Success { .. })
     }
 
     /// Get the content (text or error message)
+    #[must_use]
     pub fn content(&self) -> &str {
         match self {
             Self::Success { content, .. } => content,
             Self::Error { message, .. } => message,
         }
+    }
+}
+
+/// Human-readable name for a JSON value type (used in error messages)
+fn json_type_name(value: &JsonValue) -> &'static str {
+    match value {
+        JsonValue::Array(_) => "array",
+        JsonValue::Bool(_) => "bool",
+        JsonValue::Number(_) => "number",
+        JsonValue::String(_) => "string",
+        JsonValue::Null => "null",
+        JsonValue::Object(_) => "object",
     }
 }
 
@@ -208,6 +257,26 @@ mod tests {
         assert_eq!(input.get_i64("count"), Some(42));
         assert_eq!(input.get_bool("enabled"), Some(true));
         assert!(input.get_str("missing").is_none());
+    }
+
+    #[test]
+    fn tool_input_from_null_is_empty_object() {
+        let input = ToolInput::from_value(JsonValue::Null).unwrap();
+        assert!(input.inner().is_empty());
+    }
+
+    #[test]
+    fn tool_input_from_object_preserves_fields() {
+        let input = ToolInput::from_value(serde_json::json!({"key": "val"})).unwrap();
+        assert_eq!(input.get_str("key"), Some("val"));
+    }
+
+    #[test]
+    fn tool_input_rejects_non_object_types() {
+        assert!(ToolInput::from_value(serde_json::json!("string")).is_err());
+        assert!(ToolInput::from_value(serde_json::json!(42)).is_err());
+        assert!(ToolInput::from_value(serde_json::json!(true)).is_err());
+        assert!(ToolInput::from_value(serde_json::json!([1, 2])).is_err());
     }
 
     #[test]

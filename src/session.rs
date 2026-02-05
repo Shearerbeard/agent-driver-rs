@@ -37,12 +37,43 @@ pub struct SessionConfig {
     pub request_timeout: Option<std::time::Duration>,
 }
 
-/// A conversation session with an LLM
+/// A conversation session with an LLM.
 ///
 /// Sessions manage mutable state with split locks to avoid contention:
 /// - System prompt (rarely changes)
 /// - Message history (frequently appended)
 /// - Tool registry (dynamically updated)
+///
+/// Use [`SessionBuilder`] to construct a session, then call [`send`](Self::send)
+/// for one-shot completions or [`send_streaming`](Self::send_streaming) for
+/// real-time streaming.
+///
+/// # Example
+///
+/// ```no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use agent_driver_rs::{SessionBuilder, SystemPrompt, ModelId};
+///
+/// // Build a session (provider must be set via SessionBuilder::provider)
+/// let session = SessionBuilder::new()
+///     .model(ModelId::new("claude-sonnet-4")?)
+///     // .provider(my_provider)
+///     // .system_prompt(SystemPrompt::new("You are helpful."))
+///     .build()
+///     .await?;
+///
+/// // Send a message and collect the response
+/// let response = session.send("Hello!").await?;
+/// println!("{}", response.text());
+///
+/// // Update the system prompt mid-conversation
+/// session.set_system_prompt(SystemPrompt::new("Be concise.")).await;
+///
+/// // Shut down gracefully
+/// session.shutdown().await;
+/// # Ok(())
+/// # }
+/// ```
 pub struct Session {
     provider: Arc<dyn Provider>,
     config: SessionConfig,
@@ -114,10 +145,11 @@ impl Session {
         let mut msgs = self.messages.write().await;
         msgs.push(message);
 
-        // Trim if configured
+        // Trim if configured — use drain to avoid O(n^2) repeated remove(0)
         if let Some(max) = self.config.max_history_messages {
-            while msgs.len() > max {
-                msgs.remove(0);
+            if msgs.len() > max {
+                let excess = msgs.len() - max;
+                msgs.drain(..excess);
             }
         }
     }
@@ -327,6 +359,7 @@ pub struct SessionBuilder {
 
 impl SessionBuilder {
     /// Create a new session builder
+    #[must_use]
     pub fn new() -> Self {
         Self {
             provider: None,
@@ -340,30 +373,35 @@ impl SessionBuilder {
     }
 
     /// Set the provider (accepts Arc<dyn Provider>)
+    #[must_use]
     pub fn provider(mut self, p: Arc<dyn Provider>) -> Self {
         self.provider = Some(p);
         self
     }
 
     /// Convenience: wrap a concrete provider in Arc
+    #[must_use]
     pub fn with_provider(mut self, p: impl Provider + 'static) -> Self {
         self.provider = Some(Arc::new(p));
         self
     }
 
     /// Set the model to use
+    #[must_use]
     pub fn model(mut self, m: ModelId) -> Self {
         self.model = Some(m);
         self
     }
 
     /// Set the completion configuration
+    #[must_use]
     pub fn completion_config(mut self, c: CompletionConfig) -> Self {
         self.completion_config = Some(c);
         self
     }
 
     /// Set max tokens (convenience method)
+    #[must_use]
     pub fn max_tokens(mut self, tokens: MaxTokens) -> Self {
         let config = self
             .completion_config
@@ -373,30 +411,35 @@ impl SessionBuilder {
     }
 
     /// Set the system prompt
+    #[must_use]
     pub fn system_prompt(mut self, p: SystemPrompt) -> Self {
         self.system_prompt = Some(p);
         self
     }
 
     /// Add a tool
+    #[must_use]
     pub fn tool(mut self, t: DynTool) -> Self {
         self.tools.push(t);
         self
     }
 
     /// Add multiple tools
+    #[must_use]
     pub fn tools(mut self, tools: impl IntoIterator<Item = DynTool>) -> Self {
         self.tools.extend(tools);
         self
     }
 
     /// Set the maximum message history size
+    #[must_use]
     pub fn max_history(mut self, max: usize) -> Self {
         self.max_history_messages = Some(max);
         self
     }
 
     /// Set the request timeout
+    #[must_use]
     pub fn timeout(mut self, t: std::time::Duration) -> Self {
         self.request_timeout = Some(t);
         self

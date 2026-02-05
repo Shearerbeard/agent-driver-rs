@@ -1,7 +1,16 @@
-//! Streaming types for LLM completions
+//! Streaming types for LLM completions.
 //!
-//! This module provides types for handling streaming responses from LLM providers.
+//! This module provides the event-driven streaming infrastructure:
+//! - [`StreamEvent`] -- lifecycle events emitted during streaming (started, delta, completed)
+//! - [`StreamDelta`] -- incremental content updates (text, thinking, tool use)
+//! - [`StreamHandle`] -- owned handle to a running stream with cancellation support
+//! - [`CollectedResponse`] -- accumulator that assembles deltas into complete content blocks
+//! - [`CompletionStream`] -- the underlying `Pin<Box<dyn Stream>>` type alias
+//!
+//! All providers emit the same `StreamEvent` types, so consumers write
+//! provider-agnostic streaming code.
 
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -11,7 +20,7 @@ use serde_json::Value as JsonValue;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::StreamError;
-use crate::types::{ContentBlock, CorrelationId, ToolCallId, ToolName};
+use crate::types::{ContentBlock, CorrelationId, ModelId, ToolCallId, ToolName};
 
 /// Incremental content during streaming
 #[derive(Debug, Clone)]
@@ -68,11 +77,19 @@ pub enum ContentBlockType {
     ToolUse,
 }
 
-/// Metadata about a completion
+/// Metadata about a completion, available at stream start and end.
 #[derive(Debug, Clone, Default)]
 pub struct CompletionMetadata {
-    pub model: Option<String>,
+    /// The model that generated this completion (provider-reported).
+    ///
+    /// Uses `ModelId` to maintain the newtype pattern. Providers convert
+    /// API-returned model strings via `ModelId::new().ok()`, so this is
+    /// `None` if the provider doesn't report a model or if the reported
+    /// string fails validation.
+    pub model: Option<ModelId>,
+    /// Why the completion stopped (end of turn, max tokens, tool use, etc.).
     pub stop_reason: Option<StopReason>,
+    /// Token usage statistics (input and output token counts).
     pub usage: Option<TokenUsage>,
 }
 
@@ -84,12 +101,16 @@ pub enum StopReason {
     MaxTokens,
     ToolUse,
     StopSequence,
+    /// The provider's content filter triggered, blocking further output.
+    ContentFilter,
 }
 
-/// Token usage information
+/// Token usage information reported by the provider.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TokenUsage {
+    /// Number of tokens in the input (prompt + message history).
     pub input_tokens: u32,
+    /// Number of tokens generated in the output.
     pub output_tokens: u32,
 }
 
@@ -101,10 +122,26 @@ struct PendingToolUse {
     input_json: String,
 }
 
-/// Fully collected response from streaming
+/// Fully collected response from streaming.
+///
+/// Built by accumulating [`StreamDelta`]s via [`apply_delta`](Self::apply_delta) and
+/// [`finalize_block`](Self::finalize_block), or by calling [`StreamHandle::collect`].
+///
+/// # Example
+///
+/// ```
+/// use agent_driver_rs::streaming::{CollectedResponse, StreamDelta, ContentBlockType};
+///
+/// let mut response = CollectedResponse::new();
+/// response.apply_delta(StreamDelta::TextDelta { text: "Hello!".into() });
+/// response.finalize_block(ContentBlockType::Text);
+/// assert_eq!(response.text(), "Hello!");
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct CollectedResponse {
+    /// The accumulated content blocks (text, thinking, tool use).
     pub content: Vec<ContentBlock>,
+    /// Metadata from the completion (model, stop reason, token usage).
     pub metadata: CompletionMetadata,
     // Internal: accumulation state for streaming
     pending_text: String,
@@ -128,6 +165,19 @@ impl CollectedResponse {
                 self.pending_thinking.push_str(&thinking);
             }
             StreamDelta::ToolUseStart { id, name } => {
+                // If there's already a pending tool use, finalize it first.
+                // This handles parallel tool calls from providers that don't
+                // emit ContentBlockStop between tool calls (e.g., OpenRouter).
+                if let Some(prev) = self.pending_tool_use.take() {
+                    // Fallback to Null if accumulated JSON fragments are incomplete.
+                    let input = serde_json::from_str(&prev.input_json)
+                        .unwrap_or(JsonValue::Null);
+                    self.content.push(ContentBlock::ToolUse {
+                        id: prev.id,
+                        name: prev.name,
+                        input,
+                    });
+                }
                 self.pending_tool_use = Some(PendingToolUse {
                     id,
                     name,
@@ -160,6 +210,8 @@ impl CollectedResponse {
             }
             ContentBlockType::ToolUse => {
                 if let Some(pending) = self.pending_tool_use.take() {
+                    // Fallback to Null if accumulated JSON fragments are incomplete
+                    // (e.g., stream interrupted mid-tool-input).
                     let input = serde_json::from_str(&pending.input_json)
                         .unwrap_or(JsonValue::Null);
                     self.content.push(ContentBlock::ToolUse {
@@ -190,6 +242,8 @@ impl CollectedResponse {
             });
         }
         if let Some(pending) = self.pending_tool_use.take() {
+            // Fallback to Null if accumulated JSON fragments are incomplete
+            // (e.g., stream ended without explicit ContentBlockStop).
             let input =
                 serde_json::from_str(&pending.input_json).unwrap_or(JsonValue::Null);
             self.content.push(ContentBlock::ToolUse {
@@ -201,6 +255,7 @@ impl CollectedResponse {
     }
 
     /// Get text content as a single string (convenience method)
+    #[must_use]
     pub fn text(&self) -> String {
         self.content
             .iter()
@@ -213,6 +268,7 @@ impl CollectedResponse {
     }
 
     /// Get thinking content as a single string
+    #[must_use]
     pub fn thinking(&self) -> String {
         self.content
             .iter()
@@ -225,6 +281,7 @@ impl CollectedResponse {
     }
 
     /// Get all tool use blocks
+    #[must_use]
     pub fn tool_uses(&self) -> Vec<(&ToolCallId, &ToolName, &JsonValue)> {
         self.content
             .iter()
@@ -236,6 +293,7 @@ impl CollectedResponse {
     }
 
     /// Check if the response contains any tool use requests
+    #[must_use]
     pub fn has_tool_use(&self) -> bool {
         self.content
             .iter()
@@ -246,7 +304,53 @@ impl CollectedResponse {
 /// Type alias for the stream of completion events
 pub type CompletionStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, StreamError>> + Send>>;
 
-/// Handle to streaming completion with cancellation
+/// Handle to a streaming completion with built-in cancellation support.
+///
+/// Obtained from [`Provider::complete_stream`](crate::provider::Provider::complete_stream)
+/// or [`Session::send_streaming`](crate::session::Session::send_streaming). Implements
+/// the `Stream` trait, so you can consume events one at a time, or call
+/// [`collect`](Self::collect) to accumulate everything into a [`CollectedResponse`].
+///
+/// # Cancellation latency
+///
+/// The [`Stream`] implementation performs a **synchronous** `is_cancelled()`
+/// check at the start of each [`poll_next`](futures::Stream::poll_next) call.
+/// This means that if the inner stream is blocked waiting for a network read
+/// (i.e., the inner `poll_next` returned `Poll::Pending` and registered a
+/// waker), cancellation will **not** be observed until the inner stream
+/// yields its next item or error, which then triggers another `poll_next`
+/// on this `StreamHandle`.
+///
+/// In contrast, [`collect()`](Self::collect) uses `tokio::select!` with
+/// `biased` to race the cancellation future against the stream, so it
+/// responds to cancellation even while the inner stream is parked. **If
+/// responsive cancellation is important, prefer `collect()` or use
+/// `tokio::select!` manually when consuming the stream.**
+///
+/// Provider implementations further mitigate this by checking
+/// `ctx.cancellation` inside their own stream loops (see the
+/// [cancellation contract](crate::provider::Provider#cancellation-contract)),
+/// so in practice the inner stream also exits promptly on cancellation.
+///
+/// # Example
+///
+/// ```no_run
+/// # async fn example(session: &agent_driver_rs::Session) -> Result<(), Box<dyn std::error::Error>> {
+/// use futures::StreamExt;
+///
+/// let mut handle = session.send_streaming("Hello!").await?;
+///
+/// // Option A: consume events one at a time
+/// while let Some(event) = handle.next().await {
+///     println!("{:?}", event?);
+/// }
+///
+/// // Option B: collect all events into a response
+/// // let response = handle.collect().await?;
+/// // println!("{}", response.text());
+/// # Ok(())
+/// # }
+/// ```
 pub struct StreamHandle {
     stream: CompletionStream,
     cancellation: CancellationToken,
@@ -282,11 +386,13 @@ impl StreamHandle {
     }
 
     /// Check if cancellation has been requested
+    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
     }
 
     /// Get the correlation ID
+    #[must_use]
     pub fn correlation_id(&self) -> CorrelationId {
         self.correlation_id
     }
@@ -304,6 +410,9 @@ impl StreamHandle {
     /// Collect entire stream into response (blocks until complete or cancelled)
     ///
     /// Uses tokio::select! to properly handle cancellation during await.
+    /// Block types are tracked per index via a HashMap so that interleaved
+    /// ContentBlockStart/ContentBlockStop pairs (across different indices)
+    /// are finalized with the correct type.
     pub async fn collect(self) -> Result<CollectedResponse, StreamError> {
         use futures::StreamExt;
 
@@ -315,7 +424,7 @@ impl StreamHandle {
         } = self;
 
         let mut response = CollectedResponse::default();
-        let mut current_block_type: Option<ContentBlockType> = None;
+        let mut block_types: HashMap<usize, ContentBlockType> = HashMap::new();
 
         loop {
             // Use select! to race stream polling against cancellation
@@ -329,14 +438,14 @@ impl StreamHandle {
                 event_opt = stream.next() => {
                     match event_opt {
                         Some(Ok(event)) => match event {
-                            StreamEvent::ContentBlockStart { block_type, .. } => {
-                                current_block_type = Some(block_type);
+                            StreamEvent::ContentBlockStart { index, block_type } => {
+                                block_types.insert(index, block_type);
                             }
                             StreamEvent::Delta(delta) => {
                                 response.apply_delta(delta);
                             }
-                            StreamEvent::ContentBlockStop { .. } => {
-                                if let Some(block_type) = current_block_type.take() {
+                            StreamEvent::ContentBlockStop { index } => {
+                                if let Some(block_type) = block_types.remove(&index) {
                                     response.finalize_block(block_type);
                                 }
                             }
@@ -365,14 +474,25 @@ impl StreamHandle {
     }
 }
 
-// Implement Stream trait for StreamHandle with cancellation checking
+// Implement Stream trait for StreamHandle with cancellation checking.
+//
+// NOTE: The `is_cancelled()` check here is synchronous and only runs when
+// `poll_next` is called. If the inner stream has returned `Pending` and
+// registered a waker for a network read, cancellation won't be noticed
+// until the waker fires and this method is called again. For responsive
+// cancellation while awaiting, use `collect()` or `tokio::select!`
+// externally. See the "Cancellation latency" section on `StreamHandle`.
 impl Stream for StreamHandle {
     type Item = Result<StreamEvent, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Check cancellation first - if cancelled, return error and end stream
+        // Check cancellation first - if cancelled, end stream cleanly.
+        // This is a synchronous (non-blocking) check, so it only catches
+        // cancellation that occurred *before* this poll_next invocation.
+        // Cancellation that occurs while the inner stream is Pending will
+        // not be observed until the next poll_next call.
         if self.cancellation.is_cancelled() {
-            return Poll::Ready(None); // End stream cleanly; collect() returns Cancelled error
+            return Poll::Ready(None);
         }
 
         // Safe to project: CompletionStream is Pin<Box<...>> which is Unpin

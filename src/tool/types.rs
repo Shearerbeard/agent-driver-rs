@@ -1,4 +1,7 @@
-//! Tool-related types
+//! Core tool data types: schema and source tracking.
+//!
+//! - [`ToolSchema`] -- JSON Schema wrapper for tool input parameters, uses `Arc` for cheap cloning.
+//! - [`ToolSource`] -- tracks where a tool originated (native, MCP server, or dynamic plugin).
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue};
@@ -68,9 +71,10 @@ impl Default for ToolSchema {
 }
 
 /// Source of a tool
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ToolSource {
     /// Built-in native tool
+    #[default]
     Native,
     /// Tool from an MCP server
     Mcp { server_name: String },
@@ -80,19 +84,15 @@ pub enum ToolSource {
 
 impl ToolSource {
     /// Check if this is a native tool
+    #[must_use]
     pub fn is_native(&self) -> bool {
         matches!(self, Self::Native)
     }
 
     /// Check if this is an MCP tool
+    #[must_use]
     pub fn is_mcp(&self) -> bool {
         matches!(self, Self::Mcp { .. })
-    }
-}
-
-impl Default for ToolSource {
-    fn default() -> Self {
-        Self::Native
     }
 }
 

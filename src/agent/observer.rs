@@ -1,4 +1,8 @@
-//! Agent observer trait and event types
+//! Agent observer trait and event types for real-time loop monitoring.
+//!
+//! The [`AgentObserver`] trait receives [`AgentEvent`]s as the loop executes,
+//! enabling streaming output, progress indicators, logging, and cancellation hooks.
+//! The default implementation is a no-op, so implementors only handle events they need.
 
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;

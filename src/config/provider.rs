@@ -1,4 +1,8 @@
-//! Provider configuration enum
+//! Top-level provider configuration discriminator.
+//!
+//! [`ProviderConfig`] is a tagged enum that selects a provider and holds its
+//! configuration. Use [`ProviderConfig::from_env()`] to load from environment
+//! variables with the `PROVIDER` env var as the discriminator.
 
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +59,7 @@ impl ProviderConfig {
     }
 
     /// Get the provider name
+    #[must_use]
     pub fn provider_name(&self) -> &'static str {
         match self {
             Self::Anthropic(_) => "anthropic",

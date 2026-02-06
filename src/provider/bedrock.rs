@@ -71,102 +71,12 @@ impl BedrockProvider {
         })
     }
 
-    /// Convert our messages to Bedrock format
+    /// Convert our messages to Bedrock format, merging consecutive same-role messages.
     fn convert_messages(
         &self,
         messages: &[crate::types::Message],
     ) -> Result<Vec<BedrockMessage>, ProviderError> {
-        let mut bedrock_messages = Vec::new();
-
-        for msg in messages {
-            let role = match msg.role {
-                crate::types::Role::User => ConversationRole::User,
-                crate::types::Role::Assistant => ConversationRole::Assistant,
-                crate::types::Role::Tool => ConversationRole::User, // Tool results come as user
-                crate::types::Role::System => continue, // System handled separately
-            };
-
-            let mut content_blocks = Vec::new();
-
-            for block in &msg.content {
-                match block {
-                    ContentBlock::Text { text } => {
-                        content_blocks.push(BedrockContentBlock::Text(text.clone()));
-                    }
-                    ContentBlock::Thinking { text } => {
-                        // Bedrock doesn't have a thinking block, include as text
-                        content_blocks.push(BedrockContentBlock::Text(format!(
-                            "<thinking>{}</thinking>",
-                            text
-                        )));
-                    }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        content_blocks.push(BedrockContentBlock::ToolUse(
-                            ToolUseBlock::builder()
-                                .tool_use_id(id.as_str())
-                                .name(name.as_str())
-                                .input(Document::Object(
-                                    input
-                                        .as_object()
-                                        .map(|o| {
-                                            o.iter()
-                                                .map(|(k, v)| (k.clone(), json_to_document(v)))
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                ))
-                                .build()
-                                .map_err(|e| {
-                                    ProviderError::InvalidRequest(format!(
-                                        "Failed to build tool use: {}",
-                                        e
-                                    ))
-                                })?,
-                        ));
-                    }
-                    ContentBlock::ToolResult {
-                        tool_use_id,
-                        content,
-                        is_error,
-                    } => {
-                        let content_str = match content {
-                            crate::types::ToolResultContent::Text(s) => s.clone(),
-                        };
-                        content_blocks.push(BedrockContentBlock::ToolResult(
-                            ToolResultBlock::builder()
-                                .tool_use_id(tool_use_id.as_str())
-                                .content(ToolResultContentBlock::Text(content_str))
-                                .status(if *is_error {
-                                    aws_sdk_bedrockruntime::types::ToolResultStatus::Error
-                                } else {
-                                    aws_sdk_bedrockruntime::types::ToolResultStatus::Success
-                                })
-                                .build()
-                                .map_err(|e| {
-                                    ProviderError::InvalidRequest(format!(
-                                        "Failed to build tool result: {}",
-                                        e
-                                    ))
-                                })?,
-                        ));
-                    }
-                }
-            }
-
-            if !content_blocks.is_empty() {
-                bedrock_messages.push(
-                    BedrockMessage::builder()
-                        .role(role)
-                        .set_content(Some(content_blocks))
-                        .build()
-                        .map_err(|e| {
-                            ProviderError::InvalidRequest(format!("Failed to build message: {}", e))
-                        })?,
-                );
-            }
-        }
-
-        Ok(bedrock_messages)
+        convert_messages(messages)
     }
 
     /// Convert our tools to Bedrock format
@@ -203,6 +113,123 @@ impl BedrockProvider {
                 })?,
         ))
     }
+}
+
+/// Convert library messages to Bedrock format, merging consecutive same-role messages.
+///
+/// Bedrock's converse API requires strictly alternating User/Assistant roles.
+/// When the model makes multiple tool calls in one response, the agent loop
+/// appends a separate `Role::Tool` message per result. Since `Role::Tool` maps
+/// to `ConversationRole::User`, consecutive tool-result messages must be merged
+/// into a single Bedrock User message to satisfy the alternation constraint.
+fn convert_messages(
+    messages: &[crate::types::Message],
+) -> Result<Vec<BedrockMessage>, ProviderError> {
+    // Phase 1: Convert content blocks, merging consecutive same-role entries.
+    let mut pairs: Vec<(ConversationRole, Vec<BedrockContentBlock>)> = Vec::new();
+
+    for msg in messages {
+        let role = match msg.role {
+            crate::types::Role::User => ConversationRole::User,
+            crate::types::Role::Assistant => ConversationRole::Assistant,
+            crate::types::Role::Tool => ConversationRole::User, // Tool results come as user
+            crate::types::Role::System => continue,             // System handled separately
+        };
+
+        let mut content_blocks = Vec::new();
+
+        for block in &msg.content {
+            match block {
+                ContentBlock::Text { text } => {
+                    content_blocks.push(BedrockContentBlock::Text(text.clone()));
+                }
+                ContentBlock::Thinking { text } => {
+                    // Bedrock doesn't have a thinking block, include as text
+                    content_blocks.push(BedrockContentBlock::Text(format!(
+                        "<thinking>{}</thinking>",
+                        text
+                    )));
+                }
+                ContentBlock::ToolUse { id, name, input } => {
+                    content_blocks.push(BedrockContentBlock::ToolUse(
+                        ToolUseBlock::builder()
+                            .tool_use_id(id.as_str())
+                            .name(name.as_str())
+                            .input(Document::Object(
+                                input
+                                    .as_object()
+                                    .map(|o| {
+                                        o.iter()
+                                            .map(|(k, v)| (k.clone(), json_to_document(v)))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                            ))
+                            .build()
+                            .map_err(|e| {
+                                ProviderError::InvalidRequest(format!(
+                                    "Failed to build tool use: {}",
+                                    e
+                                ))
+                            })?,
+                    ));
+                }
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => {
+                    let content_str = match content {
+                        crate::types::ToolResultContent::Text(s) => s.clone(),
+                    };
+                    content_blocks.push(BedrockContentBlock::ToolResult(
+                        ToolResultBlock::builder()
+                            .tool_use_id(tool_use_id.as_str())
+                            .content(ToolResultContentBlock::Text(content_str))
+                            .status(if *is_error {
+                                aws_sdk_bedrockruntime::types::ToolResultStatus::Error
+                            } else {
+                                aws_sdk_bedrockruntime::types::ToolResultStatus::Success
+                            })
+                            .build()
+                            .map_err(|e| {
+                                ProviderError::InvalidRequest(format!(
+                                    "Failed to build tool result: {}",
+                                    e
+                                ))
+                            })?,
+                    ));
+                }
+            }
+        }
+
+        if content_blocks.is_empty() {
+            continue;
+        }
+
+        // Merge into previous entry if same role, otherwise push new pair
+        if let Some(last) = pairs.last_mut() {
+            if last.0 == role {
+                last.1.extend(content_blocks);
+                continue;
+            }
+        }
+        pairs.push((role, content_blocks));
+    }
+
+    // Phase 2: Build BedrockMessages from accumulated pairs.
+    pairs
+        .into_iter()
+        .map(|(role, blocks)| {
+            BedrockMessage::builder()
+                .role(role)
+                .set_content(Some(blocks))
+                .build()
+                .map_err(|e| {
+                    ProviderError::InvalidRequest(format!("Failed to build message: {}", e))
+                })
+        })
+        .collect()
 }
 
 /// Convert serde_json::Value to AWS Document
@@ -409,6 +436,12 @@ struct StreamState {
     stop_reason: Option<StopReason>,
 }
 
+/// Check if a `BedrockContentBlock` is a `ToolResult` variant (for test assertions).
+#[cfg(test)]
+fn is_tool_result(block: &BedrockContentBlock) -> bool {
+    matches!(block, BedrockContentBlock::ToolResult(_))
+}
+
 /// Parse a Bedrock streaming event
 fn parse_bedrock_event(
     event: aws_sdk_bedrockruntime::types::ConverseStreamOutput,
@@ -516,5 +549,99 @@ fn parse_bedrock_event(
             })]
         }
         _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Message, Role, ToolResultContent};
+
+    /// Build a simple user text message.
+    fn user_msg(text: &str) -> Message {
+        Message::new(Role::User, vec![ContentBlock::Text { text: text.into() }])
+    }
+
+    /// Build an assistant message with N tool_use blocks.
+    fn assistant_tool_use(calls: &[(&str, &str)]) -> Message {
+        let blocks = calls
+            .iter()
+            .map(|(id, name)| ContentBlock::ToolUse {
+                id: ToolCallId::new(*id),
+                name: ToolName::new(*name).unwrap(),
+                input: serde_json::json!({}),
+            })
+            .collect();
+        Message::new(Role::Assistant, blocks)
+    }
+
+    /// Build a tool-result message.
+    fn tool_result(tool_use_id: &str, output: &str) -> Message {
+        Message::new(
+            Role::Tool,
+            vec![ContentBlock::ToolResult {
+                tool_use_id: ToolCallId::new(tool_use_id),
+                content: ToolResultContent::Text(output.into()),
+                is_error: false,
+            }],
+        )
+    }
+
+    #[test]
+    fn multi_tool_results_merged_into_single_user_message() {
+        // Simulate: user asks, assistant calls 2 tools, 2 separate tool results
+        let messages = vec![
+            user_msg("List files in /tmp"),
+            assistant_tool_use(&[("tu1", "list_allowed_directories"), ("tu2", "list_directory")]),
+            tool_result("tu1", "[/tmp]"),
+            tool_result("tu2", "file1.txt\nfile2.txt"),
+        ];
+
+        let bedrock = convert_messages(&messages).unwrap();
+
+        // Should be 3 messages: User, Assistant, User (merged tool results)
+        assert_eq!(bedrock.len(), 3, "expected 3 Bedrock messages, got {}", bedrock.len());
+
+        assert_eq!(bedrock[0].role(), &ConversationRole::User);
+        assert_eq!(bedrock[1].role(), &ConversationRole::Assistant);
+        assert_eq!(bedrock[2].role(), &ConversationRole::User);
+
+        // The merged User message should contain both tool results
+        let merged_content = bedrock[2].content();
+        assert_eq!(merged_content.len(), 2, "merged message should have 2 content blocks");
+        assert!(merged_content.iter().all(is_tool_result));
+    }
+
+    #[test]
+    fn single_tool_result_not_merged_with_prior_user() {
+        // Single tool call: should still produce alternating roles
+        let messages = vec![
+            user_msg("What time is it?"),
+            assistant_tool_use(&[("tu1", "get_time")]),
+            tool_result("tu1", "12:00"),
+        ];
+
+        let bedrock = convert_messages(&messages).unwrap();
+
+        assert_eq!(bedrock.len(), 3);
+        assert_eq!(bedrock[0].role(), &ConversationRole::User);
+        assert_eq!(bedrock[1].role(), &ConversationRole::Assistant);
+        assert_eq!(bedrock[2].role(), &ConversationRole::User);
+
+        // Single tool result, no merging needed
+        assert_eq!(bedrock[2].content().len(), 1);
+    }
+
+    #[test]
+    fn system_messages_skipped() {
+        let messages = vec![
+            Message::new(Role::System, vec![ContentBlock::Text { text: "You are helpful.".into() }]),
+            user_msg("Hello"),
+        ];
+
+        let bedrock = convert_messages(&messages).unwrap();
+
+        assert_eq!(bedrock.len(), 1);
+        assert_eq!(bedrock[0].role(), &ConversationRole::User);
     }
 }

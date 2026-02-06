@@ -1,51 +1,22 @@
 # TODO - agent-driver-rs
 
-## Next Up: Post-Implementation Cleanup & Hardening
+## Milestone 0: Code Quality Review
 
-The agentic loop + MCP integration was implemented in a single deep session and needs
-a thorough review pass for correctness, code quality, and adherence to project principles.
+Review codebase to owner's specifications before feature work begins.
 
-### Known Bugs (from integration testing)
+- [ ] Code quality review pass (scope TBD with owner)
+
+## Milestone 1: Fix Bedrock Tool Loop Bug
 
 - [ ] **Bedrock "Invalid request: service error"** on final text response after tool iterations.
   Likely a message formatting issue in `continue_streaming()` — Bedrock's converse API
   may reject the message history shape after tool_use + tool_result turns. Reproduce:
   `echo "List files in /tmp" | PROVIDER=bedrock cargo run --features "bedrock mcp" --bin chat -- --mcp 'npx -y @modelcontextprotocol/server-filesystem /tmp'`
 
-- [x] **`ToolInput::from_value` rejects null/empty args** — Fixed: now treats `null` as
-  empty object `{}`.
+## Milestone 2: Agent Loop Tests & ADR
 
-### Code Review & Cleanup (run with reviewer agents)
-
-- [x] **Review `src/agent/driver.rs`** — Audited: HashMap-based block type tracking,
-  ContentFilter stop reason handling, expanded doc examples, #[must_use] annotations.
-
-- [x] **Review `src/tool/mcp.rs`** — Audited: doc examples added for McpConnection and
-  McpManager, module docs enhanced.
-
-- [x] **Review `src/provider/openrouter.rs`** — Audited: HashMap for parallel tool calls,
-  VecDeque buffer bounds documented, ModelId type consistency, tracing for parse errors.
-
-- [x] **Review `src/provider/bedrock.rs`** — Audited: PosInt/NegInt fix, safe integer casts,
-  spurious Started event fix, section comments, buffer bounds documented.
-
-- [x] **Review `src/streaming.rs`** — Audited: flush_pending confirmed safe (std::mem::take),
-  parallel tool use finalization, HashMap block type tracking in collect(),
-  StreamHandle cancellation latency documented.
-
-- [x] **Review `src/bin/chat.rs`** — Audited: UTF-8 safe truncate, section comments added,
-  clippy print_with_newline fixed.
-
-- [x] **Review `src/session.rs`** — Audited: O(n²) message trimming replaced with drain(),
-  doc example added.
-
-- [x] **Audit for code duplication** — VecDeque buffering now consistent across all 5
-  providers (Anthropic, Bedrock, OpenAI, OpenRouter, Ollama) with documented buffer bounds.
-
-- [x] **Verify design principles compliance** — Full audit across 5 dimensions (type design
-  95, modern Rust 96, readability 96, parsing 97, threading 96). All at 95%+.
-
-### Testing Gaps
+- [ ] **Write ADR-0002** — Capture design decisions for agent loop and dynamic tools
+  (tool depth counting, observer pattern, flush_pending safety net, etc.)
 
 - [ ] **Unit tests for `flush_pending()`** — Verify flush works correctly for text, thinking,
   and tool_use pending state. Verify no double-flush issues.
@@ -62,45 +33,46 @@ a thorough review pass for correctness, code quality, and adherence to project p
   - McpToolWrapper content type conversion (text, error, mixed)
   - Tool schema conversion from rmcp format
 
-- [ ] **Integration test** — End-to-end test with mock MCP server (or in-process tool)
-  that exercises the full agent loop without requiring live API keys.
+## Milestone 3: Unified Claude Provider Tool Support
 
-### Documentation
+Anthropic direct API and Bedrock both target the Claude Messages API but currently
+build messages independently (Anthropic via custom JSON, Bedrock via AWS SDK types).
+OpenRouter uses OpenAI-compatible format — separate concern.
 
-- [ ] **Write ADR-0002** — Capture final design decisions for agent loop and dynamic tools
-  (tool depth counting, observer pattern, flush_pending safety net, etc.)
+- [ ] **Verify Anthropic provider works with agent loop + MCP** end-to-end
+- [ ] **Evaluate shared Claude message formatting** — Anthropic's `serialize_message()` and
+  Bedrock's `convert_messages()` both produce Claude-shaped messages. Determine if a shared
+  "Claude message builder" layer is worth extracting, or if the AWS SDK type boundary
+  makes this impractical.
+- [ ] **Extract shared code if viable** — Common Claude content block building (tool_use,
+  tool_result, thinking) that both providers adapt to their transport
 
-- [x] **Rustdoc for new public API** — Doc examples added for `AgentLoop`, `Session`,
-  `StreamHandle`, `McpConnection`, `McpManager`, `Provider`. 14 doc-tests passing.
+## Milestone 4: Integration Tests
 
-## High Priority
+- [ ] **End-to-end test with mock provider** — exercises the full agent loop without
+  requiring live API keys (mock HTTP responses or in-process mock provider)
+- [ ] **Mock MCP server test** — in-process tool that validates the MCP ↔ agent loop wiring
+- [ ] Add integration tests with mocked HTTP responses for individual providers
 
-- [ ] **Anthropic provider tool support** — Verify Anthropic direct API works with agent loop
-  (uses Claude format, not OpenAI format). Test end-to-end with MCP.
+## Someday
 
-## Medium Priority
+### Features
+- [ ] Vision Support — Image content blocks for multimodal
+- [ ] Extended Thinking — Claude's thinking blocks, signature handling
+- [ ] Structured Output — JSON schema enforcement for OpenAI
+- [ ] Token Counting — Estimate tokens before sending requests
+- [ ] Conversation Summarization — Auto-summarize long conversations
+- [ ] Caching — Response caching with cache control headers
+- [ ] Prompt Templates — Reusable prompt components
+- [ ] Cost Tracking — Track API costs per session
+- [ ] Metrics/Telemetry — OpenTelemetry integration
+- [ ] WebSocket Transport — Alternative to SSE for some providers
 
-- [ ] **Vision Support** - Image content blocks for multimodal
-- [ ] **Extended Thinking** - Claude's thinking blocks, signature handling
-- [ ] **Structured Output** - JSON schema enforcement for OpenAI
-- [ ] **Token Counting** - Estimate tokens before sending requests
-- [ ] **Conversation Summarization** - Auto-summarize long conversations
-
-## Low Priority / Future
-
-- [ ] **Caching** - Response caching with cache control headers
-- [ ] **Prompt Templates** - Reusable prompt components
-- [ ] **Cost Tracking** - Track API costs per session
-- [ ] **Metrics/Telemetry** - OpenTelemetry integration
-- [ ] **WebSocket Transport** - Alternative to SSE for some providers
-
-## Technical Debt
-
-- [ ] Add integration tests with mocked HTTP responses
-- [x] Improve error messages with actionable suggestions
+### Tech Debt
 - [ ] Add tracing spans for debugging
-- [x] Document public API with rustdoc examples
 - [ ] Benchmark streaming performance
+
+---
 
 ## Completed
 
@@ -119,25 +91,25 @@ a thorough review pass for correctness, code quality, and adherence to project p
 - [x] Session with split locks
 - [x] CLI chat client
 - [x] Bedrock inference profile support
-- [x] **Agent loop** (`src/agent/`) — typed orchestrator with observer pattern
-- [x] **MCP integration** (`src/tool/mcp.rs`) — real rmcp wiring, McpConnection/McpManager
-- [x] **Session::continue_streaming()** — tool result continuation turns
-- [x] **Chat binary agent loop** — `--mcp` CLI flags, AgentLoop integration
-- [x] **Bedrock VecDeque buffering** — multi-event stream fix
-- [x] **Bedrock duplicate Completed fix** — MessageStop vs Metadata dedup
-- [x] **OpenRouter VecDeque buffering** — same multi-event stream fix
-- [x] **OpenRouter tool_choice:auto** — enable tool calling
-- [x] **flush_pending()** — safety net for providers without ContentBlockStop
-- [x] **Serializer strict field** — only include when true
-- [x] **ToolInput null/empty fix** — `from_value` accepts `null` as empty object
-- [x] **Code review & cleanup** — All 8 review items completed via 5-dimension audit
-- [x] **Rustdoc for public API** — Doc examples on 6 key types, 14 doc-tests passing
-- [x] **Actionable error messages** — ModelIdError, TaskPoolError messages improved
-- [x] **Clippy clean** — All 9 warnings resolved (derivable_impls, unnecessary_cast, etc.)
-- [x] **Type safety hardening** — Display impls, Option<ModelId>, #[must_use], expect()
-- [x] **Provider event buffering** — VecDeque in all 5 providers (was dropping events)
-- [x] **Parsing fixes** — PosInt/NegInt, safe casts, ContentFilter, parallel tool calls
-- [x] **Threading fixes** — O(n²) drain, TaskPool TOCTOU, cancellation docs
+- [x] Agent loop (`src/agent/`) — typed orchestrator with observer pattern
+- [x] MCP integration (`src/tool/mcp.rs`) — real rmcp wiring, McpConnection/McpManager
+- [x] Session::continue_streaming() — tool result continuation turns
+- [x] Chat binary agent loop — `--mcp` CLI flags, AgentLoop integration
+- [x] Bedrock VecDeque buffering — multi-event stream fix
+- [x] Bedrock duplicate Completed fix — MessageStop vs Metadata dedup
+- [x] OpenRouter VecDeque buffering — same multi-event stream fix
+- [x] OpenRouter tool_choice:auto — enable tool calling
+- [x] flush_pending() — safety net for providers without ContentBlockStop
+- [x] Serializer strict field — only include when true
+- [x] ToolInput null/empty fix — `from_value` accepts `null` as empty object
+- [x] Code review & cleanup — All 8 review items completed via 5-dimension audit
+- [x] Rustdoc for public API — Doc examples on 6 key types, 14 doc-tests passing
+- [x] Actionable error messages — ModelIdError, TaskPoolError messages improved
+- [x] Clippy clean — All 9 warnings resolved
+- [x] Type safety hardening — Display impls, Option<ModelId>, #[must_use], expect()
+- [x] Provider event buffering — VecDeque in all 5 providers
+- [x] Parsing fixes — PosInt/NegInt, safe casts, ContentFilter, parallel tool calls
+- [x] Threading fixes — O(n²) drain, TaskPool TOCTOU, cancellation docs
 
 ## Notes
 

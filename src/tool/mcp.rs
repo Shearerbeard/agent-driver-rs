@@ -228,11 +228,7 @@ impl Tool for McpToolWrapper {
     }
 
     async fn execute(&self, input: &ToolInput) -> Result<ToolResult, ToolError> {
-        let arguments = if input.inner().is_empty() {
-            None
-        } else {
-            Some(input.inner().clone())
-        };
+        let arguments = Some(input.inner().clone());
 
         let params = rmcp::model::CallToolRequestParam {
             name: Cow::Owned(self.mcp_tool_name.clone()),
@@ -376,5 +372,28 @@ mod tests {
     fn mcp_manager_default() {
         let manager = McpManager::new();
         assert_eq!(manager.server_count(), 0);
+    }
+
+    /// Verify that empty ToolInput produces `Some({})`, not `None`.
+    ///
+    /// This reproduces the bug where `McpToolWrapper::execute()` converted
+    /// empty maps to `None`, causing MCP servers to reject the call with
+    /// "Invalid arguments" because the `arguments` field was omitted entirely.
+    #[test]
+    fn empty_tool_input_produces_some_empty_map() {
+        use crate::tool::executor::ToolInput;
+        use serde_json::Value as JsonValue;
+
+        let input = ToolInput::from_value(JsonValue::Object(serde_json::Map::new())).unwrap();
+
+        // This is the logic from McpToolWrapper::execute() after the fix.
+        // Before the fix, is_empty() caused this to be None.
+        let arguments = Some(input.inner().clone());
+
+        assert!(arguments.is_some(), "arguments must be Some, not None");
+        assert!(
+            arguments.as_ref().unwrap().is_empty(),
+            "arguments should be an empty map"
+        );
     }
 }

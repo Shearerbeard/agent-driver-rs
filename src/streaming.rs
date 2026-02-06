@@ -169,9 +169,9 @@ impl CollectedResponse {
                 // This handles parallel tool calls from providers that don't
                 // emit ContentBlockStop between tool calls (e.g., OpenRouter).
                 if let Some(prev) = self.pending_tool_use.take() {
-                    // Fallback to Null if accumulated JSON fragments are incomplete.
+                    // Fallback to empty object if accumulated JSON fragments are incomplete.
                     let input = serde_json::from_str(&prev.input_json)
-                        .unwrap_or(JsonValue::Null);
+                        .unwrap_or_else(|_| serde_json::json!({}));
                     self.content.push(ContentBlock::ToolUse {
                         id: prev.id,
                         name: prev.name,
@@ -210,10 +210,10 @@ impl CollectedResponse {
             }
             ContentBlockType::ToolUse => {
                 if let Some(pending) = self.pending_tool_use.take() {
-                    // Fallback to Null if accumulated JSON fragments are incomplete
+                    // Fallback to empty object if accumulated JSON fragments are incomplete
                     // (e.g., stream interrupted mid-tool-input).
                     let input = serde_json::from_str(&pending.input_json)
-                        .unwrap_or(JsonValue::Null);
+                        .unwrap_or_else(|_| serde_json::json!({}));
                     self.content.push(ContentBlock::ToolUse {
                         id: pending.id,
                         name: pending.name,
@@ -242,10 +242,10 @@ impl CollectedResponse {
             });
         }
         if let Some(pending) = self.pending_tool_use.take() {
-            // Fallback to Null if accumulated JSON fragments are incomplete
+            // Fallback to empty object if accumulated JSON fragments are incomplete
             // (e.g., stream ended without explicit ContentBlockStop).
             let input =
-                serde_json::from_str(&pending.input_json).unwrap_or(JsonValue::Null);
+                serde_json::from_str(&pending.input_json).unwrap_or_else(|_| serde_json::json!({}));
             self.content.push(ContentBlock::ToolUse {
                 id: pending.id,
                 name: pending.name,
@@ -527,6 +527,53 @@ mod tests {
         response.finalize_block(ContentBlockType::Thinking);
 
         assert_eq!(response.thinking(), "Let me think...");
+    }
+
+    /// Verify that malformed/empty tool input JSON produces `{}` (empty object),
+    /// not `null`. This ensures `ContentBlock::ToolUse { input }` always contains
+    /// a valid object that passes MCP schema validation.
+    #[test]
+    fn tool_use_with_empty_input_produces_empty_object() {
+        let mut response = CollectedResponse::new();
+        response.apply_delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new("call_empty"),
+            name: ToolName::new("list_dirs").unwrap(),
+        });
+        // No ToolInputDelta — simulates a tool with no arguments
+        response.finalize_block(ContentBlockType::ToolUse);
+
+        let tool_uses = response.tool_uses();
+        assert_eq!(tool_uses.len(), 1);
+        assert!(
+            tool_uses[0].2.is_object(),
+            "tool input should be an object, got: {:?}",
+            tool_uses[0].2,
+        );
+    }
+
+    /// Verify that interrupted/malformed tool input JSON produces `{}`,
+    /// not `null`, when flushed at stream end.
+    #[test]
+    fn tool_use_with_malformed_input_produces_empty_object() {
+        let mut response = CollectedResponse::new();
+        response.apply_delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new("call_bad"),
+            name: ToolName::new("broken_tool").unwrap(),
+        });
+        response.apply_delta(StreamDelta::ToolInputDelta {
+            id: ToolCallId::new("call_bad"),
+            partial_json: "{\"truncated\":".into(),
+        });
+        // Flush without finalize — simulates stream ending abruptly
+        response.flush_pending();
+
+        let tool_uses = response.tool_uses();
+        assert_eq!(tool_uses.len(), 1);
+        assert!(
+            tool_uses[0].2.is_object(),
+            "malformed input should fall back to empty object, got: {:?}",
+            tool_uses[0].2,
+        );
     }
 
     #[test]

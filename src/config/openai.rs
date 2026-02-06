@@ -207,6 +207,15 @@ impl OpenAiConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if let OpenAiModel::Custom(ref s) = self.model {
+            if s.is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "model",
+                    reason: "custom model string must not be empty".into(),
+                });
+            }
+        }
+
         // Temperature not allowed on reasoning models
         if self.temperature.is_some() && !self.model.supports_temperature() {
             return Err(ConfigError::InvalidValue {

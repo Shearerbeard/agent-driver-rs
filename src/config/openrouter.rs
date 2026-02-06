@@ -120,6 +120,45 @@ impl OpenRouterConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
+        // Custom model strings must be non-empty and contain a `/` (provider/model format)
+        if let OpenRouterModel::Custom(ref s) = self.model {
+            if s.is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "model",
+                    reason: "custom model string must not be empty".into(),
+                });
+            }
+            if !s.contains('/') {
+                return Err(ConfigError::InvalidValue {
+                    field: "model",
+                    reason: format!(
+                        "OpenRouter model must be in 'provider/model' format, got: {}",
+                        s
+                    ),
+                });
+            }
+        }
+
+        // Validate provider preferences entries are non-empty
+        if let Some(ref prefs) = self.provider_preferences {
+            for entry in &prefs.allow {
+                if entry.is_empty() {
+                    return Err(ConfigError::InvalidValue {
+                        field: "provider_preferences.allow",
+                        reason: "entries must not be empty".into(),
+                    });
+                }
+            }
+            for entry in &prefs.deny {
+                if entry.is_empty() {
+                    return Err(ConfigError::InvalidValue {
+                        field: "provider_preferences.deny",
+                        reason: "entries must not be empty".into(),
+                    });
+                }
+            }
+        }
+
         Ok(())
     }
 }

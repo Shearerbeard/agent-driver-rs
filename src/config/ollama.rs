@@ -205,6 +205,14 @@ impl OllamaConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if let OllamaModel::Custom(ref s) = self.model {
+            if s.is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "model",
+                    reason: "custom model string must not be empty".into(),
+                });
+            }
+        }
         Ok(())
     }
 }

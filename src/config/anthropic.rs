@@ -95,6 +95,15 @@ impl AnthropicConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if let AnthropicModel::Custom(ref s) = self.model {
+            if s.is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "model",
+                    reason: "custom model string must not be empty".into(),
+                });
+            }
+        }
+
         if let Some(thinking) = &self.thinking {
             if thinking.budget_tokens() < ThinkingConfig::MIN_BUDGET {
                 return Err(ConfigError::InvalidValue {

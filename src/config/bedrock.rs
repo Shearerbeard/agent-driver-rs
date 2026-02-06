@@ -116,7 +116,14 @@ impl BedrockConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Basic validation - could add more checks
+        if let BedrockModel::Custom(ref s) = self.model {
+            if s.is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "model",
+                    reason: "custom model string must not be empty".into(),
+                });
+            }
+        }
         Ok(())
     }
 }

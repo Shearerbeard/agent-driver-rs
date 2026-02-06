@@ -172,70 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Using provider: {}", config.provider_kind());
 
     // ── Provider creation ──────────────────────────────────────────────
-    let (provider, model_id, completion_config): (Arc<dyn Provider>, ModelId, CompletionConfig) =
-        match config {
-            ProviderConfig::Anthropic(cfg) => {
-                let model_id = ModelId::new(cfg.model.as_str())?;
-                let completion_config = CompletionConfig {
-                    max_tokens: cfg.max_tokens,
-                    temperature: cfg.temperature,
-                    stop_sequences: vec![],
-                };
-                let provider = agent_driver_rs::provider::AnthropicProvider::new(cfg)?;
-                (Arc::new(provider), model_id, completion_config)
-            }
-            #[cfg(feature = "openai")]
-            ProviderConfig::OpenAi(cfg) => {
-                let model_id = ModelId::new(cfg.model.as_str())?;
-                let completion_config = CompletionConfig {
-                    max_tokens: cfg.max_tokens,
-                    temperature: cfg.temperature,
-                    stop_sequences: vec![],
-                };
-                let provider = agent_driver_rs::provider::OpenAiProvider::new(cfg)?;
-                (Arc::new(provider), model_id, completion_config)
-            }
-            #[cfg(feature = "bedrock")]
-            ProviderConfig::Bedrock(cfg) => {
-                let model_id = ModelId::new(cfg.model.model_id())?;
-                let completion_config = CompletionConfig {
-                    max_tokens: cfg.max_tokens,
-                    temperature: cfg.temperature,
-                    stop_sequences: vec![],
-                };
-                let provider = agent_driver_rs::provider::BedrockProvider::new(cfg).await?;
-                (Arc::new(provider), model_id, completion_config)
-            }
-            #[cfg(feature = "openrouter")]
-            ProviderConfig::OpenRouter(cfg) => {
-                let model_id = ModelId::new(cfg.model.as_str())?;
-                let completion_config = CompletionConfig {
-                    max_tokens: cfg.max_tokens,
-                    temperature: cfg.temperature,
-                    stop_sequences: vec![],
-                };
-                let provider = agent_driver_rs::provider::OpenRouterProvider::new(cfg)?;
-                (Arc::new(provider), model_id, completion_config)
-            }
-            #[cfg(feature = "ollama")]
-            ProviderConfig::Ollama(cfg) => {
-                let model_id = ModelId::new(cfg.model.as_str())?;
-                let completion_config = CompletionConfig {
-                    // Safe: 4096 is a hardcoded non-zero constant
-                    max_tokens: cfg
-                        .max_tokens
-                        .unwrap_or_else(|| agent_driver_rs::MaxTokens::new(4096).expect("4096 is non-zero")),
-                    temperature: cfg.temperature,
-                    stop_sequences: vec![],
-                };
-                let provider = agent_driver_rs::provider::OllamaProvider::new(cfg)?;
-                (Arc::new(provider), model_id, completion_config)
-            }
-            #[allow(unreachable_patterns)]
-            _ => {
-                return Err("Provider not enabled in features".into());
-            }
-        };
+    let (provider, model_id, completion_config) = create_provider(config).await?;
 
     println!("Using model: {}", model_id);
 
@@ -253,95 +190,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── MCP server connections (optional) ─────────────────────────────
     #[cfg(feature = "mcp")]
-    let _mcp_keepalive = {
-        let mut keepalive = McpKeepAlive {
-            connections: Vec::new(),
-        };
+    let _mcp_keepalive = setup_mcp_connections(&args, &session).await?;
 
-        // From CLI --mcp args
-        for (i, server_cmd) in args.mcp_servers.iter().enumerate() {
-            let parts: Vec<&str> = server_cmd.split_whitespace().collect();
-            if parts.is_empty() {
-                eprintln!("Warning: empty MCP server command, skipping");
-                continue;
-            }
-            let name = format!("mcp-{}", i);
-            let command = parts[0];
-            let cmd_args: Vec<&str> = parts[1..].to_vec();
-            eprintln!("Connecting to MCP server '{}': {}", name, server_cmd);
-            match agent_driver_rs::tool::McpConnection::connect_stdio(&name, command, &cmd_args)
-                .await
-            {
-                Ok(conn) => {
-                    match conn.sync_tools(session.tool_registry()).await {
-                        Ok(count) => eprintln!("  Discovered {} tools from '{}'", count, name),
-                        Err(e) => eprintln!(
-                            "  Warning: failed to discover tools from '{}': {}",
-                            name, e
-                        ),
-                    }
-                    keepalive.connections.push(conn);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "  Warning: failed to connect to MCP server '{}': {}",
-                        name, e
-                    );
-                }
-            }
-        }
-
-        // From --mcp-config file
-        if let Some(config_path) = &args.mcp_config {
-            let content = std::fs::read_to_string(config_path)
-                .map_err(|e| format!("Failed to read MCP config '{}': {}", config_path, e))?;
-            let config_file: McpConfigFile = serde_json::from_str(&content)
-                .map_err(|e| format!("Failed to parse MCP config '{}': {}", config_path, e))?;
-
-            for entry in &config_file.servers {
-                let cmd_args: Vec<&str> = entry.args.iter().map(|s| s.as_str()).collect();
-                eprintln!(
-                    "Connecting to MCP server '{}': {} {}",
-                    entry.name,
-                    entry.command,
-                    entry.args.join(" ")
-                );
-                match agent_driver_rs::tool::McpConnection::connect_stdio(
-                    &entry.name,
-                    &entry.command,
-                    &cmd_args,
-                )
-                .await
-                {
-                    Ok(conn) => {
-                        match conn.sync_tools(session.tool_registry()).await {
-                            Ok(count) => {
-                                eprintln!(
-                                    "  Discovered {} tools from '{}'",
-                                    count, entry.name
-                                )
-                            }
-                            Err(e) => eprintln!(
-                                "  Warning: failed to discover tools from '{}': {}",
-                                entry.name, e
-                            ),
-                        }
-                        keepalive.connections.push(conn);
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "  Warning: failed to connect to MCP server '{}': {}",
-                            entry.name, e
-                        );
-                    }
-                }
-            }
-        }
-
-        keepalive
-    };
-
-    // When MCP is not enabled, warn if --mcp args were passed
     #[cfg(not(feature = "mcp"))]
     if !args.mcp_servers.is_empty() {
         eprintln!(
@@ -443,4 +293,162 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     session.shutdown().await;
 
     Ok(())
+}
+
+/// Create a provider, model ID, and completion config from the unified config enum.
+async fn create_provider(
+    config: ProviderConfig,
+) -> Result<(Arc<dyn Provider>, ModelId, CompletionConfig), Box<dyn std::error::Error>> {
+    match config {
+        ProviderConfig::Anthropic(cfg) => {
+            let model_id = ModelId::new(cfg.model.as_str())?;
+            let completion_config = CompletionConfig {
+                max_tokens: cfg.max_tokens,
+                temperature: cfg.temperature,
+                stop_sequences: vec![],
+            };
+            let provider = agent_driver_rs::provider::AnthropicProvider::new(cfg)?;
+            Ok((Arc::new(provider), model_id, completion_config))
+        }
+        #[cfg(feature = "openai")]
+        ProviderConfig::OpenAi(cfg) => {
+            let model_id = ModelId::new(cfg.model.as_str())?;
+            let completion_config = CompletionConfig {
+                max_tokens: cfg.max_tokens,
+                temperature: cfg.temperature,
+                stop_sequences: vec![],
+            };
+            let provider = agent_driver_rs::provider::OpenAiProvider::new(cfg)?;
+            Ok((Arc::new(provider), model_id, completion_config))
+        }
+        #[cfg(feature = "bedrock")]
+        ProviderConfig::Bedrock(cfg) => {
+            let model_id = ModelId::new(cfg.model.model_id())?;
+            let completion_config = CompletionConfig {
+                max_tokens: cfg.max_tokens,
+                temperature: cfg.temperature,
+                stop_sequences: vec![],
+            };
+            let provider = agent_driver_rs::provider::BedrockProvider::new(cfg).await?;
+            Ok((Arc::new(provider), model_id, completion_config))
+        }
+        #[cfg(feature = "openrouter")]
+        ProviderConfig::OpenRouter(cfg) => {
+            let model_id = ModelId::new(cfg.model.as_str())?;
+            let completion_config = CompletionConfig {
+                max_tokens: cfg.max_tokens,
+                temperature: cfg.temperature,
+                stop_sequences: vec![],
+            };
+            let provider = agent_driver_rs::provider::OpenRouterProvider::new(cfg)?;
+            Ok((Arc::new(provider), model_id, completion_config))
+        }
+        #[cfg(feature = "ollama")]
+        ProviderConfig::Ollama(cfg) => {
+            let model_id = ModelId::new(cfg.model.as_str())?;
+            let completion_config = CompletionConfig {
+                max_tokens: cfg
+                    .max_tokens
+                    // Safe: 4096 is a hardcoded non-zero constant
+                    .unwrap_or_else(|| agent_driver_rs::MaxTokens::new(4096).expect("4096 is non-zero")),
+                temperature: cfg.temperature,
+                stop_sequences: vec![],
+            };
+            let provider = agent_driver_rs::provider::OllamaProvider::new(cfg)?;
+            Ok((Arc::new(provider), model_id, completion_config))
+        }
+        #[allow(unreachable_patterns)]
+        _ => Err("Provider not enabled in features".into()),
+    }
+}
+
+/// Connect to MCP servers from CLI args and config file.
+///
+/// Returns a keepalive handle that must be held for the duration of the session
+/// to prevent the child processes from being dropped.
+#[cfg(feature = "mcp")]
+async fn setup_mcp_connections(
+    args: &Args,
+    session: &agent_driver_rs::Session,
+) -> Result<McpKeepAlive, Box<dyn std::error::Error>> {
+    let mut keepalive = McpKeepAlive {
+        connections: Vec::new(),
+    };
+
+    // From CLI --mcp args
+    for (i, server_cmd) in args.mcp_servers.iter().enumerate() {
+        let parts: Vec<&str> = server_cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            eprintln!("Warning: empty MCP server command, skipping");
+            continue;
+        }
+        let name = format!("mcp-{}", i);
+        let command = parts[0];
+        let cmd_args: Vec<&str> = parts[1..].to_vec();
+        eprintln!("Connecting to MCP server '{}': {}", name, server_cmd);
+        match agent_driver_rs::tool::McpConnection::connect_stdio(&name, command, &cmd_args).await {
+            Ok(conn) => {
+                match conn.sync_tools(session.tool_registry()).await {
+                    Ok(count) => eprintln!("  Discovered {} tools from '{}'", count, name),
+                    Err(e) => eprintln!(
+                        "  Warning: failed to discover tools from '{}': {}",
+                        name, e
+                    ),
+                }
+                keepalive.connections.push(conn);
+            }
+            Err(e) => {
+                eprintln!(
+                    "  Warning: failed to connect to MCP server '{}': {}",
+                    name, e
+                );
+            }
+        }
+    }
+
+    // From --mcp-config file
+    if let Some(config_path) = &args.mcp_config {
+        let content = std::fs::read_to_string(config_path)
+            .map_err(|e| format!("Failed to read MCP config '{}': {}", config_path, e))?;
+        let config_file: McpConfigFile = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse MCP config '{}': {}", config_path, e))?;
+
+        for entry in &config_file.servers {
+            let cmd_args: Vec<&str> = entry.args.iter().map(|s| s.as_str()).collect();
+            eprintln!(
+                "Connecting to MCP server '{}': {} {}",
+                entry.name,
+                entry.command,
+                entry.args.join(" ")
+            );
+            match agent_driver_rs::tool::McpConnection::connect_stdio(
+                &entry.name,
+                &entry.command,
+                &cmd_args,
+            )
+            .await
+            {
+                Ok(conn) => {
+                    match conn.sync_tools(session.tool_registry()).await {
+                        Ok(count) => {
+                            eprintln!("  Discovered {} tools from '{}'", count, entry.name)
+                        }
+                        Err(e) => eprintln!(
+                            "  Warning: failed to discover tools from '{}': {}",
+                            entry.name, e
+                        ),
+                    }
+                    keepalive.connections.push(conn);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "  Warning: failed to connect to MCP server '{}': {}",
+                        entry.name, e
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(keepalive)
 }

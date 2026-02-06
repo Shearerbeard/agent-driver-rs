@@ -3,6 +3,7 @@
 //! This module defines the core `Provider` trait that all LLM providers implement.
 
 mod retry;
+pub(crate) mod stream_adapter;
 
 pub use retry::{with_retry, RetryConfig};
 

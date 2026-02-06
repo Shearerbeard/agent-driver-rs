@@ -3,13 +3,12 @@
 //! OpenRouter provides access to multiple LLM providers through a unified API.
 //! Uses OpenAI-compatible format with SSE streaming.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use reqwest_eventsource::{Event, EventSource};
+use reqwest_eventsource::EventSource;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
@@ -331,98 +330,32 @@ impl Provider for OpenRouterProvider {
     }
 }
 
-/// State for the stream unfold, including a buffer for multi-event SSE messages.
+/// Create a stream from OpenRouter SSE events.
 ///
-/// # Buffer bound safety
-///
-/// The `pending` VecDeque is bounded in practice because `parse_openrouter_event`
-/// returns at most 2 + (N_tool_calls * 3) events per SSE message, where
-/// N_tool_calls is the number of tool calls in a single chunk (typically 1).
-/// In the worst observed case (first chunk with one tool call):
-///   Started + ContentBlockStart + ContentBlockStart + ToolUseStart + ToolInputDelta = 5
-/// The buffer is fully drained before fetching the next SSE message, so it
-/// never accumulates across messages.
-struct UnfoldState {
-    event_source: EventSource,
-    cancellation: tokio_util::sync::CancellationToken,
-    stream_state: StreamState,
-    pending: VecDeque<Result<StreamEvent, StreamError>>,
-}
-
-/// Create a stream from OpenRouter SSE events
+/// Uses the shared [`buffered_sse_stream`](super::stream_adapter::buffered_sse_stream)
+/// adapter with OpenRouter-specific event parsing. OpenRouter uses `"[DONE]"` as
+/// its stream termination marker; the `on_done` callback emits a `Completed` event
+/// with the model, stop reason, and usage accumulated in state.
 fn create_openrouter_stream(
     event_source: EventSource,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> impl futures::Stream<Item = Result<StreamEvent, StreamError>> {
-    let unfold_state = UnfoldState {
+    super::stream_adapter::buffered_sse_stream(
         event_source,
         cancellation,
-        stream_state: StreamState::default(),
-        pending: VecDeque::new(),
-    };
-
-    futures::stream::unfold(unfold_state, |mut s| async move {
-        // Drain buffered events first
-        if let Some(event) = s.pending.pop_front() {
-            return Some((event, s));
-        }
-
-        loop {
-            if s.cancellation.is_cancelled() {
-                return None;
-            }
-
-            tokio::select! {
-                biased;
-
-                _ = s.cancellation.cancelled() => {
-                    return None;
-                }
-
-                event = s.event_source.next() => {
-                    match event {
-                        Some(Ok(Event::Open)) => continue,
-                        Some(Ok(Event::Message(msg))) => {
-                            // OpenAI-style [DONE] marker
-                            if msg.data == "[DONE]" {
-                                let event = StreamEvent::Completed {
-                                    metadata: CompletionMetadata {
-                                        model: s.stream_state.model.clone(),
-                                        stop_reason: s.stream_state.stop_reason,
-                                        usage: s.stream_state.usage,
-                                    },
-                                };
-                                return Some((Ok(event), s));
-                            }
-
-                            match parse_openrouter_event(&msg.data, &mut s.stream_state) {
-                                Some(Ok(events)) => {
-                                    let mut iter = events.into_iter();
-                                    if let Some(first) = iter.next() {
-                                        // Buffer remaining events
-                                        for remaining in iter {
-                                            s.pending.push_back(Ok(remaining));
-                                        }
-                                        return Some((Ok(first), s));
-                                    }
-                                    continue;
-                                }
-                                Some(Err(e)) => {
-                                    return Some((Err(e), s));
-                                }
-                                None => continue,
-                            }
-                        }
-                        Some(Err(e)) => {
-                            let err = StreamError::ConnectionLost(e.to_string());
-                            return Some((Err(err), s));
-                        }
-                        None => return None,
-                    }
-                }
-            }
-        }
-    })
+        StreamState::default(),
+        Some("[DONE]"),
+        parse_openrouter_event,
+        |state| {
+            Some(StreamEvent::Completed {
+                metadata: CompletionMetadata {
+                    model: state.model.clone(),
+                    stop_reason: state.stop_reason,
+                    usage: state.usage,
+                },
+            })
+        },
+    )
 }
 
 /// State for tracking stream parsing

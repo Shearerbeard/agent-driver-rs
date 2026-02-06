@@ -16,7 +16,6 @@ use async_openai::types::{
     CreateChatCompletionRequestArgs, FunctionObjectArgs,
 };
 use async_openai::Client;
-use futures::StreamExt;
 
 use crate::config::OpenAiConfig;
 use crate::error::{ProviderError, StreamError};
@@ -333,74 +332,25 @@ impl Provider for OpenAiProvider {
                 }
             })?;
 
-            // Create cancellation-aware event stream with pending buffer
-            // to avoid dropping events when parse_openai_chunk returns multiple
-            // events per chunk (e.g. Started + ContentBlockStart, or
-            // ContentBlockStart + ToolUseStart).
-            //
-            // Buffer bound safety: parse_openai_chunk returns at most
-            // 2 + (N_tool_calls * 3) events per chunk, where N_tool_calls
-            // is the number of tool calls in a single SSE chunk (typically 1).
-            // In the worst observed case (first chunk with one tool call):
-            //   Started + ContentBlockStart + ContentBlockStart + ToolUseStart + ToolInputDelta = 5
-            // The buffer is fully drained before fetching the next chunk, so
-            // it never accumulates across chunks.
-            let cancellation = ctx.cancellation.clone();
-
-            let event_stream = futures::stream::unfold(
-                (stream, cancellation.clone(), StreamState::default(), std::collections::VecDeque::<Result<StreamEvent, StreamError>>::new()),
-                |(mut stream, cancel, mut state, mut pending)| async move {
-                    // Drain buffered events first
-                    if let Some(event) = pending.pop_front() {
-                        return Some((event, (stream, cancel, state, pending)));
-                    }
-
-                    if cancel.is_cancelled() {
-                        return None;
-                    }
-
-                    tokio::select! {
-                        biased;
-
-                        _ = cancel.cancelled() => {
-                            None
-                        }
-
-                        response_opt = stream.next() => {
-                            match response_opt {
-                                Some(Ok(response)) => {
-                                    let mut events = parse_openai_chunk(response, &mut state);
-                                    if events.is_empty() {
-                                        // Keep stream going with a no-op
-                                        Some((Ok(StreamEvent::Started {
-                                            metadata: CompletionMetadata::default()
-                                        }), (stream, cancel, state, pending)))
-                                    } else {
-                                        let first = events.remove(0);
-                                        pending.extend(events);
-                                        Some((first, (stream, cancel, state, pending)))
-                                    }
-                                }
-                                Some(Err(e)) => {
-                                    Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state, pending)))
-                                }
-                                None => {
-                                    // Stream ended - send completion event
-                                    if !state.completed {
-                                        state.completed = true;
-                                        Some((Ok(StreamEvent::Completed {
-                                            metadata: CompletionMetadata {
-                                                model: state.model.clone(),
-                                                stop_reason: state.stop_reason,
-                                                usage: state.usage,
-                                            }
-                                        }), (stream, cancel, state, pending)))
-                                    } else {
-                                        None
-                                    }
-                                }
-                            }
-                        }
+            let event_stream = super::stream_adapter::buffered_sdk_stream(
+                stream,
+                ctx.cancellation.clone(),
+                StreamState::default(),
+                |item, state| match item {
+                    Ok(response) => parse_openai_chunk(response, state),
+                    Err(e) => vec![Err(StreamError::ConnectionLost(e.to_string()))],
+                },
+                |state| {
+                    if !state.completed {
+                        Some(Ok(StreamEvent::Completed {
+                            metadata: CompletionMetadata {
+                                model: state.model.clone(),
+                                stop_reason: state.stop_reason,
+                                usage: state.usage,
+                            },
+                        }))
+                    } else {
+                        None
                     }
                 },
             );

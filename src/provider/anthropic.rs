@@ -9,9 +9,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use reqwest_eventsource::{Event, EventSource};
+use reqwest_eventsource::EventSource;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
@@ -255,84 +254,23 @@ impl Provider for AnthropicProvider {
     }
 }
 
-/// State for the stream unfold, including a buffer for multi-event SSE messages.
+/// Create a stream from Anthropic SSE events.
 ///
-/// # Buffer bound safety
-///
-/// The `pending` VecDeque is bounded in practice because `parse_anthropic_event`
-/// returns at most 2 events per SSE message (the worst case is `ContentBlockStart`
-/// for a tool_use block, which emits `ContentBlockStart` + `ToolUseStart`). All
-/// other event types produce exactly 0 or 1 events. The buffer is drained one
-/// element per `poll_next` call, so it never accumulates across SSE messages.
-struct UnfoldState {
-    event_source: EventSource,
-    cancellation: tokio_util::sync::CancellationToken,
-    stream_state: StreamState,
-    pending: std::collections::VecDeque<Result<StreamEvent, StreamError>>,
-}
-
-/// Create a stream from Anthropic SSE events
+/// Uses the shared [`buffered_sse_stream`](super::stream_adapter::buffered_sse_stream)
+/// adapter with Anthropic-specific event parsing. Anthropic doesn't use a done
+/// marker — the stream terminates when the `EventSource` closes.
 fn create_anthropic_stream(
     event_source: EventSource,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> impl futures::Stream<Item = Result<StreamEvent, StreamError>> {
-    let unfold_state = UnfoldState {
+    super::stream_adapter::buffered_sse_stream(
         event_source,
         cancellation,
-        stream_state: StreamState::default(),
-        pending: std::collections::VecDeque::new(),
-    };
-
-    futures::stream::unfold(unfold_state, |mut s| async move {
-        // Drain buffered events first
-        if let Some(event) = s.pending.pop_front() {
-            return Some((event, s));
-        }
-
-        loop {
-            if s.cancellation.is_cancelled() {
-                return None;
-            }
-
-            tokio::select! {
-                biased;
-
-                _ = s.cancellation.cancelled() => {
-                    return None;
-                }
-
-                event = s.event_source.next() => {
-                    match event {
-                        Some(Ok(Event::Open)) => continue,
-                        Some(Ok(Event::Message(msg))) => {
-                            match parse_anthropic_event(&msg.data, &mut s.stream_state) {
-                                Some(Ok(events)) => {
-                                    let mut iter = events.into_iter();
-                                    if let Some(first) = iter.next() {
-                                        // Buffer remaining events
-                                        for remaining in iter {
-                                            s.pending.push_back(Ok(remaining));
-                                        }
-                                        return Some((Ok(first), s));
-                                    }
-                                    continue;
-                                }
-                                Some(Err(e)) => {
-                                    return Some((Err(e), s));
-                                }
-                                None => continue,
-                            }
-                        }
-                        Some(Err(e)) => {
-                            let err = StreamError::ConnectionLost(e.to_string());
-                            return Some((Err(err), s));
-                        }
-                        None => return None,
-                    }
-                }
-            }
-        }
-    })
+        StreamState::default(),
+        None, // Anthropic has no done marker
+        parse_anthropic_event,
+        |_state| None, // No done marker → no final event
+    )
 }
 
 /// State for tracking stream parsing

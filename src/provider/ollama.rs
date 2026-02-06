@@ -7,7 +7,6 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use futures::StreamExt;
 use ollama_rs::generation::chat::request::ChatMessageRequest;
 use ollama_rs::generation::chat::{ChatMessage, ChatMessageResponseStream, MessageRole};
 use ollama_rs::models::ModelOptions;
@@ -159,73 +158,25 @@ impl Provider for OllamaProvider {
                 .await
                 .map_err(|e| ProviderError::InvalidRequest(format!("Ollama error: {}", e)))?;
 
-            // Wrap stream with cancellation support and pending buffer
-            // to avoid dropping events when parse_ollama_response returns
-            // multiple events per chunk (e.g. Started + ContentBlockStart + TextDelta).
-            //
-            // Buffer bound safety: parse_ollama_response returns at most 4
-            // events per chunk (the first chunk when done=true could emit:
-            //   Started + ContentBlockStart + TextDelta + ContentBlockStop = 4).
-            // Typical chunks produce 1-2 events. The buffer is fully drained
-            // before the next raw chunk is fetched, so it never accumulates
-            // across chunks.
-            let cancellation = ctx.cancellation.clone();
-            let model_name = model.clone();
-
-            let event_stream = futures::stream::unfold(
-                (stream, cancellation.clone(), StreamState::new(model_name), std::collections::VecDeque::<Result<StreamEvent, StreamError>>::new()),
-                |(mut stream, cancel, mut state, mut pending)| async move {
-                    // Drain buffered events first
-                    if let Some(event) = pending.pop_front() {
-                        return Some((event, (stream, cancel, state, pending)));
-                    }
-
-                    if cancel.is_cancelled() {
-                        return None;
-                    }
-
-                    tokio::select! {
-                        biased;
-
-                        _ = cancel.cancelled() => {
-                            None
-                        }
-
-                        response_opt = stream.next() => {
-                            match response_opt {
-                                Some(Ok(response)) => {
-                                    let mut events = parse_ollama_response(response, &mut state);
-                                    if events.is_empty() {
-                                        // Keep stream going
-                                        Some((Ok(StreamEvent::Started {
-                                            metadata: CompletionMetadata::default()
-                                        }), (stream, cancel, state, pending)))
-                                    } else {
-                                        let first = events.remove(0);
-                                        pending.extend(events);
-                                        Some((first, (stream, cancel, state, pending)))
-                                    }
-                                }
-                                Some(Err(())) => {
-                                    Some((Err(StreamError::ConnectionLost("Stream error".to_string())), (stream, cancel, state, pending)))
-                                }
-                                None => {
-                                    // Stream ended
-                                    if !state.completed {
-                                        state.completed = true;
-                                        Some((Ok(StreamEvent::Completed {
-                                            metadata: CompletionMetadata {
-                                                model: state.model.clone(),
-                                                stop_reason: Some(StopReason::EndTurn),
-                                                usage: state.usage,
-                                            }
-                                        }), (stream, cancel, state, pending)))
-                                    } else {
-                                        None
-                                    }
-                                }
-                            }
-                        }
+            let event_stream = super::stream_adapter::buffered_sdk_stream(
+                stream,
+                ctx.cancellation.clone(),
+                StreamState::new(model.clone()),
+                |item, state| match item {
+                    Ok(response) => parse_ollama_response(response, state),
+                    Err(()) => vec![Err(StreamError::ConnectionLost("Stream error".to_string()))],
+                },
+                |state| {
+                    if !state.completed {
+                        Some(Ok(StreamEvent::Completed {
+                            metadata: CompletionMetadata {
+                                model: state.model.clone(),
+                                stop_reason: Some(StopReason::EndTurn),
+                                usage: state.usage,
+                            },
+                        }))
+                    } else {
+                        None
                     }
                 },
             );

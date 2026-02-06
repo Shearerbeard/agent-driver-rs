@@ -179,25 +179,8 @@ impl Session {
         let user_msg = Message::user(msg);
         self.add_message(user_msg).await;
 
-        // Snapshot state (release locks before provider call)
-        let system = self.system_prompt.read().await.clone();
-        let messages = self.messages.read().await.clone();
-        let tools = self.tools.list().await;
-
-        let request = CompletionRequest {
-            model: self.config.model.clone(),
-            system: Some(system),
-            messages,
-            tools,
-            config: self.config.completion_config.clone(),
-        };
-
-        let ctx = ProviderContext::new(
-            self.session_id,
-            self.cancellation.child_token(),
-            self.task_tracker.clone(),
-        );
-
+        let request = self.build_completion_request().await;
+        let ctx = self.new_provider_context();
         Ok(self.provider.complete_stream(request, ctx).await?)
     }
 
@@ -207,26 +190,36 @@ impl Session {
     /// the tool result messages are already in history, so we just need to send
     /// the current history back to the provider for the next turn.
     pub async fn continue_streaming(&self) -> Result<StreamHandle, SessionError> {
-        // Snapshot state (release locks before provider call)
+        let request = self.build_completion_request().await;
+        let ctx = self.new_provider_context();
+        Ok(self.provider.complete_stream(request, ctx).await?)
+    }
+
+    /// Snapshot session state into a completion request.
+    ///
+    /// Reads system prompt, messages, and tools under their respective locks,
+    /// releasing each lock before moving to the next.
+    async fn build_completion_request(&self) -> CompletionRequest {
         let system = self.system_prompt.read().await.clone();
         let messages = self.messages.read().await.clone();
         let tools = self.tools.list().await;
 
-        let request = CompletionRequest {
+        CompletionRequest {
             model: self.config.model.clone(),
             system: Some(system),
             messages,
             tools,
             config: self.config.completion_config.clone(),
-        };
+        }
+    }
 
-        let ctx = ProviderContext::new(
+    /// Create a fresh provider context with a child cancellation token.
+    fn new_provider_context(&self) -> ProviderContext {
+        ProviderContext::new(
             self.session_id,
             self.cancellation.child_token(),
             self.task_tracker.clone(),
-        );
-
-        Ok(self.provider.complete_stream(request, ctx).await?)
+        )
     }
 
     /// Send a message and collect the full response
@@ -251,12 +244,7 @@ impl Session {
         &self,
         request: CompletionRequest,
     ) -> Result<CollectedResponse, SessionError> {
-        let ctx = ProviderContext::new(
-            self.session_id,
-            self.cancellation.child_token(),
-            self.task_tracker.clone(),
-        );
-
+        let ctx = self.new_provider_context();
         let handle = self.provider.complete_stream(request, ctx).await?;
         Ok(handle.collect().await?)
     }

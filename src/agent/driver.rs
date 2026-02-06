@@ -135,56 +135,24 @@ impl<'s> AgentLoop<'s> {
         loop {
             // Check cancellation
             if cancellation.is_cancelled() {
-                let reason = LoopStopReason::Cancelled;
-                self.observer
-                    .on_event(&AgentEvent::LoopComplete {
-                        reason: reason.clone(),
-                        total_iterations: tool_depth,
-                    })
+                return self
+                    .complete_loop(response, &mut responses, LoopStopReason::Cancelled, tool_depth)
                     .await;
-                responses.push(response.clone());
-                return Ok(AgentOutcome {
-                    final_response: response,
-                    responses,
-                    stop_reason: reason,
-                    iterations: tool_depth,
-                });
             }
 
             // If no tool use, we're done
             if !response.has_tool_use() {
                 let reason = stop_reason_from_metadata(&response.metadata);
-                self.observer
-                    .on_event(&AgentEvent::LoopComplete {
-                        reason: reason.clone(),
-                        total_iterations: tool_depth,
-                    })
+                return self
+                    .complete_loop(response, &mut responses, reason, tool_depth)
                     .await;
-                responses.push(response.clone());
-                return Ok(AgentOutcome {
-                    final_response: response,
-                    responses,
-                    stop_reason: reason,
-                    iterations: tool_depth,
-                });
             }
 
             // Check tool depth limit
             if tool_depth >= self.config.max_tool_depth.get() {
-                let reason = LoopStopReason::MaxToolDepthReached;
-                self.observer
-                    .on_event(&AgentEvent::LoopComplete {
-                        reason: reason.clone(),
-                        total_iterations: tool_depth,
-                    })
+                return self
+                    .complete_loop(response, &mut responses, LoopStopReason::MaxToolDepthReached, tool_depth)
                     .await;
-                responses.push(response.clone());
-                return Ok(AgentOutcome {
-                    final_response: response,
-                    responses,
-                    stop_reason: reason,
-                    iterations: tool_depth,
-                });
             }
 
             tool_depth += 1;
@@ -236,6 +204,29 @@ impl<'s> AgentLoop<'s> {
                 })
                 .await;
         }
+    }
+
+    /// Fire the LoopComplete observer event, push the final response, and return the outcome.
+    async fn complete_loop(
+        &self,
+        response: CollectedResponse,
+        responses: &mut Vec<CollectedResponse>,
+        reason: LoopStopReason,
+        tool_depth: u32,
+    ) -> Result<AgentOutcome, AgentLoopError> {
+        self.observer
+            .on_event(&AgentEvent::LoopComplete {
+                reason: reason.clone(),
+                total_iterations: tool_depth,
+            })
+            .await;
+        responses.push(response.clone());
+        Ok(AgentOutcome {
+            final_response: response,
+            responses: std::mem::take(responses),
+            stop_reason: reason,
+            iterations: tool_depth,
+        })
     }
 }
 

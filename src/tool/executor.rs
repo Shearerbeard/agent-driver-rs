@@ -56,7 +56,13 @@ impl ToolInput {
         &self.0
     }
 
-    /// Parse the input into a typed struct
+    /// Parse the input into a typed struct.
+    ///
+    /// Clones the inner map before deserializing. This is intentional: typical
+    /// tool inputs are small JSON objects (a handful of string/number fields),
+    /// so the clone cost is negligible. Borrowing would require a `Deserialize<'de>`
+    /// bound tied to `&'a self`, propagating lifetime parameters through every
+    /// `Tool::execute` implementation — complexity not worth the savings.
     pub fn parse<T: DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
         serde_json::from_value(JsonValue::Object(self.0.clone()))
     }

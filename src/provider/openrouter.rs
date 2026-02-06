@@ -232,16 +232,23 @@ impl OpenRouterProvider {
         })
     }
 
-    /// Build headers for the API request
-    fn build_headers(&self) -> HeaderMap {
+    /// Build headers for the API request.
+    ///
+    /// Returns an error if the API key contains characters invalid for HTTP headers.
+    fn build_headers(&self) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         // Bearer token auth
         let auth_value = format!("Bearer {}", self.config.api_key.as_str());
-        if let Ok(value) = HeaderValue::from_str(&auth_value) {
-            headers.insert(AUTHORIZATION, value);
-        }
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&auth_value).map_err(|_| {
+                ProviderError::Auth(
+                    "OPENROUTER_API_KEY contains invalid header characters".to_string(),
+                )
+            })?,
+        );
 
         // OpenRouter recommended headers
         headers.insert(
@@ -250,7 +257,7 @@ impl OpenRouterProvider {
         );
         headers.insert("X-Title", HeaderValue::from_static("agent-driver-rs"));
 
-        headers
+        Ok(headers)
     }
 }
 
@@ -266,8 +273,7 @@ impl Provider for OpenRouterProvider {
     ) -> Pin<Box<dyn Future<Output = Result<StreamHandle, ProviderError>> + Send + '_>> {
         Box::pin(async move {
             let body = self.build_request_body(&request);
-            let headers = self.build_headers();
-
+            let headers = self.build_headers()?;
 
             let request_builder = self
                 .client

@@ -10,7 +10,7 @@ use crate::session::Session;
 use crate::streaming::{
     CollectedResponse, CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent,
 };
-use crate::types::{ContentBlock, Message, Role};
+use crate::types::{ContentBlock, Message, Role, ToolName};
 
 use super::config::AgentLoopConfig;
 use super::observer::{AgentEvent, AgentObserver, LoopStopReason, NoOpObserver};
@@ -170,9 +170,12 @@ impl<'s> AgentLoop<'s> {
             responses.push(response);
 
             // Handle tool errors when continue_on_tool_error is false
-            if let Some(err_msg) = tool_error {
+            if let Some((failed_tool, err_msg)) = tool_error {
                 if !self.config.continue_on_tool_error {
-                    let reason = LoopStopReason::ToolError(err_msg);
+                    let reason = LoopStopReason::ToolError {
+                        tool_name: failed_tool,
+                        message: err_msg,
+                    };
                     self.observer
                         .on_event(&AgentEvent::LoopComplete {
                             reason: reason.clone(),
@@ -318,13 +321,13 @@ async fn collect_with_observer(
 }
 
 /// Execute tool calls from a response, emitting observer events.
-/// Returns Some(error_message) if any tool execution failed.
+/// Returns `Some((tool_name, error_message))` if any tool execution failed.
 async fn execute_tools(
     session: &Session,
     observer: &dyn AgentObserver,
     response: &CollectedResponse,
-) -> Option<String> {
-    let mut error_msg = None;
+) -> Option<(ToolName, String)> {
+    let mut error_info = None;
 
     for block in &response.content {
         if let ContentBlock::ToolUse { id, name, input } = block {
@@ -352,7 +355,7 @@ async fn execute_tools(
                             is_error: true,
                         })
                         .await;
-                    error_msg = Some(err);
+                    error_info = Some((name.clone(), err));
                     continue;
                 }
             };
@@ -370,7 +373,7 @@ async fn execute_tools(
                         })
                         .await;
                     if is_error {
-                        error_msg = Some(result.content().to_string());
+                        error_info = Some((name.clone(), result.content().to_string()));
                     }
                 }
                 Err(e) => {
@@ -388,13 +391,13 @@ async fn execute_tools(
                             is_error: true,
                         })
                         .await;
-                    error_msg = Some(err);
+                    error_info = Some((name.clone(), err));
                 }
             }
         }
     }
 
-    error_msg
+    error_info
 }
 
 /// Add assistant response content to session history

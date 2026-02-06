@@ -67,7 +67,10 @@ pub enum LoopStopReason {
     /// Cancellation token was triggered
     Cancelled,
     /// A tool error stopped the loop (when continue_on_tool_error is false)
-    ToolError(String),
+    ToolError {
+        tool_name: ToolName,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for LoopStopReason {
@@ -78,7 +81,9 @@ impl std::fmt::Display for LoopStopReason {
             Self::StopSequence => write!(f, "stop_sequence"),
             Self::MaxToolDepthReached => write!(f, "max_tool_depth_reached"),
             Self::Cancelled => write!(f, "cancelled"),
-            Self::ToolError(e) => write!(f, "tool_error: {}", e),
+            Self::ToolError { tool_name, message } => {
+                write!(f, "tool_error({}): {}", tool_name, message)
+            }
         }
     }
 }
@@ -132,8 +137,12 @@ mod tests {
         assert_eq!(LoopStopReason::EndTurn.to_string(), "end_turn");
         assert_eq!(LoopStopReason::Cancelled.to_string(), "cancelled");
         assert_eq!(
-            LoopStopReason::ToolError("oops".into()).to_string(),
-            "tool_error: oops"
+            LoopStopReason::ToolError {
+                tool_name: ToolName::new("my_tool").unwrap(),
+                message: "oops".into(),
+            }
+            .to_string(),
+            "tool_error(my_tool): oops"
         );
     }
 }

@@ -171,21 +171,27 @@ impl AnthropicProvider {
         })
     }
 
-    /// Build headers for the API request
-    fn build_headers(&self) -> HeaderMap {
+    /// Build headers for the API request.
+    ///
+    /// Returns an error if the API key contains characters invalid for HTTP headers
+    /// (e.g. non-visible ASCII). This fails loudly rather than silently sending
+    /// an empty auth header.
+    fn build_headers(&self) -> Result<HeaderMap, ProviderError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(
             "x-api-key",
-            HeaderValue::from_str(self.config.api_key.as_str()).unwrap_or_else(|_| {
-                HeaderValue::from_static("")
-            }),
+            HeaderValue::from_str(self.config.api_key.as_str()).map_err(|_| {
+                ProviderError::Auth(
+                    "ANTHROPIC_API_KEY contains invalid header characters".to_string(),
+                )
+            })?,
         );
         headers.insert(
             "anthropic-version",
             HeaderValue::from_static(ANTHROPIC_VERSION),
         );
-        headers
+        Ok(headers)
     }
 }
 
@@ -201,7 +207,7 @@ impl Provider for AnthropicProvider {
     ) -> Pin<Box<dyn Future<Output = Result<StreamHandle, ProviderError>> + Send + '_>> {
         Box::pin(async move {
             let body = self.build_request_body(&request);
-            let headers = self.build_headers();
+            let headers = self.build_headers()?;
 
             let request_builder = self
                 .client

@@ -207,9 +207,11 @@ fn convert_messages(
             continue;
         }
 
-        // Merge into previous entry if same role, otherwise push new pair
+        // Merge into previous entry if same role and compatible content types,
+        // otherwise push new pair. Bedrock rejects messages that mix conversation
+        // blocks (Text, ToolUse) with tool result blocks in the same turn.
         if let Some(last) = pairs.last_mut() {
-            if last.0 == role {
+            if last.0 == role && blocks_compatible(&last.1, &content_blocks) {
                 last.1.extend(content_blocks);
                 continue;
             }
@@ -436,6 +438,21 @@ struct StreamState {
     stop_reason: Option<StopReason>,
 }
 
+/// Check if two sets of content blocks can be merged into a single Bedrock message.
+///
+/// Bedrock rejects messages that mix "conversation blocks" (Text, ToolUse) with
+/// "tool result blocks" (ToolResult) in the same turn.
+fn blocks_compatible(existing: &[BedrockContentBlock], new: &[BedrockContentBlock]) -> bool {
+    let existing_has_tool_result = existing
+        .iter()
+        .any(|b| matches!(b, BedrockContentBlock::ToolResult(_)));
+    let new_has_tool_result = new
+        .iter()
+        .any(|b| matches!(b, BedrockContentBlock::ToolResult(_)));
+    // Compatible if both are tool results, or neither is
+    existing_has_tool_result == new_has_tool_result
+}
+
 /// Check if a `BedrockContentBlock` is a `ToolResult` variant (for test assertions).
 #[cfg(test)]
 fn is_tool_result(block: &BedrockContentBlock) -> bool {
@@ -643,5 +660,21 @@ mod tests {
 
         assert_eq!(bedrock.len(), 1);
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
+    }
+
+    #[test]
+    fn text_and_tool_result_not_merged() {
+        // If a User text message is adjacent to a Tool result (shouldn't happen
+        // in practice, but guard against it), they must NOT be merged because
+        // Bedrock rejects messages mixing conversation and tool result blocks.
+        let messages = vec![
+            user_msg("Hello"),
+            tool_result("tu1", "result"),
+        ];
+        let bedrock = convert_messages(&messages).unwrap();
+        // Should be 2 separate messages, not merged
+        assert_eq!(bedrock.len(), 2);
+        assert_eq!(bedrock[0].role(), &ConversationRole::User);
+        assert_eq!(bedrock[1].role(), &ConversationRole::User);
     }
 }

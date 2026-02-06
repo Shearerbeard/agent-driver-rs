@@ -190,16 +190,25 @@ Each provider has different SSE formats. Parse in provider, emit standard `Strea
 
 ## Testing
 
+Before committing a feature, run through the full checklist in [`docs/manual-testing.md`](docs/manual-testing.md). At minimum:
+
 ```bash
-# Unit tests (no API calls)
-cargo test --features bedrock
+# Compile + test + lint (every change)
+cargo check --all-features
+cargo test --all-features
+cargo clippy --features bedrock -- -D warnings
 
-# Integration test with live API
-PROVIDER=bedrock cargo run --bin chat
+# Live smoke test (provider/agent/tool changes)
+echo "What is 2 + 2? Answer in one sentence." | \
+    PROVIDER=bedrock cargo run --features bedrock --bin chat
 
-# Test specific provider
-cargo test --features openai openai_
+# Live tool calling test (agent/tool/provider changes)
+echo "List the contents of the docs/adr directory" | \
+    PROVIDER=bedrock cargo run --features "bedrock mcp" --bin chat -- \
+    --mcp "npx -y @modelcontextprotocol/server-filesystem $(pwd)"
 ```
+
+See `docs/manual-testing.md` for the full checklist, multi-tool testing, per-provider commands, and known gotchas.
 
 ## Architecture Decision Records
 

@@ -17,7 +17,7 @@ pub use definition::{ToolAnnotations, ToolDefinition};
 pub use executor::{DynTool, FnTool, Tool, ToolInput, ToolResult};
 pub use registry::ToolRegistry;
 pub use serializer::ToolFormat;
-pub use types::{ToolSchema, ToolSource};
+pub use types::{McpServerName, PluginId, ToolSchema, ToolSource};
 
 // MCP support is optional
 #[cfg(feature = "mcp")]

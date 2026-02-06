@@ -104,6 +104,7 @@ impl ToolAnnotations {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::types::McpServerName;
 
     #[test]
     fn tool_definition_new() {
@@ -121,7 +122,7 @@ mod tests {
     fn tool_definition_with_source() {
         let def = ToolDefinition::simple(ToolName::new("mcp_tool").unwrap(), "MCP tool")
             .with_source(ToolSource::Mcp {
-                server_name: "test-server".into(),
+                server_name: McpServerName::new("test-server").unwrap(),
             });
         assert!(def.source.is_mcp());
     }

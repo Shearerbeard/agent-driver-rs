@@ -53,7 +53,7 @@ impl BedrockProvider {
         let client = Client::new(&aws_config);
 
         let info = ProviderInfo {
-            id: "bedrock",
+            kind: super::ProviderKind::Bedrock,
             name: "AWS Bedrock",
             capabilities: ProviderCapabilities {
                 streaming: true,

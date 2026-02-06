@@ -41,7 +41,7 @@ impl OpenRouterProvider {
         let client = reqwest::Client::new();
 
         let info = ProviderInfo {
-            id: "openrouter",
+            kind: super::ProviderKind::OpenRouter,
             name: "OpenRouter",
             capabilities: ProviderCapabilities {
                 streaming: true,

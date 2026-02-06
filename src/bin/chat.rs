@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     config.validate()?;
 
-    println!("Using provider: {}", config.provider_name());
+    println!("Using provider: {}", config.provider_kind());
 
     // ── Provider creation ──────────────────────────────────────────────
     let (provider, model_id, completion_config): (Arc<dyn Provider>, ModelId, CompletionConfig) =

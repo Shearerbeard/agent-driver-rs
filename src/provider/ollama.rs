@@ -46,7 +46,7 @@ impl OllamaProvider {
         let client = Ollama::new(format!("http://{}", host), port);
 
         let info = ProviderInfo {
-            id: "ollama",
+            kind: super::ProviderKind::Ollama,
             name: "Ollama",
             capabilities: ProviderCapabilities {
                 streaming: true,

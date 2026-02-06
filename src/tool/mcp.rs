@@ -16,7 +16,7 @@ use crate::types::ToolName;
 use super::definition::ToolDefinition;
 use super::executor::{DynTool, Tool, ToolInput, ToolResult};
 use super::registry::ToolRegistry;
-use super::types::{ToolSchema, ToolSource};
+use super::types::{McpServerName, ToolSchema, ToolSource};
 
 /// Handler for MCP client notifications
 ///
@@ -170,7 +170,8 @@ impl McpConnection {
                 schema,
             )
             .with_source(ToolSource::Mcp {
-                server_name: self.name.clone(),
+                server_name: McpServerName::new(self.name.clone())
+                    .expect("MCP connection name is always non-empty"),
             });
 
             let wrapper = McpToolWrapper {

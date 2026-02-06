@@ -193,11 +193,50 @@ pub struct ProviderCapabilities {
     pub max_context_tokens: Option<u32>,
 }
 
+/// Strongly-typed provider identity.
+///
+/// Replaces stringly-typed `id: &'static str` for type-safe matching and display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderKind {
+    Anthropic,
+    OpenAi,
+    Bedrock,
+    OpenRouter,
+    Ollama,
+}
+
+impl std::fmt::Display for ProviderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAi => "openai",
+            Self::Bedrock => "bedrock",
+            Self::OpenRouter => "openrouter",
+            Self::Ollama => "ollama",
+        })
+    }
+}
+
+impl std::str::FromStr for ProviderKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "anthropic" => Ok(Self::Anthropic),
+            "openai" => Ok(Self::OpenAi),
+            "bedrock" => Ok(Self::Bedrock),
+            "openrouter" => Ok(Self::OpenRouter),
+            "ollama" => Ok(Self::Ollama),
+            other => Err(format!("unknown provider: {}", other)),
+        }
+    }
+}
+
 /// Information about a provider
 #[derive(Debug, Clone)]
 pub struct ProviderInfo {
-    /// Provider identifier
-    pub id: &'static str,
+    /// Provider identity
+    pub kind: ProviderKind,
     /// Human-readable name
     pub name: &'static str,
     /// Provider capabilities

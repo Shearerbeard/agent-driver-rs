@@ -44,7 +44,7 @@ impl AnthropicProvider {
         let client = reqwest::Client::new();
 
         let info = ProviderInfo {
-            id: "anthropic",
+            kind: super::ProviderKind::Anthropic,
             name: "Anthropic",
             capabilities: ProviderCapabilities {
                 streaming: true,
@@ -113,7 +113,7 @@ impl AnthropicProvider {
         if let Some(ref thinking) = self.config.thinking {
             body["thinking"] = serde_json::json!({
                 "type": "enabled",
-                "budget_tokens": thinking.budget_tokens
+                "budget_tokens": thinking.budget_tokens()
             });
         }
 

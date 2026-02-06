@@ -70,6 +70,58 @@ impl Default for ToolSchema {
     }
 }
 
+/// Name of an MCP server (non-empty string).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct McpServerName(String);
+
+impl McpServerName {
+    /// Create a new MCP server name, validating it is non-empty.
+    pub fn new(name: impl Into<String>) -> Result<Self, &'static str> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err("MCP server name cannot be empty");
+        }
+        Ok(Self(name))
+    }
+
+    /// Get the server name as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for McpServerName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Identifier for a dynamic plugin (non-empty string).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PluginId(String);
+
+impl PluginId {
+    /// Create a new plugin ID, validating it is non-empty.
+    pub fn new(id: impl Into<String>) -> Result<Self, &'static str> {
+        let id = id.into();
+        if id.is_empty() {
+            return Err("Plugin ID cannot be empty");
+        }
+        Ok(Self(id))
+    }
+
+    /// Get the plugin ID as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for PluginId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Source of a tool
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ToolSource {
@@ -77,9 +129,9 @@ pub enum ToolSource {
     #[default]
     Native,
     /// Tool from an MCP server
-    Mcp { server_name: String },
+    Mcp { server_name: McpServerName },
     /// Dynamically registered tool
-    Dynamic { plugin_id: String },
+    Dynamic { plugin_id: PluginId },
 }
 
 impl ToolSource {
@@ -132,6 +184,18 @@ mod tests {
     fn tool_source_checks() {
         assert!(ToolSource::Native.is_native());
         assert!(!ToolSource::Native.is_mcp());
-        assert!(ToolSource::Mcp { server_name: "test".into() }.is_mcp());
+        assert!(ToolSource::Mcp { server_name: McpServerName::new("test").unwrap() }.is_mcp());
+    }
+
+    #[test]
+    fn mcp_server_name_validation() {
+        assert!(McpServerName::new("my-server").is_ok());
+        assert!(McpServerName::new("").is_err());
+    }
+
+    #[test]
+    fn plugin_id_validation() {
+        assert!(PluginId::new("my-plugin").is_ok());
+        assert!(PluginId::new("").is_err());
     }
 }

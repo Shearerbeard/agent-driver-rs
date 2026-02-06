@@ -32,7 +32,7 @@ pub struct AnthropicConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ThinkingConfig {
     /// Budget tokens for thinking (minimum 1024, must be < max_tokens)
-    pub budget_tokens: u32,
+    budget_tokens: u32,
 }
 
 impl ThinkingConfig {
@@ -48,6 +48,11 @@ impl ThinkingConfig {
             });
         }
         Ok(Self { budget_tokens })
+    }
+
+    /// Get the thinking budget token count.
+    pub fn budget_tokens(&self) -> u32 {
+        self.budget_tokens
     }
 }
 
@@ -77,7 +82,7 @@ impl AnthropicConfig {
         let thinking = std::env::var("ANTHROPIC_THINKING_BUDGET")
             .ok()
             .and_then(|s| s.parse().ok())
-            .map(|b| ThinkingConfig { budget_tokens: b });
+            .and_then(|b| ThinkingConfig::new(b).ok());
 
         Ok(Self {
             api_key,
@@ -91,13 +96,13 @@ impl AnthropicConfig {
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
         if let Some(thinking) = &self.thinking {
-            if thinking.budget_tokens < ThinkingConfig::MIN_BUDGET {
+            if thinking.budget_tokens() < ThinkingConfig::MIN_BUDGET {
                 return Err(ConfigError::InvalidValue {
                     field: "thinking.budget_tokens",
                     reason: format!("must be >= {}", ThinkingConfig::MIN_BUDGET),
                 });
             }
-            if thinking.budget_tokens >= self.max_tokens.get() {
+            if thinking.budget_tokens() >= self.max_tokens.get() {
                 return Err(ConfigError::InvalidValue {
                     field: "thinking.budget_tokens",
                     reason: "must be < max_tokens".into(),

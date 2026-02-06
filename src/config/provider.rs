@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
+use crate::provider::ProviderKind;
 
 use super::{
     AnthropicConfig, BedrockConfig, OllamaConfig, OpenAiConfig, OpenRouterConfig,
@@ -34,16 +35,19 @@ impl ProviderConfig {
         // Load .env if present
         dotenvy::dotenv().ok();
 
-        let provider = std::env::var("PROVIDER")
+        let provider_str = std::env::var("PROVIDER")
             .map_err(|_| ConfigError::MissingField { field: "PROVIDER" })?;
 
-        match provider.to_lowercase().as_str() {
-            "anthropic" => Ok(Self::Anthropic(AnthropicConfig::from_env()?)),
-            "openai" => Ok(Self::OpenAi(OpenAiConfig::from_env()?)),
-            "bedrock" => Ok(Self::Bedrock(BedrockConfig::from_env()?)),
-            "openrouter" => Ok(Self::OpenRouter(OpenRouterConfig::from_env()?)),
-            "ollama" => Ok(Self::Ollama(OllamaConfig::from_env()?)),
-            other => Err(ConfigError::UnknownProvider(other.to_string())),
+        let kind: ProviderKind = provider_str
+            .parse()
+            .map_err(|_| ConfigError::UnknownProvider(provider_str))?;
+
+        match kind {
+            ProviderKind::Anthropic => Ok(Self::Anthropic(AnthropicConfig::from_env()?)),
+            ProviderKind::OpenAi => Ok(Self::OpenAi(OpenAiConfig::from_env()?)),
+            ProviderKind::Bedrock => Ok(Self::Bedrock(BedrockConfig::from_env()?)),
+            ProviderKind::OpenRouter => Ok(Self::OpenRouter(OpenRouterConfig::from_env()?)),
+            ProviderKind::Ollama => Ok(Self::Ollama(OllamaConfig::from_env()?)),
         }
     }
 
@@ -58,15 +62,15 @@ impl ProviderConfig {
         }
     }
 
-    /// Get the provider name
+    /// Get the provider kind
     #[must_use]
-    pub fn provider_name(&self) -> &'static str {
+    pub fn provider_kind(&self) -> ProviderKind {
         match self {
-            Self::Anthropic(_) => "anthropic",
-            Self::OpenAi(_) => "openai",
-            Self::Bedrock(_) => "bedrock",
-            Self::OpenRouter(_) => "openrouter",
-            Self::Ollama(_) => "ollama",
+            Self::Anthropic(_) => ProviderKind::Anthropic,
+            Self::OpenAi(_) => ProviderKind::OpenAi,
+            Self::Bedrock(_) => ProviderKind::Bedrock,
+            Self::OpenRouter(_) => ProviderKind::OpenRouter,
+            Self::Ollama(_) => ProviderKind::Ollama,
         }
     }
 }

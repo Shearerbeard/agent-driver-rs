@@ -47,7 +47,7 @@ impl OpenAiProvider {
         let client = Client::with_config(openai_config);
 
         let info = ProviderInfo {
-            id: "openai",
+            kind: super::ProviderKind::OpenAi,
             name: "OpenAI",
             capabilities: ProviderCapabilities {
                 streaming: supports_streaming,

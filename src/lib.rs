@@ -49,13 +49,13 @@ pub use streaming::{
     StreamDelta, StreamEvent, StreamHandle, TokenUsage,
 };
 
-pub use tool::{DynTool, Tool, ToolDefinition, ToolInput, ToolRegistry, ToolResult, ToolSchema, ToolSource};
+pub use tool::{DynTool, McpServerName, PluginId, Tool, ToolDefinition, ToolInput, ToolRegistry, ToolResult, ToolSchema, ToolSource};
 
 pub use task::{TaskHandle, TaskPool, TrackedSpawn};
 
 pub use provider::{
     BoxedProvider, CompletionConfig, CompletionRequest, Provider, ProviderCapabilities,
-    ProviderContext, ProviderInfo, SharedProvider,
+    ProviderContext, ProviderInfo, ProviderKind, SharedProvider,
 };
 
 pub use session::{Session, SessionBuilder, SessionConfig};

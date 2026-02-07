@@ -102,7 +102,7 @@ impl std::fmt::Display for ToolCallId {
 
 /// System prompt wrapper
 ///
-/// Uses Arc<str> for cheap cloning across async boundaries.
+/// Uses `Arc<str>` for cheap cloning across async boundaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemPrompt(Arc<str>);
 
@@ -169,6 +169,7 @@ impl<'de> Deserialize<'de> for SystemPrompt {
 /// Content returned from tool execution
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum ToolResultContent {
     Text(String),
     // Future: Image support (see TODO.md)
@@ -190,6 +191,7 @@ impl From<&str> for ToolResultContent {
 /// Content block within a message
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ContentBlock {
     /// Standard text content
     Text { text: String },

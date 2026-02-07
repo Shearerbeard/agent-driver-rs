@@ -1,6 +1,6 @@
 # ADR-0001: Tool System & MCP Integration
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-02-04
 **Context tags:** [tool-system] [mcp] [prompting]
 

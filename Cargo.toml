@@ -11,6 +11,7 @@ bedrock = ["dep:aws-sdk-bedrockruntime", "dep:aws-config", "dep:aws-smithy-types
 openrouter = []
 ollama = ["dep:ollama-rs"]
 mcp = ["dep:rmcp"]
+test-support = []
 
 [dependencies]
 # Async runtime

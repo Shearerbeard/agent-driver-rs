@@ -181,6 +181,7 @@ impl Default for ProviderContext {
 
 /// Provider capabilities for feature detection
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ProviderCapabilities {
     /// Supports streaming responses
     pub streaming: bool,
@@ -334,10 +335,10 @@ pub type BoxedProvider = Box<dyn Provider>;
 /// Type alias for a shared provider
 pub type SharedProvider = Arc<dyn Provider>;
 
-#[cfg(test)]
-mod mock;
-#[cfg(test)]
-pub(crate) use mock::*;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock;
+#[cfg(any(test, feature = "test-support"))]
+pub use mock::*;
 
 // Provider implementations are in separate modules
 #[cfg(feature = "anthropic")]

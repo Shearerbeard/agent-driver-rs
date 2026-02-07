@@ -24,6 +24,7 @@ use crate::types::{ContentBlock, CorrelationId, ModelId, ToolCallId, ToolName};
 
 /// Incremental content during streaming
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StreamDelta {
     /// Text content being generated
     TextDelta { text: String },
@@ -43,6 +44,7 @@ pub enum StreamDelta {
 
 /// Stream events with proper block lifecycle
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StreamEvent {
     /// Stream started, initial metadata
     Started { metadata: CompletionMetadata },
@@ -79,6 +81,7 @@ pub enum ContentBlockType {
 
 /// Metadata about a completion, available at stream start and end.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct CompletionMetadata {
     /// The model that generated this completion (provider-reported).
     ///
@@ -96,6 +99,7 @@ pub struct CompletionMetadata {
 /// Reason the completion stopped
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum StopReason {
     EndTurn,
     MaxTokens,

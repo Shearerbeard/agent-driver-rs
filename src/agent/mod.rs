@@ -27,4 +27,4 @@ mod observer;
 
 pub use config::{AgentLoopConfig, MaxToolDepth};
 pub use driver::{AgentLoop, AgentOutcome};
-pub use observer::{AgentEvent, AgentObserver, LoopStopReason};
+pub use observer::{AgentEvent, AgentObserver, LoopStopReason, NoOpObserver};

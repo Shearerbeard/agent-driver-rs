@@ -3,6 +3,52 @@
 //! The [`AgentObserver`] trait receives [`AgentEvent`]s as the loop executes,
 //! enabling streaming output, progress indicators, logging, and cancellation hooks.
 //! The default implementation is a no-op, so implementors only handle events they need.
+//!
+//! ## Event lifecycle
+//!
+//! For a single tool-calling round, events arrive in this order:
+//!
+//! 1. `TextDelta` / `ThinkingDelta` — streamed as the model generates (first response)
+//! 2. `IterationStart { iteration: 1 }` — tool execution round begins
+//! 3. `ToolCallStart { id, name, input }` — for each tool in the response
+//! 4. `ToolCallComplete { id, name, result, is_error }` — after each tool executes
+//! 5. `TextDelta` — streamed from the follow-up response
+//! 6. `IterationComplete { iteration: 1, response }` — round finished
+//! 7. `LoopComplete { reason, total_iterations }` — loop done
+//!
+//! If the model doesn't call tools, only `TextDelta`s and `LoopComplete` are emitted.
+//!
+//! ## Custom observer example
+//!
+//! ```no_run
+//! use agent_driver_rs::agent::{AgentObserver, AgentEvent};
+//!
+//! struct StreamingPrinter;
+//!
+//! #[async_trait::async_trait]
+//! impl AgentObserver for StreamingPrinter {
+//!     async fn on_event(&self, event: &AgentEvent) {
+//!         match event {
+//!             AgentEvent::TextDelta { text } => print!("{}", text),
+//!             AgentEvent::ThinkingDelta { thinking } => {
+//!                 eprint!("[thinking] {}", thinking);
+//!             }
+//!             AgentEvent::ToolCallStart { name, .. } => {
+//!                 eprintln!("\n> Calling tool: {}", name);
+//!             }
+//!             AgentEvent::ToolCallComplete { name, is_error, .. } => {
+//!                 if *is_error {
+//!                     eprintln!("> Tool {} failed", name);
+//!                 }
+//!             }
+//!             AgentEvent::LoopComplete { reason, total_iterations } => {
+//!                 eprintln!("\n[done: {} after {} rounds]", reason, total_iterations);
+//!             }
+//!             _ => {}
+//!         }
+//!     }
+//! }
+//! ```
 
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
@@ -15,6 +61,7 @@ use crate::types::{ToolCallId, ToolName};
 /// Single enum keeps the vtable small and is forward-compatible:
 /// new events don't break existing implementors.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AgentEvent {
     /// A new tool execution iteration is starting
     IterationStart { iteration: u32 },
@@ -55,6 +102,7 @@ pub enum AgentEvent {
 
 /// Why the agent loop stopped
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum LoopStopReason {
     /// Model chose to stop (end_turn)
     EndTurn,

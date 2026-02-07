@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use futures::Future;
 
-use crate::error::ProviderError;
+use crate::error::{ProviderError, StreamError};
 use crate::streaming::{
     CompletionMetadata, CompletionStream, ContentBlockType, StopReason, StreamDelta, StreamEvent,
     StreamHandle,
@@ -155,6 +155,151 @@ pub fn mock_tool_call_response(id: &str, name: &str, input_json: &str) -> Vec<St
     ]
 }
 
+/// Create a full event sequence with multiple tool_use blocks in one response.
+///
+/// Each tuple is `(id, name, input_json)`. Produces one ContentBlockStart/ToolUseStart/
+/// ToolInputDelta/ContentBlockStop sequence per tool, then a single Completed event.
+pub fn mock_multi_tool_response(tools: &[(&str, &str, &str)]) -> Vec<StreamEvent> {
+    let mut events = vec![StreamEvent::Started {
+        metadata: CompletionMetadata {
+            model: ModelId::new("mock-model").ok(),
+            stop_reason: None,
+            usage: None,
+        },
+    }];
+
+    for (i, (id, name, input_json)) in tools.iter().enumerate() {
+        events.push(StreamEvent::ContentBlockStart {
+            index: i,
+            block_type: ContentBlockType::ToolUse,
+        });
+        events.push(StreamEvent::Delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new(*id),
+            name: ToolName::new(*name).expect("invalid tool name in mock"),
+        }));
+        events.push(StreamEvent::Delta(StreamDelta::ToolInputDelta {
+            id: ToolCallId::new(*id),
+            partial_json: input_json.to_string(),
+        }));
+        events.push(StreamEvent::ContentBlockStop { index: i });
+    }
+
+    events.push(StreamEvent::Completed {
+        metadata: CompletionMetadata {
+            model: ModelId::new("mock-model").ok(),
+            stop_reason: Some(StopReason::ToolUse),
+            usage: None,
+        },
+    });
+
+    events
+}
+
+/// Create a event sequence that yields a `StreamEvent::Error` mid-stream.
+///
+/// Produces: Started -> Error. The stream ends after the error event.
+pub fn mock_error_response(error: StreamError) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::Started {
+            metadata: CompletionMetadata {
+                model: ModelId::new("mock-model").ok(),
+                stop_reason: None,
+                usage: None,
+            },
+        },
+        StreamEvent::Error { error },
+    ]
+}
+
+/// Create a full event sequence with a thinking block followed by a text block.
+///
+/// Produces: Started -> ContentBlockStart(Thinking) -> ThinkingDelta -> ContentBlockStop
+///           -> ContentBlockStart(Text) -> TextDelta -> ContentBlockStop -> Completed
+pub fn mock_thinking_response(thinking: &str, text: &str) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::Started {
+            metadata: CompletionMetadata {
+                model: ModelId::new("mock-model").ok(),
+                stop_reason: None,
+                usage: None,
+            },
+        },
+        StreamEvent::ContentBlockStart {
+            index: 0,
+            block_type: ContentBlockType::Thinking,
+        },
+        StreamEvent::Delta(StreamDelta::ThinkingDelta {
+            thinking: thinking.to_string(),
+        }),
+        StreamEvent::ContentBlockStop { index: 0 },
+        StreamEvent::ContentBlockStart {
+            index: 1,
+            block_type: ContentBlockType::Text,
+        },
+        StreamEvent::Delta(StreamDelta::TextDelta {
+            text: text.to_string(),
+        }),
+        StreamEvent::ContentBlockStop { index: 1 },
+        StreamEvent::Completed {
+            metadata: CompletionMetadata {
+                model: ModelId::new("mock-model").ok(),
+                stop_reason: Some(StopReason::EndTurn),
+                usage: None,
+            },
+        },
+    ]
+}
+
+/// Create a full event sequence with interleaved text and tool_use blocks.
+///
+/// Produces: Started -> ContentBlockStart(Text) -> TextDelta -> ContentBlockStop
+///           -> ContentBlockStart(ToolUse) -> ToolUseStart -> ToolInputDelta
+///           -> ContentBlockStop -> Completed(stop_reason=ToolUse)
+pub fn mock_mixed_text_tool_response(
+    text: &str,
+    tool_id: &str,
+    tool_name: &str,
+    tool_input: &str,
+) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::Started {
+            metadata: CompletionMetadata {
+                model: ModelId::new("mock-model").ok(),
+                stop_reason: None,
+                usage: None,
+            },
+        },
+        StreamEvent::ContentBlockStart {
+            index: 0,
+            block_type: ContentBlockType::Text,
+        },
+        StreamEvent::Delta(StreamDelta::TextDelta {
+            text: text.to_string(),
+        }),
+        StreamEvent::ContentBlockStop { index: 0 },
+        StreamEvent::ContentBlockStart {
+            index: 1,
+            block_type: ContentBlockType::ToolUse,
+        },
+        StreamEvent::Delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new(tool_id),
+            name: ToolName::new(tool_name).expect("invalid tool name in mock"),
+        }),
+        StreamEvent::Delta(StreamDelta::ToolInputDelta {
+            id: ToolCallId::new(tool_id),
+            partial_json: tool_input.to_string(),
+        }),
+        StreamEvent::ContentBlockStop { index: 1 },
+        StreamEvent::Completed {
+            metadata: CompletionMetadata {
+                model: ModelId::new("mock-model").ok(),
+                stop_reason: Some(StopReason::ToolUse),
+                usage: None,
+            },
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +351,62 @@ mod tests {
         assert!(matches!(&events[1], StreamEvent::ContentBlockStart { block_type: ContentBlockType::ToolUse, .. }));
         assert!(matches!(&events[4], StreamEvent::ContentBlockStop { .. }));
         assert!(matches!(&events[5], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse)));
+    }
+
+    #[test]
+    fn mock_multi_tool_response_has_correct_structure() {
+        let events = mock_multi_tool_response(&[
+            ("call_1", "tool_a", "{}"),
+            ("call_2", "tool_b", "{\"x\": 1}"),
+        ]);
+        // Started + 2*(BlockStart + ToolUseStart + ToolInputDelta + BlockStop) + Completed = 10
+        assert_eq!(events.len(), 10);
+        assert!(matches!(&events[0], StreamEvent::Started { .. }));
+        assert!(matches!(&events[9], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse)));
+
+        // First tool block at indices 1-4
+        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { index: 0, block_type: ContentBlockType::ToolUse }));
+        assert!(matches!(&events[4], StreamEvent::ContentBlockStop { index: 0 }));
+
+        // Second tool block at indices 5-8
+        assert!(matches!(&events[5], StreamEvent::ContentBlockStart { index: 1, block_type: ContentBlockType::ToolUse }));
+        assert!(matches!(&events[8], StreamEvent::ContentBlockStop { index: 1 }));
+    }
+
+    #[test]
+    fn mock_error_response_has_correct_structure() {
+        let events = mock_error_response(StreamError::ConnectionLost("gone".into()));
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], StreamEvent::Started { .. }));
+        assert!(matches!(&events[1], StreamEvent::Error { error } if matches!(error, StreamError::ConnectionLost(_))));
+    }
+
+    #[test]
+    fn mock_thinking_response_has_correct_structure() {
+        let events = mock_thinking_response("let me think", "the answer");
+        assert_eq!(events.len(), 8);
+        assert!(matches!(&events[0], StreamEvent::Started { .. }));
+        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { index: 0, block_type: ContentBlockType::Thinking }));
+        assert!(matches!(&events[2], StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }) if thinking == "let me think"));
+        assert!(matches!(&events[3], StreamEvent::ContentBlockStop { index: 0 }));
+        assert!(matches!(&events[4], StreamEvent::ContentBlockStart { index: 1, block_type: ContentBlockType::Text }));
+        assert!(matches!(&events[5], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "the answer"));
+        assert!(matches!(&events[6], StreamEvent::ContentBlockStop { index: 1 }));
+        assert!(matches!(&events[7], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::EndTurn)));
+    }
+
+    #[test]
+    fn mock_mixed_text_tool_response_has_correct_structure() {
+        let events = mock_mixed_text_tool_response("thinking out loud", "call_1", "my_tool", "{}");
+        assert_eq!(events.len(), 9);
+        assert!(matches!(&events[0], StreamEvent::Started { .. }));
+        // Text block
+        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { index: 0, block_type: ContentBlockType::Text }));
+        assert!(matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "thinking out loud"));
+        assert!(matches!(&events[3], StreamEvent::ContentBlockStop { index: 0 }));
+        // Tool block
+        assert!(matches!(&events[4], StreamEvent::ContentBlockStart { index: 1, block_type: ContentBlockType::ToolUse }));
+        assert!(matches!(&events[7], StreamEvent::ContentBlockStop { index: 1 }));
+        assert!(matches!(&events[8], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse)));
     }
 }

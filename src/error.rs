@@ -13,6 +13,18 @@
 //!
 //! Newtype validation errors ([`ModelIdError`], [`ToolNameError`], [`TemperatureError`])
 //! are separate because they occur at construction time, not during operations.
+//!
+//! ## When to use which error
+//!
+//! | Error | When to use | Recovery |
+//! |-------|-------------|----------|
+//! | [`ConfigError`] | Startup-time: missing env vars, invalid config values | Fix configuration and restart |
+//! | [`ProviderError`] | Network failures, auth errors, rate limits | Retry (with backoff for rate limits), check credentials |
+//! | [`StreamError`] | Mid-stream failures: connection lost, parse errors | Retry the request; cancelled streams are intentional |
+//! | [`ToolError`] | Tool not found, invalid input, execution failure | Check tool name, validate input schema, handle gracefully |
+//! | [`SessionError`] | Wraps provider/tool/stream errors at session level | Match inner error and handle accordingly |
+//! | [`AgentLoopError`] | Loop-level: cancelled, max depth, session errors | Check stop reason; Cancelled is usually intentional |
+//! | [`TaskPoolError`] | Pool shutdown or task not found | Create new pool, or check task ID |
 
 use thiserror::Error;
 
@@ -48,6 +60,7 @@ pub enum ConfigError {
 
 /// Provider-related errors
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ProviderError {
     #[error("Authentication failed: {0}")]
     Auth(String),

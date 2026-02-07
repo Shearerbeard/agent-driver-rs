@@ -360,7 +360,7 @@ impl SessionBuilder {
         }
     }
 
-    /// Set the provider (accepts Arc<dyn Provider>)
+    /// Set the provider (accepts `Arc<dyn Provider>`)
     #[must_use]
     pub fn provider(mut self, p: Arc<dyn Provider>) -> Self {
         self.provider = Some(p);

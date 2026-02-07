@@ -58,4 +58,7 @@ pub use provider::{
     ProviderContext, ProviderInfo, ProviderKind, SharedProvider,
 };
 
+#[cfg(any(test, feature = "test-support"))]
+pub use provider::mock;
+
 pub use session::{Session, SessionBuilder, SessionConfig};

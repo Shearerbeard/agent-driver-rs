@@ -1,4 +1,53 @@
-//! Tool registry for dynamic tool management
+//! Tool registry for dynamic tool management.
+//!
+//! The [`ToolRegistry`] stores tools by name in a [`RwLock<HashMap>`] for
+//! async-safe concurrent access. Tools can be added and removed at runtime
+//! without restarting the session.
+//!
+//! ## Thread safety
+//!
+//! Multiple readers can snapshot the tool list concurrently (e.g., multiple
+//! completion requests building in parallel). Writes (register/unregister)
+//! take an exclusive lock but release it immediately after the mutation.
+//!
+//! ## Re-read-each-turn behavior
+//!
+//! The agent loop calls [`ToolRegistry::list()`] at the start of each turn
+//! when building the completion request. This means tools added or removed
+//! between turns are automatically picked up — no restart or explicit
+//! refresh is needed.
+//!
+//! ## Usage patterns
+//!
+//! ```no_run
+//! use agent_driver_rs::tool::{ToolRegistry, ToolDefinition, ToolSchema, FnTool, ToolResult, DynTool};
+//! use agent_driver_rs::ToolName;
+//! use std::sync::Arc;
+//! use futures::FutureExt;
+//!
+//! # async fn example() {
+//! let registry = ToolRegistry::new();
+//!
+//! // Register a closure-based tool
+//! let def = ToolDefinition::new(
+//!     ToolName::new("greet").unwrap(),
+//!     "Returns a greeting",
+//!     ToolSchema::empty(),
+//! );
+//! let tool: DynTool = Arc::new(FnTool::new(def, |input| {
+//!     async { Ok(ToolResult::text("Hello!")) }.boxed()
+//! }));
+//! registry.register(tool).await;
+//!
+//! // Snapshot tools for a completion request
+//! let tools = registry.list().await;
+//! assert_eq!(tools.len(), 1);
+//!
+//! // Remove a tool by name
+//! registry.unregister(&ToolName::new("greet").unwrap()).await;
+//! assert!(registry.is_empty().await);
+//! # }
+//! ```
 
 use std::collections::HashMap;
 

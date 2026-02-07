@@ -39,4 +39,4 @@ What becomes easier or harder as a result?
 
 | ADR | Title | Status | Tags |
 |-----|-------|--------|------|
-| [0001](0001-tool-system-and-mcp-integration.md) | Tool System & MCP Integration | Proposed | tool-system, mcp |
+| [0001](0001-tool-system-and-mcp-integration.md) | Tool System & MCP Integration | Accepted | tool-system, mcp |

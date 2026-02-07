@@ -482,3 +482,183 @@ impl Default for SessionBuilder {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::{mock_text_response, MockProvider};
+    use crate::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
+    use futures::FutureExt;
+    use std::sync::Arc;
+
+    fn model() -> ModelId {
+        ModelId::new("mock-model").unwrap()
+    }
+
+    fn mock_session(responses: Vec<Vec<crate::streaming::StreamEvent>>) -> SessionBuilder {
+        SessionBuilder::new()
+            .with_provider(MockProvider::new(responses))
+            .model(model())
+    }
+
+    #[tokio::test]
+    async fn send_adds_user_and_assistant_messages() {
+        let session = mock_session(vec![mock_text_response("Hello back!")])
+            .build()
+            .await
+            .unwrap();
+
+        let response = session.send("hi").await.unwrap();
+        assert_eq!(response.text(), "Hello back!");
+
+        let msgs = session.messages().await;
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[0].text(), "hi");
+        assert_eq!(msgs[1].role, Role::Assistant);
+        assert_eq!(msgs[1].text(), "Hello back!");
+    }
+
+    #[tokio::test]
+    async fn send_streaming_adds_user_message() {
+        let session = mock_session(vec![mock_text_response("streamed")])
+            .build()
+            .await
+            .unwrap();
+
+        let handle = session.send_streaming("hello").await.unwrap();
+        let response = handle.collect().await.unwrap();
+        assert_eq!(response.text(), "streamed");
+
+        let msgs = session.messages().await;
+        // send_streaming only adds the user message; assistant is NOT auto-added
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[0].text(), "hello");
+    }
+
+    #[tokio::test]
+    async fn history_trimming() {
+        let session = mock_session(vec![
+            mock_text_response("r1"),
+            mock_text_response("r2"),
+            mock_text_response("r3"),
+        ])
+        .max_history(4)
+        .build()
+        .await
+        .unwrap();
+
+        // Each send() adds 2 messages (user + assistant)
+        session.send("m1").await.unwrap(); // history: [user, assistant] = 2
+        session.send("m2").await.unwrap(); // history: [user, assistant, user, assistant] = 4
+        session.send("m3").await.unwrap(); // history would be 6, trimmed to 4
+
+        let msgs = session.messages().await;
+        assert_eq!(msgs.len(), 4);
+        // Oldest 2 messages were trimmed (user m1, assistant r1)
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[0].text(), "m2");
+        assert_eq!(msgs[1].role, Role::Assistant);
+        assert_eq!(msgs[1].text(), "r2");
+    }
+
+    #[tokio::test]
+    async fn execute_tool_adds_result_to_history() {
+        let session = mock_session(vec![])
+            .build()
+            .await
+            .unwrap();
+
+        let definition = ToolDefinition::new(
+            ToolName::new("echo").unwrap(),
+            "Echoes input",
+            ToolSchema::empty(),
+        );
+        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input| {
+            async { Ok(ToolResult::text("echoed!")) }.boxed()
+        }));
+        session.register_tool(tool).await;
+
+        let result = session
+            .execute_tool(
+                ToolCallId::new("call_1"),
+                &ToolName::new("echo").unwrap(),
+                ToolInput::default(),
+            )
+            .await
+            .unwrap();
+        assert!(result.is_success());
+        assert_eq!(result.content(), "echoed!");
+
+        let msgs = session.messages().await;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, Role::Tool);
+    }
+
+    #[tokio::test]
+    async fn execute_tool_not_found() {
+        let session = mock_session(vec![])
+            .build()
+            .await
+            .unwrap();
+
+        let result = session
+            .execute_tool(
+                ToolCallId::new("call_1"),
+                &ToolName::new("nonexistent").unwrap(),
+                ToolInput::default(),
+            )
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, SessionError::Tool(ToolError::NotFound(_))),
+            "expected NotFound, got: {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn system_prompt_update() {
+        let session = mock_session(vec![])
+            .system_prompt(SystemPrompt::new("initial"))
+            .build()
+            .await
+            .unwrap();
+
+        assert_eq!(session.system_prompt().await.as_str(), "initial");
+
+        session
+            .set_system_prompt(SystemPrompt::new("updated"))
+            .await;
+        assert_eq!(session.system_prompt().await.as_str(), "updated");
+    }
+
+    #[tokio::test]
+    async fn clear_messages() {
+        let session = mock_session(vec![mock_text_response("hi")])
+            .build()
+            .await
+            .unwrap();
+
+        session.send("hello").await.unwrap();
+        assert_eq!(session.message_count().await, 2);
+
+        session.clear_messages().await;
+        assert_eq!(session.message_count().await, 0);
+        assert!(session.messages().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancellation() {
+        let session = mock_session(vec![])
+            .build()
+            .await
+            .unwrap();
+
+        assert!(!session.is_cancelled());
+        session.cancel();
+        assert!(session.is_cancelled());
+    }
+}

@@ -152,6 +152,7 @@ where
         cancellation: CancellationToken,
         state: S,
         pending: VecDeque<Result<StreamEvent, StreamError>>,
+        ended: bool,
     }
 
     let sdk = SdkState {
@@ -159,6 +160,7 @@ where
         cancellation,
         state: initial_state,
         pending: VecDeque::new(),
+        ended: false,
     };
 
     futures::stream::unfold((sdk, parse_fn, on_end), |(mut s, parse, end)| async move {
@@ -194,6 +196,10 @@ where
                             return Some((first, (s, parse, end)));
                         }
                         None => {
+                            if s.ended {
+                                return None;
+                            }
+                            s.ended = true;
                             return end(&s.state).map(|evt| (evt, (s, parse, end)));
                         }
                     }
@@ -231,10 +237,7 @@ mod tests {
             },
         );
 
-        // Use take() because on_end returns Some every time the exhausted
-        // inner stream is polled — production callers (StreamHandle::collect)
-        // stop after Completed, but stream.collect() would poll forever.
-        let events: Vec<_> = stream.take(3).collect().await;
+        let events: Vec<_> = stream.collect().await;
         assert_eq!(events.len(), 3);
         assert!(matches!(
             &events[0],
@@ -319,5 +322,39 @@ mod tests {
 
         let events: Vec<_> = stream.collect().await;
         assert_eq!(events.len(), 1); // Just the text delta, no Completed
+    }
+
+    #[tokio::test]
+    async fn sdk_stream_terminates_after_on_end() {
+        // Verifies the on_end infinite-poll bug is fixed:
+        // collect() should return without needing .take().
+        let inner = futures::stream::iter(vec!["a", "b"]);
+        let cancel = CancellationToken::new();
+
+        let stream = buffered_sdk_stream(
+            inner,
+            cancel,
+            0u32,
+            |item: &str, state: &mut u32| {
+                *state += 1;
+                vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                    text: item.to_string(),
+                }))]
+            },
+            |_state| {
+                Some(Ok(StreamEvent::Completed {
+                    metadata: CompletionMetadata {
+                        model: None,
+                        stop_reason: Some(crate::streaming::StopReason::EndTurn),
+                        usage: None,
+                    },
+                }))
+            },
+        );
+
+        // This would hang forever before the fix
+        let events: Vec<_> = stream.collect().await;
+        assert_eq!(events.len(), 3); // "a", "b", Completed
+        assert!(matches!(&events[2], Ok(StreamEvent::Completed { .. })));
     }
 }

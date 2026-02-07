@@ -334,6 +334,11 @@ pub type BoxedProvider = Box<dyn Provider>;
 /// Type alias for a shared provider
 pub type SharedProvider = Arc<dyn Provider>;
 
+#[cfg(test)]
+mod mock;
+#[cfg(test)]
+pub(crate) use mock::*;
+
 // Provider implementations are in separate modules
 #[cfg(feature = "anthropic")]
 pub mod anthropic;

@@ -467,4 +467,192 @@ mod tests {
         };
         assert_eq!(outcome.iterations, 0);
     }
+
+    // --- Integration tests using MockProvider ---
+
+    use crate::provider::{mock_text_response, mock_tool_call_response, MockProvider};
+    use crate::session::SessionBuilder;
+    use crate::tool::{FnTool, ToolDefinition, ToolResult, ToolSchema};
+    use crate::types::ModelId;
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex};
+
+    fn model() -> ModelId {
+        ModelId::new("mock-model").unwrap()
+    }
+
+    /// Observer that records all events for test assertions.
+    struct RecordingObserver {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingObserver {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    events: events.clone(),
+                },
+                events,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl AgentObserver for RecordingObserver {
+        async fn on_event(&self, event: &AgentEvent) {
+            let tag = match event {
+                AgentEvent::TextDelta { text } => format!("TextDelta:{}", text),
+                AgentEvent::ThinkingDelta { .. } => "ThinkingDelta".to_string(),
+                AgentEvent::IterationStart { iteration } => {
+                    format!("IterationStart:{}", iteration)
+                }
+                AgentEvent::ToolCallStart { name, .. } => {
+                    format!("ToolCallStart:{}", name)
+                }
+                AgentEvent::ToolCallComplete { name, .. } => {
+                    format!("ToolCallComplete:{}", name)
+                }
+                AgentEvent::IterationComplete { iteration, .. } => {
+                    format!("IterationComplete:{}", iteration)
+                }
+                AgentEvent::LoopComplete { reason, .. } => {
+                    format!("LoopComplete:{}", reason)
+                }
+            };
+            self.events.lock().unwrap().push(tag);
+        }
+    }
+
+    #[tokio::test]
+    async fn single_turn_no_tools() {
+        let session = SessionBuilder::new()
+            .with_provider(MockProvider::new(vec![mock_text_response("Hello!")]))
+            .model(model())
+            .build()
+            .await
+            .unwrap();
+
+        let outcome = AgentLoop::new(&session).run("hi").await.unwrap();
+
+        assert_eq!(outcome.final_response.text(), "Hello!");
+        assert_eq!(outcome.iterations, 0);
+        assert!(matches!(outcome.stop_reason, LoopStopReason::EndTurn));
+    }
+
+    #[tokio::test]
+    async fn one_tool_call_round() {
+        use futures::FutureExt;
+
+        // First response: tool call, second response: text
+        let provider = MockProvider::new(vec![
+            mock_tool_call_response("call_1", "echo", "{}"),
+            mock_text_response("Done!"),
+        ]);
+
+        let definition = ToolDefinition::new(
+            ToolName::new("echo").unwrap(),
+            "Echoes back",
+            ToolSchema::empty(),
+        );
+        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input| {
+            async { Ok(ToolResult::text("echoed!")) }.boxed()
+        }));
+
+        let session = SessionBuilder::new()
+            .with_provider(provider)
+            .model(model())
+            .tool(tool)
+            .build()
+            .await
+            .unwrap();
+
+        let outcome = AgentLoop::new(&session).run("please echo").await.unwrap();
+
+        assert_eq!(outcome.iterations, 1);
+        assert_eq!(outcome.final_response.text(), "Done!");
+        assert!(matches!(outcome.stop_reason, LoopStopReason::EndTurn));
+
+        // Verify history has: user, assistant(tool_use), tool_result, assistant(text)
+        let msgs = session.messages().await;
+        assert!(msgs.len() >= 4, "expected at least 4 messages, got {}", msgs.len());
+    }
+
+    #[tokio::test]
+    async fn max_tool_depth_enforced() {
+        use futures::FutureExt;
+
+        // Provider always returns tool calls — the loop should stop at depth 2
+        let provider = MockProvider::new(vec![
+            mock_tool_call_response("call_1", "echo", "{}"),
+            mock_tool_call_response("call_2", "echo", "{}"),
+            mock_tool_call_response("call_3", "echo", "{}"),
+        ]);
+
+        let definition = ToolDefinition::new(
+            ToolName::new("echo").unwrap(),
+            "Echoes back",
+            ToolSchema::empty(),
+        );
+        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input| {
+            async { Ok(ToolResult::text("ok")) }.boxed()
+        }));
+
+        let config = AgentLoopConfig {
+            max_tool_depth: super::super::config::MaxToolDepth::new(2).unwrap(),
+            continue_on_tool_error: true,
+        };
+
+        let session = SessionBuilder::new()
+            .with_provider(provider)
+            .model(model())
+            .tool(tool)
+            .build()
+            .await
+            .unwrap();
+
+        let outcome = AgentLoop::new(&session)
+            .with_config(config)
+            .run("loop forever")
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.iterations, 2);
+        assert!(matches!(
+            outcome.stop_reason,
+            LoopStopReason::MaxToolDepthReached
+        ));
+    }
+
+    #[tokio::test]
+    async fn observer_receives_events() {
+        let session = SessionBuilder::new()
+            .with_provider(MockProvider::new(vec![mock_text_response("world")]))
+            .model(model())
+            .build()
+            .await
+            .unwrap();
+
+        let (observer, events) = RecordingObserver::new();
+
+        let outcome = AgentLoop::new(&session)
+            .with_observer(observer)
+            .run("hello")
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.final_response.text(), "world");
+
+        let recorded = events.lock().unwrap();
+        assert!(
+            recorded.iter().any(|e| e.starts_with("TextDelta:")),
+            "expected TextDelta event, got: {:?}",
+            *recorded
+        );
+        assert!(
+            recorded.iter().any(|e| e.starts_with("LoopComplete:")),
+            "expected LoopComplete event, got: {:?}",
+            *recorded
+        );
+    }
 }

@@ -516,3 +516,116 @@ fn parse_openai_chunk(
 
     events
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_chunk(content: &str) -> async_openai::types::CreateChatCompletionStreamResponse {
+        serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1234567890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": { "content": content },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid text chunk JSON")
+    }
+
+    fn finish_chunk(reason: &str) -> async_openai::types::CreateChatCompletionStreamResponse {
+        serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1234567890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": reason
+            }]
+        }))
+        .expect("valid finish chunk JSON")
+    }
+
+    fn tool_call_chunk(
+        id: &str,
+        name: &str,
+        args: &str,
+    ) -> async_openai::types::CreateChatCompletionStreamResponse {
+        serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1234567890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": id,
+                        "function": { "name": name, "arguments": args }
+                    }]
+                },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid tool call chunk JSON")
+    }
+
+    #[test]
+    fn parse_text_content() {
+        let mut state = StreamState::default();
+        let events = parse_openai_chunk(text_chunk("Hello"), &mut state);
+
+        // First chunk: Started + ContentBlockStart + TextDelta
+        assert!(state.started);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "Hello"
+        )));
+    }
+
+    #[test]
+    fn parse_finish_reason_stop() {
+        let mut state = StreamState::default();
+        state.started = true;
+
+        let _ = parse_openai_chunk(finish_chunk("stop"), &mut state);
+        assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
+    }
+
+    #[test]
+    fn parse_finish_reason_tool_calls() {
+        let mut state = StreamState::default();
+        state.started = true;
+
+        let _ = parse_openai_chunk(finish_chunk("tool_calls"), &mut state);
+        assert_eq!(state.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    #[test]
+    fn parse_tool_call_start_and_arguments() {
+        let mut state = StreamState::default();
+        state.started = true;
+
+        let events = parse_openai_chunk(
+            tool_call_chunk("call_abc", "read_file", r#"{"path":"/tmp"}"#),
+            &mut state,
+        );
+
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ToolUseStart { name, .. }))
+                if name.as_str() == "read_file"
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ToolInputDelta { partial_json, .. }))
+                if partial_json == r#"{"path":"/tmp"}"#
+        )));
+    }
+}

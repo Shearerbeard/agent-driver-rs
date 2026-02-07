@@ -524,4 +524,118 @@ mod tests {
             StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "Hello"
         ));
     }
+
+    #[test]
+    fn parse_tool_use_content_block_start() {
+        let data = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01abc","name":"read_file"}}"#;
+        let mut state = StreamState::default();
+        let result = parse_anthropic_event(data, &mut state);
+
+        let events = result.unwrap().unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            StreamEvent::ContentBlockStart {
+                index: 1,
+                block_type: ContentBlockType::ToolUse
+            }
+        ));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::Delta(StreamDelta::ToolUseStart { id, name })
+                if id.as_str() == "toolu_01abc" && name.as_str() == "read_file"
+        ));
+        // State should track the tool call ID for subsequent input deltas
+        assert_eq!(state.tool_call_ids.get(&1).unwrap(), "toolu_01abc");
+    }
+
+    #[test]
+    fn parse_tool_input_json_delta() {
+        let data = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"partial"}}"#;
+        let mut state = StreamState::default();
+        state.tool_call_ids.insert(1, "toolu_01abc".to_string());
+
+        let result = parse_anthropic_event(data, &mut state);
+        let events = result.unwrap().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            StreamEvent::Delta(StreamDelta::ToolInputDelta { id, partial_json })
+                if id.as_str() == "toolu_01abc" && partial_json == "partial"
+        ));
+    }
+
+    #[test]
+    fn parse_thinking_delta() {
+        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#;
+        let mut state = StreamState::default();
+        let result = parse_anthropic_event(data, &mut state);
+
+        let events = result.unwrap().unwrap();
+        assert!(matches!(
+            &events[0],
+            StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking })
+                if thinking == "Let me think..."
+        ));
+    }
+
+    #[test]
+    fn parse_signature_delta() {
+        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc123"}}"#;
+        let mut state = StreamState::default();
+        let result = parse_anthropic_event(data, &mut state);
+
+        let events = result.unwrap().unwrap();
+        assert!(matches!(
+            &events[0],
+            StreamEvent::Delta(StreamDelta::SignatureDelta { signature })
+                if signature == "sig_abc123"
+        ));
+    }
+
+    #[test]
+    fn parse_error_event() {
+        let data = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let mut state = StreamState::default();
+        let result = parse_anthropic_event(data, &mut state);
+
+        assert!(matches!(
+            result.unwrap(),
+            Err(StreamError::ConnectionLost(msg)) if msg == "Overloaded"
+        ));
+    }
+
+    #[test]
+    fn parse_message_delta_with_tool_use_stop_reason() {
+        let data = r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":42}}"#;
+        let mut state = StreamState::default();
+        let result = parse_anthropic_event(data, &mut state);
+
+        let events = result.unwrap().unwrap();
+        assert!(matches!(
+            &events[0],
+            StreamEvent::Completed { metadata }
+                if metadata.stop_reason == Some(StopReason::ToolUse)
+                && metadata.usage.map(|u| u.output_tokens) == Some(42)
+        ));
+    }
+
+    #[test]
+    fn parse_content_block_stop_cleans_tool_id() {
+        let data = r#"{"type":"content_block_stop","index":1}"#;
+        let mut state = StreamState::default();
+        state.tool_call_ids.insert(1, "toolu_01abc".to_string());
+        state.current_block_type = Some(ContentBlockType::ToolUse);
+
+        let result = parse_anthropic_event(data, &mut state);
+        let events = result.unwrap().unwrap();
+        assert!(matches!(events[0], StreamEvent::ContentBlockStop { index: 1 }));
+        assert!(!state.tool_call_ids.contains_key(&1));
+    }
+
+    #[test]
+    fn parse_malformed_json_returns_none() {
+        let mut state = StreamState::default();
+        assert!(parse_anthropic_event("not json", &mut state).is_none());
+    }
 }

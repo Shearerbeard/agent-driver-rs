@@ -202,3 +202,122 @@ where
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::streaming::{CompletionMetadata, ContentBlockType, StreamDelta};
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn sdk_stream_emits_events_and_on_end() {
+        let inner = futures::stream::iter(vec!["hello", "world"]);
+        let cancel = CancellationToken::new();
+
+        let stream = buffered_sdk_stream(
+            inner,
+            cancel,
+            0u32,
+            |item: &str, state: &mut u32| {
+                *state += 1;
+                vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                    text: item.to_string(),
+                }))]
+            },
+            |_state| {
+                Some(Ok(StreamEvent::Completed {
+                    metadata: CompletionMetadata::default(),
+                }))
+            },
+        );
+
+        // Use take() because on_end returns Some every time the exhausted
+        // inner stream is polled — production callers (StreamHandle::collect)
+        // stop after Completed, but stream.collect() would poll forever.
+        let events: Vec<_> = stream.take(3).collect().await;
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[0],
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "hello"
+        ));
+        assert!(matches!(
+            &events[1],
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "world"
+        ));
+        assert!(matches!(&events[2], Ok(StreamEvent::Completed { .. })));
+    }
+
+    #[tokio::test]
+    async fn sdk_stream_pre_cancelled_yields_nothing() {
+        let inner = futures::stream::iter(vec!["hello"]);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let stream = buffered_sdk_stream(
+            inner,
+            cancel,
+            (),
+            |item: &str, _: &mut ()| {
+                vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                    text: item.to_string(),
+                }))]
+            },
+            |_| Some(Ok(StreamEvent::Completed { metadata: CompletionMetadata::default() })),
+        );
+
+        let events: Vec<_> = stream.collect().await;
+        assert!(events.is_empty(), "cancelled stream should yield no events");
+    }
+
+    #[tokio::test]
+    async fn sdk_stream_multi_event_buffering() {
+        let inner = futures::stream::iter(vec!["chunk"]);
+        let cancel = CancellationToken::new();
+
+        let stream = buffered_sdk_stream(
+            inner,
+            cancel,
+            (),
+            |_item: &str, _: &mut ()| {
+                vec![
+                    Ok(StreamEvent::ContentBlockStart {
+                        index: 0,
+                        block_type: ContentBlockType::Text,
+                    }),
+                    Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                        text: "hello".to_string(),
+                    })),
+                    Ok(StreamEvent::ContentBlockStop { index: 0 }),
+                ]
+            },
+            |_| None,
+        );
+
+        let events: Vec<_> = stream.collect().await;
+        assert_eq!(events.len(), 3);
+        assert!(matches!(&events[0], Ok(StreamEvent::ContentBlockStart { .. })));
+        assert!(matches!(&events[1], Ok(StreamEvent::Delta(..))));
+        assert!(matches!(&events[2], Ok(StreamEvent::ContentBlockStop { .. })));
+    }
+
+    #[tokio::test]
+    async fn sdk_stream_on_end_none_yields_no_final_event() {
+        let inner = futures::stream::iter(vec!["only"]);
+        let cancel = CancellationToken::new();
+
+        let stream = buffered_sdk_stream(
+            inner,
+            cancel,
+            (),
+            |item: &str, _: &mut ()| {
+                vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                    text: item.to_string(),
+                }))]
+            },
+            |_| None, // No final event
+        );
+
+        let events: Vec<_> = stream.collect().await;
+        assert_eq!(events.len(), 1); // Just the text delta, no Completed
+    }
+}

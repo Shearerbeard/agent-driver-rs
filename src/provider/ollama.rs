@@ -255,7 +255,9 @@ impl StreamState {
     }
 }
 
-/// Parse an Ollama streaming response
+/// Parse an Ollama streaming response.
+///
+/// Visible to tests for direct unit testing of parse logic.
 fn parse_ollama_response(
     response: ollama_rs::generation::chat::ChatMessageResponse,
     state: &mut StreamState,
@@ -300,4 +302,76 @@ fn parse_ollama_response(
     }
 
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ollama_rs::generation::chat::ChatMessageResponse;
+
+    fn streaming_chunk(content: &str) -> ChatMessageResponse {
+        serde_json::from_value(serde_json::json!({
+            "model": "llama3.2",
+            "created_at": "2024-01-01T00:00:00Z",
+            "message": { "role": "assistant", "content": content },
+            "done": false
+        }))
+        .expect("valid streaming chunk JSON")
+    }
+
+    fn final_chunk() -> ChatMessageResponse {
+        serde_json::from_value(serde_json::json!({
+            "model": "llama3.2",
+            "created_at": "2024-01-01T00:00:01Z",
+            "message": { "role": "assistant", "content": "" },
+            "done": true,
+            "total_duration": 1000000,
+            "load_duration": 500000,
+            "prompt_eval_count": 10,
+            "prompt_eval_duration": 100000,
+            "eval_count": 20,
+            "eval_duration": 200000
+        }))
+        .expect("valid final chunk JSON")
+    }
+
+    #[test]
+    fn parse_text_content() {
+        let mut state = StreamState::new("llama3.2".to_string());
+        let events = parse_ollama_response(streaming_chunk("Hello"), &mut state);
+
+        // First chunk: Started + ContentBlockStart + TextDelta
+        assert!(state.started);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "Hello"
+        )));
+    }
+
+    #[test]
+    fn parse_empty_content_skipped() {
+        let mut state = StreamState::new("llama3.2".to_string());
+        state.started = true;
+
+        let events = parse_ollama_response(streaming_chunk(""), &mut state);
+        // Empty content should not produce a TextDelta
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { .. }))
+        )));
+    }
+
+    #[test]
+    fn parse_final_chunk_emits_stop() {
+        let mut state = StreamState::new("llama3.2".to_string());
+        state.started = true;
+
+        let events = parse_ollama_response(final_chunk(), &mut state);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::ContentBlockStop { index: 0 })
+        )));
+        // Usage should be tracked from final_data
+        assert!(state.usage.is_some());
+    }
 }

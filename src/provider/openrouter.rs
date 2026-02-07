@@ -575,4 +575,46 @@ mod tests {
         let events = result.unwrap().unwrap();
         assert!(!events.is_empty());
     }
+
+    #[test]
+    fn parse_tool_call_with_arguments() {
+        let data = r#"{"id":"gen-456","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_xyz","function":{"name":"list_dir","arguments":"{\"path\":\"/tmp\"}"}}]},"finish_reason":null}]}"#;
+        let mut state = StreamState::default();
+        state.started = true;
+
+        let result = parse_openrouter_event(data, &mut state);
+        let events = result.unwrap().unwrap();
+
+        // Should include ContentBlockStart, ToolUseStart, and ToolInputDelta
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Delta(StreamDelta::ToolUseStart { name, .. })
+                if name.as_str() == "list_dir"
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Delta(StreamDelta::ToolInputDelta { partial_json, .. })
+                if partial_json == r#"{"path":"/tmp"}"#
+        )));
+    }
+
+    #[test]
+    fn parse_usage_tracking() {
+        let data = r#"{"id":"gen-789","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":50}}"#;
+        let mut state = StreamState::default();
+        state.started = true;
+
+        let _ = parse_openrouter_event(data, &mut state);
+
+        assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
+        let usage = state.usage.unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+    }
+
+    #[test]
+    fn parse_malformed_json_returns_none() {
+        let mut state = StreamState::default();
+        assert!(parse_openrouter_event("not json", &mut state).is_none());
+    }
 }

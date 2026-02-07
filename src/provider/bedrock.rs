@@ -663,6 +663,57 @@ mod tests {
     }
 
     #[test]
+    fn json_to_document_all_types() {
+        use aws_smithy_types::Document;
+
+        // Null
+        assert!(matches!(json_to_document(&serde_json::json!(null)), Document::Null));
+
+        // Bool
+        assert!(matches!(json_to_document(&serde_json::json!(true)), Document::Bool(true)));
+        assert!(matches!(json_to_document(&serde_json::json!(false)), Document::Bool(false)));
+
+        // Positive integer
+        match json_to_document(&serde_json::json!(42)) {
+            Document::Number(n) => assert_eq!(n.to_f64_lossy(), 42.0),
+            other => panic!("expected Number, got {:?}", other),
+        }
+
+        // Negative integer
+        match json_to_document(&serde_json::json!(-7)) {
+            Document::Number(n) => assert_eq!(n.to_f64_lossy(), -7.0),
+            other => panic!("expected Number, got {:?}", other),
+        }
+
+        // Float
+        match json_to_document(&serde_json::json!(3.14)) {
+            Document::Number(n) => assert!((n.to_f64_lossy() - 3.14).abs() < f64::EPSILON),
+            other => panic!("expected Number, got {:?}", other),
+        }
+
+        // String
+        match json_to_document(&serde_json::json!("hello")) {
+            Document::String(s) => assert_eq!(s, "hello"),
+            other => panic!("expected String, got {:?}", other),
+        }
+
+        // Array
+        match json_to_document(&serde_json::json!([1, "two", null])) {
+            Document::Array(arr) => assert_eq!(arr.len(), 3),
+            other => panic!("expected Array, got {:?}", other),
+        }
+
+        // Nested object
+        match json_to_document(&serde_json::json!({"key": "value", "nested": {"a": 1}})) {
+            Document::Object(map) => {
+                assert!(map.contains_key("key"));
+                assert!(map.contains_key("nested"));
+            }
+            other => panic!("expected Object, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn text_and_tool_result_not_merged() {
         // If a User text message is adjacent to a Tool result (shouldn't happen
         // in practice, but guard against it), they must NOT be merged because

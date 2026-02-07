@@ -13,7 +13,7 @@ use ollama_rs::models::ModelOptions;
 use ollama_rs::Ollama;
 
 use crate::config::OllamaConfig;
-use crate::error::{ProviderError, StreamError};
+use crate::error::{ProviderError, StreamError, StreamErrorKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -156,7 +156,7 @@ impl Provider for OllamaProvider {
                 .client
                 .send_chat_messages_stream(chat_request)
                 .await
-                .map_err(|e| ProviderError::InvalidRequest(format!("Ollama error: {}", e)))?;
+                .map_err(|e| ProviderError::InvalidRequest { provider: super::ProviderKind::Ollama, message: format!("Ollama error: {}", e) })?;
 
             let event_stream = super::stream_adapter::buffered_sdk_stream(
                 stream,
@@ -164,7 +164,7 @@ impl Provider for OllamaProvider {
                 StreamState::new(model.clone()),
                 |item, state| match item {
                     Ok(response) => parse_ollama_response(response, state),
-                    Err(()) => vec![Err(StreamError::ConnectionLost("Stream error".to_string()))],
+                    Err(()) => vec![Err(StreamError::ConnectionLost { kind: StreamErrorKind::TransportError, message: "Stream error".to_string() })],
                 },
                 |state| {
                     if !state.completed {

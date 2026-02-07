@@ -33,8 +33,9 @@ pub mod agent;
 
 // Re-exports for convenience
 pub use error::{
-    AgentDriverError, AgentLoopError, ConfigError, McpToolError, ModelIdError, ProviderError,
-    SessionError, StreamError, TaskPoolError, TemperatureError, ToolError, ToolNameError,
+    AgentDriverError, AgentLoopError, AuthErrorKind, ConfigError, McpToolError, ModelIdError,
+    ProviderError, SessionError, StreamError, StreamErrorKind, TaskPoolError, TemperatureError,
+    ToolError, ToolNameError,
 };
 
 pub use types::{

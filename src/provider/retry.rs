@@ -95,14 +95,14 @@ where
     loop {
         match f().await {
             Ok(result) => return Ok(result),
-            Err(ProviderError::RateLimited { retry_after }) => {
+            Err(e @ ProviderError::RateLimited { .. }) => {
                 attempts += 1;
                 if attempts >= config.max_retries {
-                    return Err(ProviderError::RateLimited { retry_after });
+                    return Err(e);
                 }
 
                 // Use retry_after if provided, otherwise use backoff
-                let delay = retry_after
+                let delay = e.retry_after()
                     .or_else(|| backoff.next_backoff())
                     .unwrap_or(config.max_interval);
 
@@ -146,7 +146,7 @@ mod tests {
             async move {
                 let n = attempts.fetch_add(1, Ordering::SeqCst);
                 if n < 2 {
-                    Err(ProviderError::RateLimited { retry_after: None })
+                    Err(ProviderError::RateLimited { provider: crate::provider::ProviderKind::Anthropic, retry_after: None })
                 } else {
                     Ok(42)
                 }
@@ -171,7 +171,7 @@ mod tests {
             let attempts = attempts_clone.clone();
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
-                Err::<i32, _>(ProviderError::RateLimited { retry_after: None })
+                Err::<i32, _>(ProviderError::RateLimited { provider: crate::provider::ProviderKind::Anthropic, retry_after: None })
             }
         })
         .await;
@@ -190,12 +190,16 @@ mod tests {
             let attempts = attempts_clone.clone();
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
-                Err::<i32, _>(ProviderError::Auth("Invalid API key".into()))
+                Err::<i32, _>(ProviderError::Auth {
+                    provider: crate::provider::ProviderKind::Anthropic,
+                    kind: crate::error::AuthErrorKind::Rejected,
+                    message: "Invalid API key".into(),
+                })
             }
         })
         .await;
 
-        assert!(matches!(result, Err(ProviderError::Auth(_))));
+        assert!(matches!(result, Err(ProviderError::Auth { .. })));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 }

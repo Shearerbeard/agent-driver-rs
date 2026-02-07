@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::config::AnthropicConfig;
-use crate::error::{ProviderError, StreamError};
+use crate::error::{AuthErrorKind, ProviderError, StreamError, StreamErrorKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent,
     StreamHandle, TokenUsage,
@@ -181,9 +181,11 @@ impl AnthropicProvider {
         headers.insert(
             "x-api-key",
             HeaderValue::from_str(self.config.api_key.as_str()).map_err(|_| {
-                ProviderError::Auth(
-                    "ANTHROPIC_API_KEY contains invalid header characters".to_string(),
-                )
+                ProviderError::Auth {
+                    provider: super::ProviderKind::Anthropic,
+                    kind: AuthErrorKind::InvalidApiKey,
+                    message: "ANTHROPIC_API_KEY contains invalid header characters".to_string(),
+                }
             })?,
         );
         headers.insert(
@@ -215,7 +217,7 @@ impl Provider for AnthropicProvider {
                 .json(&body);
 
             let event_source = EventSource::new(request_builder)
-                .map_err(|e| ProviderError::Stream(StreamError::ConnectionLost(e.to_string())))?;
+                .map_err(|e| ProviderError::Stream(StreamError::ConnectionLost { kind: StreamErrorKind::ConnectionDropped, message: e.to_string() }))?;
 
             let stream = create_anthropic_stream(event_source, ctx.cancellation.clone());
 
@@ -409,9 +411,10 @@ fn parse_anthropic_event(
         }
         AnthropicStreamEvent::Ping => vec![],
         AnthropicStreamEvent::Error { error } => {
-            return Some(Err(StreamError::ConnectionLost(
-                error.message.unwrap_or_else(|| "Unknown error".into()),
-            )));
+            return Some(Err(StreamError::ConnectionLost {
+                kind: StreamErrorKind::ProviderError,
+                message: error.message.unwrap_or_else(|| "Unknown error".into()),
+            }));
         }
     };
 
@@ -601,7 +604,7 @@ mod tests {
 
         assert!(matches!(
             result.unwrap(),
-            Err(StreamError::ConnectionLost(msg)) if msg == "Overloaded"
+            Err(StreamError::ConnectionLost { message: ref msg, .. }) if msg == "Overloaded"
         ));
     }
 

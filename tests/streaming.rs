@@ -26,7 +26,10 @@ fn mock_request() -> CompletionRequest {
 
 #[tokio::test]
 async fn mid_stream_error_propagates() {
-    let events = mock_error_response(StreamError::ConnectionLost("gone".into()));
+    let events = mock_error_response(StreamError::ConnectionLost {
+        kind: agent_driver_rs::error::StreamErrorKind::TransportError,
+        message: "gone".into(),
+    });
     let provider = MockProvider::new(vec![events]);
     let ctx = ProviderContext::default();
 
@@ -38,7 +41,7 @@ async fn mid_stream_error_propagates() {
 
     assert!(result.is_err(), "collect() should return Err on stream error");
     assert!(
-        matches!(result.unwrap_err(), StreamError::ConnectionLost(msg) if msg == "gone"),
+        matches!(result.unwrap_err(), StreamError::ConnectionLost { ref message, .. } if message == "gone"),
         "error should be ConnectionLost with the original message",
     );
 }

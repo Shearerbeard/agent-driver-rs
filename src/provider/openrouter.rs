@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::config::OpenRouterConfig;
-use crate::error::{ProviderError, StreamError};
+use crate::error::{AuthErrorKind, ProviderError, StreamError, StreamErrorKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -243,9 +243,11 @@ impl OpenRouterProvider {
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&auth_value).map_err(|_| {
-                ProviderError::Auth(
-                    "OPENROUTER_API_KEY contains invalid header characters".to_string(),
-                )
+                ProviderError::Auth {
+                    provider: super::ProviderKind::OpenRouter,
+                    kind: AuthErrorKind::InvalidApiKey,
+                    message: "OPENROUTER_API_KEY contains invalid header characters".to_string(),
+                }
             })?,
         );
 
@@ -281,7 +283,12 @@ impl Provider for OpenRouterProvider {
                 .json(&body);
 
             let event_source = EventSource::new(request_builder)
-                .map_err(|e| ProviderError::Stream(StreamError::ConnectionLost(e.to_string())))?;
+                .map_err(|e| {
+                    ProviderError::Stream(StreamError::ConnectionLost {
+                        kind: StreamErrorKind::ConnectionDropped,
+                        message: e.to_string(),
+                    })
+                })?;
 
             let stream = create_openrouter_stream(event_source, ctx.cancellation.clone());
 

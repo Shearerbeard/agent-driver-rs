@@ -18,7 +18,7 @@ use async_openai::types::{
 use async_openai::Client;
 
 use crate::config::OpenAiConfig;
-use crate::error::{ProviderError, StreamError};
+use crate::error::{AuthErrorKind, ProviderError, StreamError, StreamErrorKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -91,10 +91,13 @@ impl OpenAiProvider {
                                 .content(text)
                                 .build()
                                 .map_err(|e| {
-                                    ProviderError::InvalidRequest(format!(
-                                        "Failed to build system message: {}",
-                                        e
-                                    ))
+                                    ProviderError::InvalidRequest {
+                                        provider: super::ProviderKind::OpenAi,
+                                        message: format!(
+                                            "Failed to build system message: {}",
+                                            e
+                                        ),
+                                    }
                                 })?
                                 .into(),
                         );
@@ -117,10 +120,13 @@ impl OpenAiProvider {
                                 .content(text)
                                 .build()
                                 .map_err(|e| {
-                                    ProviderError::InvalidRequest(format!(
-                                        "Failed to build user message: {}",
-                                        e
-                                    ))
+                                    ProviderError::InvalidRequest {
+                                        provider: super::ProviderKind::OpenAi,
+                                        message: format!(
+                                            "Failed to build user message: {}",
+                                            e
+                                        ),
+                                    }
                                 })?
                                 .into(),
                         );
@@ -175,10 +181,13 @@ impl OpenAiProvider {
                     }
 
                     openai_messages.push(builder.build().map_err(|e| {
-                        ProviderError::InvalidRequest(format!(
-                            "Failed to build assistant message: {}",
-                            e
-                        ))
+                        ProviderError::InvalidRequest {
+                            provider: super::ProviderKind::OpenAi,
+                            message: format!(
+                                "Failed to build assistant message: {}",
+                                e
+                            ),
+                        }
                     })?.into());
                 }
                 Role::Tool => {
@@ -199,10 +208,13 @@ impl OpenAiProvider {
                                     .content(content_str)
                                     .build()
                                     .map_err(|e| {
-                                        ProviderError::InvalidRequest(format!(
-                                            "Failed to build tool message: {}",
-                                            e
-                                        ))
+                                        ProviderError::InvalidRequest {
+                                            provider: super::ProviderKind::OpenAi,
+                                            message: format!(
+                                                "Failed to build tool message: {}",
+                                                e
+                                            ),
+                                        }
                                     })?
                                     .into(),
                             );
@@ -229,7 +241,10 @@ impl OpenAiProvider {
                     .parameters(t.input_schema.to_value())
                     .build()
                     .map_err(|e| {
-                        ProviderError::InvalidRequest(format!("Failed to build function: {}", e))
+                        ProviderError::InvalidRequest {
+                        provider: super::ProviderKind::OpenAi,
+                        message: format!("Failed to build function: {}", e),
+                    }
                     })?;
 
                 ChatCompletionToolArgs::default()
@@ -237,7 +252,10 @@ impl OpenAiProvider {
                     .function(function)
                     .build()
                     .map_err(|e| {
-                        ProviderError::InvalidRequest(format!("Failed to build tool: {}", e))
+                        ProviderError::InvalidRequest {
+                            provider: super::ProviderKind::OpenAi,
+                            message: format!("Failed to build tool: {}", e),
+                        }
                     })
             })
             .collect()
@@ -257,9 +275,10 @@ impl Provider for OpenAiProvider {
         Box::pin(async move {
             // Check if model supports streaming
             if !self.config.model.supports_streaming() {
-                return Err(ProviderError::StreamingNotSupported(
-                    self.config.model.as_str().to_string(),
-                ));
+                return Err(ProviderError::StreamingNotSupported {
+                    provider: super::ProviderKind::OpenAi,
+                    model: self.config.model.as_str().to_string(),
+                });
             }
 
             let model = self.config.model.as_str();
@@ -275,10 +294,13 @@ impl Provider for OpenAiProvider {
                             .content(system.as_str())
                             .build()
                             .map_err(|e| {
-                                ProviderError::InvalidRequest(format!(
-                                    "Failed to build system message: {}",
-                                    e
-                                ))
+                                ProviderError::InvalidRequest {
+                                    provider: super::ProviderKind::OpenAi,
+                                    message: format!(
+                                        "Failed to build system message: {}",
+                                        e
+                                    ),
+                                }
                             })?
                             .into(),
                     );
@@ -315,20 +337,36 @@ impl Provider for OpenAiProvider {
             }
 
             let openai_request = req_builder.build().map_err(|e| {
-                ProviderError::InvalidRequest(format!("Failed to build request: {}", e))
+                ProviderError::InvalidRequest {
+                    provider: super::ProviderKind::OpenAi,
+                    message: format!("Failed to build request: {}", e),
+                }
             })?;
 
             // Create stream
             let stream = self.client.chat().create_stream(openai_request).await.map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("401") || msg.contains("Unauthorized") {
-                    ProviderError::Auth(msg)
+                    ProviderError::Auth {
+                        provider: super::ProviderKind::OpenAi,
+                        kind: AuthErrorKind::Rejected,
+                        message: msg,
+                    }
                 } else if msg.contains("429") || msg.contains("rate") {
-                    ProviderError::RateLimited { retry_after: None }
+                    ProviderError::RateLimited {
+                        provider: super::ProviderKind::OpenAi,
+                        retry_after: None,
+                    }
                 } else if msg.contains("model") && msg.contains("not found") {
-                    ProviderError::ModelNotFound(model.to_string())
+                    ProviderError::ModelNotFound {
+                        provider: super::ProviderKind::OpenAi,
+                        model: model.to_string(),
+                    }
                 } else {
-                    ProviderError::InvalidRequest(msg)
+                    ProviderError::InvalidRequest {
+                        provider: super::ProviderKind::OpenAi,
+                        message: msg,
+                    }
                 }
             })?;
 
@@ -338,7 +376,10 @@ impl Provider for OpenAiProvider {
                 StreamState::default(),
                 |item, state| match item {
                     Ok(response) => parse_openai_chunk(response, state),
-                    Err(e) => vec![Err(StreamError::ConnectionLost(e.to_string()))],
+                    Err(e) => vec![Err(StreamError::ConnectionLost {
+                        kind: StreamErrorKind::TransportError,
+                        message: e.to_string(),
+                    })],
                 },
                 |state| {
                     if !state.completed {

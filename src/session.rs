@@ -262,7 +262,7 @@ impl Session {
             .tools
             .get(name)
             .await
-            .ok_or_else(|| ToolError::NotFound(name.as_str().to_string()))?;
+            .ok_or_else(|| ToolError::NotFound(name.clone()))?;
 
         let result = tool.execute(&input).await?;
 
@@ -290,7 +290,10 @@ impl Session {
         for block in &response.content {
             if let ContentBlock::ToolUse { id, name, input } = block {
                 let tool_input = ToolInput::from_value(input.clone())
-                    .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+                    .map_err(|e| ToolError::InvalidInput {
+                        tool_name: Some(name.clone()),
+                        message: e.to_string(),
+                    })?;
                 let result = self.execute_tool(id.clone(), name, tool_input).await?;
                 results.push(result);
             }

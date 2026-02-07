@@ -21,7 +21,7 @@ use aws_sdk_bedrockruntime::Client;
 use aws_smithy_types::Document;
 
 use crate::config::BedrockConfig;
-use crate::error::{ProviderError, StreamError};
+use crate::error::{AuthErrorKind, ProviderError, StreamError, StreamErrorKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -98,7 +98,7 @@ impl BedrockProvider {
                 .input_schema(ToolInputSchema::Json(schema_doc))
                 .build()
                 .map_err(|e| {
-                    ProviderError::InvalidRequest(format!("Failed to build tool spec: {}", e))
+                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!("Failed to build tool spec: {}", e) }
                 })?;
 
             bedrock_tools.push(Tool::ToolSpec(spec));
@@ -109,7 +109,7 @@ impl BedrockProvider {
                 .set_tools(Some(bedrock_tools))
                 .build()
                 .map_err(|e| {
-                    ProviderError::InvalidRequest(format!("Failed to build tool config: {}", e))
+                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!("Failed to build tool config: {}", e) }
                 })?,
         ))
     }
@@ -167,10 +167,10 @@ fn convert_messages(
                             ))
                             .build()
                             .map_err(|e| {
-                                ProviderError::InvalidRequest(format!(
+                                ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!(
                                     "Failed to build tool use: {}",
                                     e
-                                ))
+                                ) }
                             })?,
                     ));
                 }
@@ -193,10 +193,10 @@ fn convert_messages(
                             })
                             .build()
                             .map_err(|e| {
-                                ProviderError::InvalidRequest(format!(
+                                ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!(
                                     "Failed to build tool result: {}",
                                     e
-                                ))
+                                ) }
                             })?,
                     ));
                 }
@@ -228,7 +228,7 @@ fn convert_messages(
                 .set_content(Some(blocks))
                 .build()
                 .map_err(|e| {
-                    ProviderError::InvalidRequest(format!("Failed to build message: {}", e))
+                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!("Failed to build message: {}", e) }
                 })
         })
         .collect()
@@ -315,19 +315,19 @@ impl Provider for BedrockProvider {
             let response = req.send().await.map_err(|e| {
                 let msg = e.to_string();
                 if msg.contains("AccessDenied") || msg.contains("UnauthorizedException") {
-                    ProviderError::Auth(msg)
+                    ProviderError::Auth { provider: super::ProviderKind::Bedrock, kind: AuthErrorKind::Rejected, message: msg }
                 } else if msg.contains("ThrottlingException") {
-                    ProviderError::RateLimited { retry_after: None }
+                    ProviderError::RateLimited { provider: super::ProviderKind::Bedrock, retry_after: None }
                 } else if msg.contains("ModelNotFound") || msg.contains("ResourceNotFoundException")
                 {
-                    ProviderError::ModelNotFound(model_id.clone())
+                    ProviderError::ModelNotFound { provider: super::ProviderKind::Bedrock, model: model_id.clone() }
                 } else if msg.contains("inference profile") || msg.contains("InferenceProfile") {
-                    ProviderError::InvalidRequest(format!(
+                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!(
                         "Model requires an inference profile. Set BEDROCK_INFERENCE_PROFILE env var. Error: {}",
                         msg
-                    ))
+                    ) }
                 } else {
-                    ProviderError::InvalidRequest(msg)
+                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: msg }
                 }
             })?;
 
@@ -379,7 +379,7 @@ impl Provider for BedrockProvider {
                                     }
                                     Ok(None) => return None,
                                     Err(e) => {
-                                        return Some((Err(StreamError::ConnectionLost(e.to_string())), (stream, cancel, state, pending)));
+                                        return Some((Err(StreamError::ConnectionLost { kind: StreamErrorKind::TransportError, message: e.to_string() }), (stream, cancel, state, pending)));
                                     }
                                 }
                             }

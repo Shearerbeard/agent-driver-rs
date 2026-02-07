@@ -375,10 +375,13 @@ mod tests {
 
     #[test]
     fn mock_error_response_has_correct_structure() {
-        let events = mock_error_response(StreamError::ConnectionLost("gone".into()));
+        let events = mock_error_response(StreamError::ConnectionLost {
+            kind: crate::error::StreamErrorKind::TransportError,
+            message: "gone".into(),
+        });
         assert_eq!(events.len(), 2);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
-        assert!(matches!(&events[1], StreamEvent::Error { error } if matches!(error, StreamError::ConnectionLost(_))));
+        assert!(matches!(&events[1], StreamEvent::Error { error } if matches!(error, StreamError::ConnectionLost { .. })));
     }
 
     #[test]

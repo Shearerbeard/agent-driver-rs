@@ -14,7 +14,7 @@ use futures::{Stream, StreamExt};
 use reqwest_eventsource::{Event, EventSource};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::StreamError;
+use crate::error::{StreamError, StreamErrorKind};
 use crate::streaming::StreamEvent;
 
 /// Create a cancellation-aware buffered stream from an SSE `EventSource`.
@@ -110,7 +110,7 @@ where
                             }
                         }
                         Some(Err(e)) => {
-                            let err = StreamError::ConnectionLost(e.to_string());
+                            let err = StreamError::ConnectionLost { kind: StreamErrorKind::ConnectionDropped, message: e.to_string() };
                             return Some((Err(err), (s, parse, done)));
                         }
                         None => return None,

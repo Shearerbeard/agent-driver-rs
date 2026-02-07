@@ -114,7 +114,10 @@ impl McpConnection {
         cmd.args(args);
 
         let transport = rmcp::transport::TokioChildProcess::new(&mut cmd)
-            .map_err(|e| McpToolError::ConnectionFailed(format!("{}: {}", name, e)))?;
+            .map_err(|e| McpToolError::ConnectionFailed {
+                server_name: name.clone(),
+                message: e.to_string(),
+            })?;
 
         let (tx, rx) = mpsc::channel(16);
         let handler = McpClientHandler::new(tx);
@@ -123,7 +126,10 @@ impl McpConnection {
             rmcp::ServiceExt::serve(handler, transport)
                 .await
                 .map_err(|e: std::io::Error| {
-                    McpToolError::ConnectionFailed(format!("{}: {}", name, e))
+                    McpToolError::ConnectionFailed {
+                        server_name: name.clone(),
+                        message: e.to_string(),
+                    }
                 })?;
 
         let peer = service.peer().clone();
@@ -144,7 +150,10 @@ impl McpConnection {
             .peer
             .list_all_tools()
             .await
-            .map_err(|e| McpToolError::ToolDiscoveryFailed(format!("{}: {}", self.name, e)))?;
+            .map_err(|e| McpToolError::ToolDiscoveryFailed {
+                server_name: self.name.clone(),
+                message: e.to_string(),
+            })?;
 
         let mut tools = Vec::with_capacity(mcp_tools.len());
         for mcp_tool in mcp_tools {
@@ -239,7 +248,10 @@ impl Tool for McpToolWrapper {
             .peer
             .call_tool(params)
             .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("MCP call_tool failed: {}", e)))?;
+            .map_err(|e| ToolError::ExecutionFailed {
+                tool_name: self.definition.name.clone(),
+                message: format!("MCP call_tool failed: {}", e),
+            })?;
 
         // Check if the result is an error
         if result.is_error.unwrap_or(false) {

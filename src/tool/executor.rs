@@ -44,10 +44,13 @@ impl ToolInput {
         match value {
             JsonValue::Object(map) => Ok(Self(map)),
             JsonValue::Null => Ok(Self(Map::new())),
-            other => Err(ToolError::InvalidInput(format!(
-                "Tool input must be a JSON object, got {}",
-                json_type_name(&other),
-            ))),
+            other => Err(ToolError::InvalidInput {
+                tool_name: None,
+                message: format!(
+                    "Tool input must be a JSON object, got {}",
+                    json_type_name(&other),
+                ),
+            }),
         }
     }
 

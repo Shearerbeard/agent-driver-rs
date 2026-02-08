@@ -21,15 +21,15 @@
 //! ```
 
 // Core modules
-pub mod error;
-pub mod types;
+pub mod agent;
 pub mod config;
-pub mod streaming;
-pub mod tool;
-pub mod task;
+pub mod error;
 pub mod provider;
 pub mod session;
-pub mod agent;
+pub mod streaming;
+pub mod task;
+pub mod tool;
+pub mod types;
 
 // Re-exports for convenience
 pub use error::{
@@ -50,7 +50,10 @@ pub use streaming::{
     StreamDelta, StreamEvent, StreamHandle, TokenUsage,
 };
 
-pub use tool::{DynTool, McpServerName, PluginId, Tool, ToolContext, ToolDefinition, ToolInput, ToolRegistry, ToolResult, ToolSchema, ToolSource};
+pub use tool::{
+    DynTool, McpServerName, PluginId, Tool, ToolContext, ToolDefinition, ToolInput, ToolRegistry,
+    ToolResult, ToolSchema, ToolSource,
+};
 
 pub use task::{TaskHandle, TaskPool, TrackedSpawn};
 

@@ -136,7 +136,12 @@ impl<'s> AgentLoop<'s> {
             // Check cancellation
             if cancellation.is_cancelled() {
                 return self
-                    .complete_loop(response, &mut responses, LoopStopReason::Cancelled, tool_depth)
+                    .complete_loop(
+                        response,
+                        &mut responses,
+                        LoopStopReason::Cancelled,
+                        tool_depth,
+                    )
                     .await;
             }
 
@@ -151,7 +156,12 @@ impl<'s> AgentLoop<'s> {
             // Check tool depth limit
             if tool_depth >= self.config.max_tool_depth.get() {
                 return self
-                    .complete_loop(response, &mut responses, LoopStopReason::MaxToolDepthReached, tool_depth)
+                    .complete_loop(
+                        response,
+                        &mut responses,
+                        LoopStopReason::MaxToolDepthReached,
+                        tool_depth,
+                    )
                     .await;
             }
 
@@ -164,8 +174,7 @@ impl<'s> AgentLoop<'s> {
                 .await;
 
             // Execute tool calls
-            let tool_error =
-                execute_tools(self.session, self.observer.as_ref(), &response).await;
+            let tool_error = execute_tools(self.session, self.observer.as_ref(), &response).await;
 
             responses.push(response);
 
@@ -194,8 +203,7 @@ impl<'s> AgentLoop<'s> {
             // Continue streaming (tool results are already in history)
             let handle = self.session.continue_streaming().await?;
 
-            response =
-                collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;
+            response = collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;
 
             // Add assistant response to history
             add_assistant_to_history(self.session, &response).await;
@@ -617,7 +625,11 @@ mod tests {
 
         // Verify history has: user, assistant(tool_use), tool_result, assistant(text)
         let msgs = session.messages().await;
-        assert!(msgs.len() >= 4, "expected at least 4 messages, got {}", msgs.len());
+        assert!(
+            msgs.len() >= 4,
+            "expected at least 4 messages, got {}",
+            msgs.len()
+        );
     }
 
     #[tokio::test]

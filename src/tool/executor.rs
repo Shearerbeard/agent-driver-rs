@@ -245,7 +245,10 @@ pub type DynTool = Arc<dyn Tool>;
 /// Wrapper for function-based tools
 pub struct FnTool<F>
 where
-    F: Fn(&ToolInput, &ToolContext) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
+    F: Fn(
+            &ToolInput,
+            &ToolContext,
+        ) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
         + Send
         + Sync,
 {
@@ -255,7 +258,10 @@ where
 
 impl<F> FnTool<F>
 where
-    F: Fn(&ToolInput, &ToolContext) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
+    F: Fn(
+            &ToolInput,
+            &ToolContext,
+        ) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
         + Send
         + Sync,
 {
@@ -268,7 +274,10 @@ where
 #[async_trait]
 impl<F> Tool for FnTool<F>
 where
-    F: Fn(&ToolInput, &ToolContext) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
+    F: Fn(
+            &ToolInput,
+            &ToolContext,
+        ) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
         + Send
         + Sync,
 {
@@ -356,7 +365,10 @@ mod tests {
             async { Ok(ToolResult::text("Hello from tool!")) }.boxed()
         });
 
-        let result = tool.execute(&ToolInput::default(), &ToolContext::default()).await.unwrap();
+        let result = tool
+            .execute(&ToolInput::default(), &ToolContext::default())
+            .await
+            .unwrap();
         assert_eq!(result.content(), "Hello from tool!");
     }
 }

@@ -281,7 +281,11 @@ impl Message {
     }
 
     /// Create a tool result message
-    pub fn tool_result(tool_use_id: ToolCallId, content: impl Into<String>, is_error: bool) -> Self {
+    pub fn tool_result(
+        tool_use_id: ToolCallId,
+        content: impl Into<String>,
+        is_error: bool,
+    ) -> Self {
         Self {
             role: Role::Tool,
             content: vec![ContentBlock::ToolResult {

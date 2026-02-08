@@ -343,12 +343,12 @@ mod tests {
             mock_text_response("second"),
         ]);
         let ctx = ProviderContext::default();
-        let request = CompletionRequest::new(
-            ModelId::new("mock-model").unwrap(),
-            vec![],
-        );
+        let request = CompletionRequest::new(ModelId::new("mock-model").unwrap(), vec![]);
 
-        let handle1 = provider.complete_stream(request.clone(), ctx.clone()).await.unwrap();
+        let handle1 = provider
+            .complete_stream(request.clone(), ctx.clone())
+            .await
+            .unwrap();
         let events1: Vec<_> = handle1.into_stream().collect().await;
         assert!(events1.iter().any(|e| matches!(
             e,
@@ -368,10 +368,20 @@ mod tests {
         let events = mock_text_response("hello");
         assert_eq!(events.len(), 5);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
-        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { block_type: ContentBlockType::Text, .. }));
-        assert!(matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "hello"));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ContentBlockStart {
+                block_type: ContentBlockType::Text,
+                ..
+            }
+        ));
+        assert!(
+            matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "hello")
+        );
         assert!(matches!(&events[3], StreamEvent::ContentBlockStop { .. }));
-        assert!(matches!(&events[4], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::EndTurn)));
+        assert!(
+            matches!(&events[4], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::EndTurn))
+        );
     }
 
     #[test]
@@ -379,9 +389,17 @@ mod tests {
         let events = mock_tool_call_response("call_1", "my_tool", "{\"key\": \"val\"}");
         assert_eq!(events.len(), 6);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
-        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { block_type: ContentBlockType::ToolUse, .. }));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ContentBlockStart {
+                block_type: ContentBlockType::ToolUse,
+                ..
+            }
+        ));
         assert!(matches!(&events[4], StreamEvent::ContentBlockStop { .. }));
-        assert!(matches!(&events[5], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse)));
+        assert!(
+            matches!(&events[5], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse))
+        );
     }
 
     #[test]
@@ -393,15 +411,35 @@ mod tests {
         // Started + 2*(BlockStart + ToolUseStart + ToolInputDelta + BlockStop) + Completed = 10
         assert_eq!(events.len(), 10);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
-        assert!(matches!(&events[9], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse)));
+        assert!(
+            matches!(&events[9], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse))
+        );
 
         // First tool block at indices 1-4
-        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { index: 0, block_type: ContentBlockType::ToolUse }));
-        assert!(matches!(&events[4], StreamEvent::ContentBlockStop { index: 0 }));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ContentBlockStart {
+                index: 0,
+                block_type: ContentBlockType::ToolUse
+            }
+        ));
+        assert!(matches!(
+            &events[4],
+            StreamEvent::ContentBlockStop { index: 0 }
+        ));
 
         // Second tool block at indices 5-8
-        assert!(matches!(&events[5], StreamEvent::ContentBlockStart { index: 1, block_type: ContentBlockType::ToolUse }));
-        assert!(matches!(&events[8], StreamEvent::ContentBlockStop { index: 1 }));
+        assert!(matches!(
+            &events[5],
+            StreamEvent::ContentBlockStart {
+                index: 1,
+                block_type: ContentBlockType::ToolUse
+            }
+        ));
+        assert!(matches!(
+            &events[8],
+            StreamEvent::ContentBlockStop { index: 1 }
+        ));
     }
 
     #[test]
@@ -412,7 +450,9 @@ mod tests {
         });
         assert_eq!(events.len(), 2);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
-        assert!(matches!(&events[1], StreamEvent::Error { error } if matches!(error, StreamError::ConnectionLost { .. })));
+        assert!(
+            matches!(&events[1], StreamEvent::Error { error } if matches!(error, StreamError::ConnectionLost { .. }))
+        );
     }
 
     #[test]
@@ -420,13 +460,37 @@ mod tests {
         let events = mock_thinking_response("let me think", "the answer");
         assert_eq!(events.len(), 8);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
-        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { index: 0, block_type: ContentBlockType::Thinking }));
-        assert!(matches!(&events[2], StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }) if thinking == "let me think"));
-        assert!(matches!(&events[3], StreamEvent::ContentBlockStop { index: 0 }));
-        assert!(matches!(&events[4], StreamEvent::ContentBlockStart { index: 1, block_type: ContentBlockType::Text }));
-        assert!(matches!(&events[5], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "the answer"));
-        assert!(matches!(&events[6], StreamEvent::ContentBlockStop { index: 1 }));
-        assert!(matches!(&events[7], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::EndTurn)));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ContentBlockStart {
+                index: 0,
+                block_type: ContentBlockType::Thinking
+            }
+        ));
+        assert!(
+            matches!(&events[2], StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }) if thinking == "let me think")
+        );
+        assert!(matches!(
+            &events[3],
+            StreamEvent::ContentBlockStop { index: 0 }
+        ));
+        assert!(matches!(
+            &events[4],
+            StreamEvent::ContentBlockStart {
+                index: 1,
+                block_type: ContentBlockType::Text
+            }
+        ));
+        assert!(
+            matches!(&events[5], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "the answer")
+        );
+        assert!(matches!(
+            &events[6],
+            StreamEvent::ContentBlockStop { index: 1 }
+        ));
+        assert!(
+            matches!(&events[7], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::EndTurn))
+        );
     }
 
     #[test]
@@ -434,10 +498,20 @@ mod tests {
         let events = mock_content_filter_response("partial output");
         assert_eq!(events.len(), 5);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
-        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { block_type: ContentBlockType::Text, .. }));
-        assert!(matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "partial output"));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ContentBlockStart {
+                block_type: ContentBlockType::Text,
+                ..
+            }
+        ));
+        assert!(
+            matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "partial output")
+        );
         assert!(matches!(&events[3], StreamEvent::ContentBlockStop { .. }));
-        assert!(matches!(&events[4], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ContentFilter)));
+        assert!(
+            matches!(&events[4], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ContentFilter))
+        );
     }
 
     #[test]
@@ -446,12 +520,34 @@ mod tests {
         assert_eq!(events.len(), 9);
         assert!(matches!(&events[0], StreamEvent::Started { .. }));
         // Text block
-        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { index: 0, block_type: ContentBlockType::Text }));
-        assert!(matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "thinking out loud"));
-        assert!(matches!(&events[3], StreamEvent::ContentBlockStop { index: 0 }));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ContentBlockStart {
+                index: 0,
+                block_type: ContentBlockType::Text
+            }
+        ));
+        assert!(
+            matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "thinking out loud")
+        );
+        assert!(matches!(
+            &events[3],
+            StreamEvent::ContentBlockStop { index: 0 }
+        ));
         // Tool block
-        assert!(matches!(&events[4], StreamEvent::ContentBlockStart { index: 1, block_type: ContentBlockType::ToolUse }));
-        assert!(matches!(&events[7], StreamEvent::ContentBlockStop { index: 1 }));
-        assert!(matches!(&events[8], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse)));
+        assert!(matches!(
+            &events[4],
+            StreamEvent::ContentBlockStart {
+                index: 1,
+                block_type: ContentBlockType::ToolUse
+            }
+        ));
+        assert!(matches!(
+            &events[7],
+            StreamEvent::ContentBlockStop { index: 1 }
+        ));
+        assert!(
+            matches!(&events[8], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ToolUse))
+        );
     }
 }

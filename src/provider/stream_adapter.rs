@@ -62,63 +62,66 @@ where
         done_msg: done_message,
     };
 
-    futures::stream::unfold((sse, parse_fn, on_done), |(mut s, parse, done)| async move {
-        // Drain buffered events first
-        if let Some(event) = s.pending.pop_front() {
-            return Some((event, (s, parse, done)));
-        }
-
-        loop {
-            if s.cancellation.is_cancelled() {
-                return None;
+    futures::stream::unfold(
+        (sse, parse_fn, on_done),
+        |(mut s, parse, done)| async move {
+            // Drain buffered events first
+            if let Some(event) = s.pending.pop_front() {
+                return Some((event, (s, parse, done)));
             }
 
-            tokio::select! {
-                biased;
-
-                _ = s.cancellation.cancelled() => {
+            loop {
+                if s.cancellation.is_cancelled() {
                     return None;
                 }
 
-                event = s.event_source.next() => {
-                    match event {
-                        Some(Ok(Event::Open)) => continue,
-                        Some(Ok(Event::Message(msg))) => {
-                            // Check for provider-specific done marker
-                            if let Some(done_str) = s.done_msg {
-                                if msg.data == done_str {
-                                    return done(&s.state)
-                                        .map(|evt| (Ok(evt), (s, parse, done)));
-                                }
-                            }
+                tokio::select! {
+                    biased;
 
-                            match parse(&msg.data, &mut s.state) {
-                                Some(Ok(events)) => {
-                                    let mut iter = events.into_iter();
-                                    if let Some(first) = iter.next() {
-                                        for remaining in iter {
-                                            s.pending.push_back(Ok(remaining));
-                                        }
-                                        return Some((Ok(first), (s, parse, done)));
+                    _ = s.cancellation.cancelled() => {
+                        return None;
+                    }
+
+                    event = s.event_source.next() => {
+                        match event {
+                            Some(Ok(Event::Open)) => continue,
+                            Some(Ok(Event::Message(msg))) => {
+                                // Check for provider-specific done marker
+                                if let Some(done_str) = s.done_msg {
+                                    if msg.data == done_str {
+                                        return done(&s.state)
+                                            .map(|evt| (Ok(evt), (s, parse, done)));
                                     }
-                                    continue;
                                 }
-                                Some(Err(e)) => {
-                                    return Some((Err(e), (s, parse, done)));
+
+                                match parse(&msg.data, &mut s.state) {
+                                    Some(Ok(events)) => {
+                                        let mut iter = events.into_iter();
+                                        if let Some(first) = iter.next() {
+                                            for remaining in iter {
+                                                s.pending.push_back(Ok(remaining));
+                                            }
+                                            return Some((Ok(first), (s, parse, done)));
+                                        }
+                                        continue;
+                                    }
+                                    Some(Err(e)) => {
+                                        return Some((Err(e), (s, parse, done)));
+                                    }
+                                    None => continue,
                                 }
-                                None => continue,
                             }
+                            Some(Err(e)) => {
+                                let err = StreamError::ConnectionLost { kind: StreamErrorKind::ConnectionDropped, message: e.to_string() };
+                                return Some((Err(err), (s, parse, done)));
+                            }
+                            None => return None,
                         }
-                        Some(Err(e)) => {
-                            let err = StreamError::ConnectionLost { kind: StreamErrorKind::ConnectionDropped, message: e.to_string() };
-                            return Some((Err(err), (s, parse, done)));
-                        }
-                        None => return None,
                     }
                 }
             }
-        }
-    })
+        },
+    )
 }
 
 /// Create a cancellation-aware buffered stream from a `futures::Stream`.
@@ -265,7 +268,11 @@ mod tests {
                     text: item.to_string(),
                 }))]
             },
-            |_| Some(Ok(StreamEvent::Completed { metadata: CompletionMetadata::default() })),
+            |_| {
+                Some(Ok(StreamEvent::Completed {
+                    metadata: CompletionMetadata::default(),
+                }))
+            },
         );
 
         let events: Vec<_> = stream.collect().await;
@@ -298,9 +305,15 @@ mod tests {
 
         let events: Vec<_> = stream.collect().await;
         assert_eq!(events.len(), 3);
-        assert!(matches!(&events[0], Ok(StreamEvent::ContentBlockStart { .. })));
+        assert!(matches!(
+            &events[0],
+            Ok(StreamEvent::ContentBlockStart { .. })
+        ));
         assert!(matches!(&events[1], Ok(StreamEvent::Delta(..))));
-        assert!(matches!(&events[2], Ok(StreamEvent::ContentBlockStop { .. })));
+        assert!(matches!(
+            &events[2],
+            Ok(StreamEvent::ContentBlockStop { .. })
+        ));
     }
 
     #[tokio::test]

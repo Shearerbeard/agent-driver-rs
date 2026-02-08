@@ -51,8 +51,8 @@ pub enum OpenAiModel {
     // o-series reasoning models
     O1,
     O1Mini,
-    O3,      // NOTE: o3 does NOT support streaming
-    O3Mini,  // NOTE: o3-mini does NOT support streaming
+    O3,     // NOTE: o3 does NOT support streaming
+    O3Mini, // NOTE: o3-mini does NOT support streaming
 
     // Custom model string
     #[serde(untagged)]
@@ -139,10 +139,11 @@ pub enum ReasoningSummary {
 impl OpenAiConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, ConfigError> {
-        let api_key = ApiKey::new(
-            std::env::var("OPENAI_API_KEY")
-                .map_err(|_| ConfigError::MissingField { field: "OPENAI_API_KEY" })?,
-        );
+        let api_key = ApiKey::new(std::env::var("OPENAI_API_KEY").map_err(|_| {
+            ConfigError::MissingField {
+                field: "OPENAI_API_KEY",
+            }
+        })?);
 
         let model_str = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
         let model = match model_str.as_str() {

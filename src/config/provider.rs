@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ConfigError;
 use crate::provider::ProviderKind;
 
-use super::{
-    AnthropicConfig, BedrockConfig, OllamaConfig, OpenAiConfig, OpenRouterConfig,
-};
+use super::{AnthropicConfig, BedrockConfig, OllamaConfig, OpenAiConfig, OpenRouterConfig};
 
 /// Top-level provider configuration enum
 ///

@@ -264,7 +264,9 @@ impl Session {
             .await
             .ok_or_else(|| ToolError::NotFound(name.clone()))?;
 
-        let result = tool.execute(&input, &ToolContext::new(self.cancellation.child_token())).await?;
+        let result = tool
+            .execute(&input, &ToolContext::new(self.cancellation.child_token()))
+            .await?;
 
         // Add tool result to history
         let content = match &result {
@@ -289,8 +291,8 @@ impl Session {
 
         for block in &response.content {
             if let ContentBlock::ToolUse { id, name, input } = block {
-                let tool_input = ToolInput::from_value(input.clone())
-                    .map_err(|e| ToolError::InvalidInput {
+                let tool_input =
+                    ToolInput::from_value(input.clone()).map_err(|e| ToolError::InvalidInput {
                         tool_name: Some(name.clone()),
                         message: e.to_string(),
                     })?;
@@ -568,10 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_tool_adds_result_to_history() {
-        let session = mock_session(vec![])
-            .build()
-            .await
-            .unwrap();
+        let session = mock_session(vec![]).build().await.unwrap();
 
         let definition = ToolDefinition::new(
             ToolName::new("echo").unwrap(),
@@ -601,10 +600,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_tool_not_found() {
-        let session = mock_session(vec![])
-            .build()
-            .await
-            .unwrap();
+        let session = mock_session(vec![]).build().await.unwrap();
 
         let result = session
             .execute_tool(
@@ -655,10 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation() {
-        let session = mock_session(vec![])
-            .build()
-            .await
-            .unwrap();
+        let session = mock_session(vec![]).build().await.unwrap();
 
         assert!(!session.is_cancelled());
         session.cancel();

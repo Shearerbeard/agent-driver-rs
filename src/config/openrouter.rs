@@ -87,10 +87,11 @@ pub struct ProviderPreferences {
 impl OpenRouterConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, ConfigError> {
-        let api_key = ApiKey::new(
-            std::env::var("OPENROUTER_API_KEY")
-                .map_err(|_| ConfigError::MissingField { field: "OPENROUTER_API_KEY" })?,
-        );
+        let api_key = ApiKey::new(std::env::var("OPENROUTER_API_KEY").map_err(|_| {
+            ConfigError::MissingField {
+                field: "OPENROUTER_API_KEY",
+            }
+        })?);
 
         let model = OpenRouterModel::Custom(
             std::env::var("OPENROUTER_MODEL")

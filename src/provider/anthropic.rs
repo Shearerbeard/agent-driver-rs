@@ -17,8 +17,8 @@ use serde_json::Value as JsonValue;
 use crate::config::AnthropicConfig;
 use crate::error::{AuthErrorKind, ProviderError, StreamError, StreamErrorKind};
 use crate::streaming::{
-    CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent,
-    StreamHandle, TokenUsage,
+    CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
+    TokenUsage,
 };
 use crate::tool::ToolFormat;
 use crate::types::{ContentBlock, ModelId, ToolCallId, ToolName};
@@ -216,8 +216,12 @@ impl Provider for AnthropicProvider {
                 .headers(headers)
                 .json(&body);
 
-            let event_source = EventSource::new(request_builder)
-                .map_err(|e| ProviderError::Stream(StreamError::ConnectionLost { kind: StreamErrorKind::ConnectionDropped, message: e.to_string() }))?;
+            let event_source = EventSource::new(request_builder).map_err(|e| {
+                ProviderError::Stream(StreamError::ConnectionLost {
+                    kind: StreamErrorKind::ConnectionDropped,
+                    message: e.to_string(),
+                })
+            })?;
 
             let stream = create_anthropic_stream(event_source, ctx.cancellation.clone());
 
@@ -247,7 +251,8 @@ impl Provider for AnthropicProvider {
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("claude-3-5-haiku-20241022").expect("hardcoded valid model ID"),
+                    id: ModelId::new("claude-3-5-haiku-20241022")
+                        .expect("hardcoded valid model ID"),
                     name: "Claude 3.5 Haiku".to_string(),
                     context_window: Some(200_000),
                 },
@@ -312,7 +317,10 @@ fn parse_anthropic_event(
                 },
             }]
         }
-        AnthropicStreamEvent::ContentBlockStart { index, content_block } => {
+        AnthropicStreamEvent::ContentBlockStart {
+            index,
+            content_block,
+        } => {
             state.current_block_index = index;
             let block_type = match content_block.r#type.as_str() {
                 "text" => ContentBlockType::Text,
@@ -331,7 +339,9 @@ fn parse_anthropic_event(
                     events.push(StreamEvent::Delta(StreamDelta::ToolUseStart {
                         id: ToolCallId::new(id),
                         // Safety: "unknown" is a valid tool name (alphanumeric)
-                        name: ToolName::new(name).unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
+                        name: ToolName::new(name).unwrap_or_else(|_| {
+                            ToolName::new("unknown").expect("hardcoded valid tool name")
+                        }),
                     }));
                 }
             }
@@ -373,7 +383,9 @@ fn parse_anthropic_event(
                 }
                 "signature_delta" => {
                     if let Some(signature) = delta.signature {
-                        vec![StreamEvent::Delta(StreamDelta::SignatureDelta { signature })]
+                        vec![StreamEvent::Delta(StreamDelta::SignatureDelta {
+                            signature,
+                        })]
                     } else {
                         vec![]
                     }
@@ -382,7 +394,10 @@ fn parse_anthropic_event(
             }
         }
         AnthropicStreamEvent::ContentBlockStop { index } => {
-            let _block_type = state.current_block_type.take().unwrap_or(ContentBlockType::Text);
+            let _block_type = state
+                .current_block_type
+                .take()
+                .unwrap_or(ContentBlockType::Text);
             // Clean up stored tool call ID for this block index
             state.tool_call_ids.remove(&index);
             vec![StreamEvent::ContentBlockStop { index }]
@@ -640,7 +655,10 @@ mod tests {
 
         let result = parse_anthropic_event(data, &mut state);
         let events = result.unwrap().unwrap();
-        assert!(matches!(events[0], StreamEvent::ContentBlockStop { index: 1 }));
+        assert!(matches!(
+            events[0],
+            StreamEvent::ContentBlockStop { index: 1 }
+        ));
         assert!(!state.tool_call_ids.contains_key(&1));
     }
 

@@ -148,8 +148,7 @@ impl Provider for OllamaProvider {
             }
 
             // Build request
-            let chat_request =
-                ChatMessageRequest::new(model.clone(), messages).options(options);
+            let chat_request = ChatMessageRequest::new(model.clone(), messages).options(options);
 
             // Create streaming request
             let stream: ChatMessageResponseStream = self
@@ -159,9 +158,17 @@ impl Provider for OllamaProvider {
                 .map_err(|e| {
                     let msg = format!("Ollama error: {}", e);
                     if is_context_window_message(&msg) {
-                        ProviderError::ContextWindowExceeded { provider: super::ProviderKind::Ollama, message: msg, context_window: None, tokens_used: None }
+                        ProviderError::ContextWindowExceeded {
+                            provider: super::ProviderKind::Ollama,
+                            message: msg,
+                            context_window: None,
+                            tokens_used: None,
+                        }
                     } else {
-                        ProviderError::InvalidRequest { provider: super::ProviderKind::Ollama, message: msg }
+                        ProviderError::InvalidRequest {
+                            provider: super::ProviderKind::Ollama,
+                            message: msg,
+                        }
                     }
                 })?;
 
@@ -171,7 +178,10 @@ impl Provider for OllamaProvider {
                 StreamState::new(model.clone()),
                 |item, state| match item {
                     Ok(response) => parse_ollama_response(response, state),
-                    Err(()) => vec![Err(StreamError::ConnectionLost { kind: StreamErrorKind::TransportError, message: "Stream error".to_string() })],
+                    Err(()) => vec![Err(StreamError::ConnectionLost {
+                        kind: StreamErrorKind::TransportError,
+                        message: "Stream error".to_string(),
+                    })],
                 },
                 |state| {
                     if !state.completed {
@@ -209,7 +219,9 @@ impl Provider for OllamaProvider {
                         .map(|m| ModelInfo {
                             id: ModelId::new(&m.name)
                                 // Safety: "unknown" is a valid model ID (alphanumeric)
-                                .unwrap_or_else(|_| ModelId::new("unknown").expect("hardcoded valid model ID")),
+                                .unwrap_or_else(|_| {
+                                    ModelId::new("unknown").expect("hardcoded valid model ID")
+                                }),
                             name: m.name.clone(),
                             context_window: None, // Ollama doesn't report this in list
                         })
@@ -362,10 +374,9 @@ mod tests {
 
         let events = parse_ollama_response(streaming_chunk(""), &mut state);
         // Empty content should not produce a TextDelta
-        assert!(!events.iter().any(|e| matches!(
-            e,
-            Ok(StreamEvent::Delta(StreamDelta::TextDelta { .. }))
-        )));
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, Ok(StreamEvent::Delta(StreamDelta::TextDelta { .. })))));
     }
 
     #[test]
@@ -374,10 +385,9 @@ mod tests {
         state.started = true;
 
         let events = parse_ollama_response(final_chunk(), &mut state);
-        assert!(events.iter().any(|e| matches!(
-            e,
-            Ok(StreamEvent::ContentBlockStop { index: 0 })
-        )));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Ok(StreamEvent::ContentBlockStop { index: 0 }))));
         // Usage should be tracked from final_data
         assert!(state.usage.is_some());
     }

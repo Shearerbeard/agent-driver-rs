@@ -172,8 +172,18 @@ mod tests {
 
     #[test]
     fn tool_schema_equality() {
-        let schema1 = ToolSchema::new(serde_json::json!({"type": "object"}).as_object().unwrap().clone());
-        let schema2 = ToolSchema::new(serde_json::json!({"type": "object"}).as_object().unwrap().clone());
+        let schema1 = ToolSchema::new(
+            serde_json::json!({"type": "object"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let schema2 = ToolSchema::new(
+            serde_json::json!({"type": "object"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
         let schema3 = schema1.clone();
 
         assert_eq!(schema1, schema2); // Value equality
@@ -184,7 +194,10 @@ mod tests {
     fn tool_source_checks() {
         assert!(ToolSource::Native.is_native());
         assert!(!ToolSource::Native.is_mcp());
-        assert!(ToolSource::Mcp { server_name: McpServerName::new("test").unwrap() }.is_mcp());
+        assert!(ToolSource::Mcp {
+            server_name: McpServerName::new("test").unwrap()
+        }
+        .is_mcp());
     }
 
     #[test]

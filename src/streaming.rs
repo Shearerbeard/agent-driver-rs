@@ -39,7 +39,10 @@ pub enum StreamDelta {
     ToolUseStart { id: ToolCallId, name: ToolName },
 
     /// Incremental JSON input for a tool call
-    ToolInputDelta { id: ToolCallId, partial_json: String },
+    ToolInputDelta {
+        id: ToolCallId,
+        partial_json: String,
+    },
 }
 
 /// Stream events with proper block lifecycle

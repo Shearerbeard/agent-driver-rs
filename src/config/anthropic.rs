@@ -59,13 +59,14 @@ impl ThinkingConfig {
 impl AnthropicConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, ConfigError> {
-        let api_key = ApiKey::new(
-            std::env::var("ANTHROPIC_API_KEY")
-                .map_err(|_| ConfigError::MissingField { field: "ANTHROPIC_API_KEY" })?,
-        );
+        let api_key = ApiKey::new(std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+            ConfigError::MissingField {
+                field: "ANTHROPIC_API_KEY",
+            }
+        })?);
 
-        let model_str = std::env::var("ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
+        let model_str =
+            std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
 
         let max_tokens = std::env::var("ANTHROPIC_MAX_TOKENS")
             .ok()
@@ -162,9 +163,7 @@ impl AnthropicModel {
                 WellKnownAnthropicModel::ClaudeOpus4_20250514
                     | WellKnownAnthropicModel::ClaudeSonnet4_20250514
             ),
-            Self::Custom(s) => {
-                s.contains("claude-opus-4") || s.contains("claude-sonnet-4")
-            }
+            Self::Custom(s) => s.contains("claude-opus-4") || s.contains("claude-sonnet-4"),
         }
     }
 }

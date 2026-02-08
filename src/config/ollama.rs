@@ -44,10 +44,12 @@ pub struct NumCtx(NonZeroU32);
 impl NumCtx {
     /// Create a new NumCtx with validation
     pub fn new(ctx: u32) -> Result<Self, ConfigError> {
-        NonZeroU32::new(ctx).map(Self).ok_or_else(|| ConfigError::InvalidValue {
-            field: "num_ctx",
-            reason: "context window size must be greater than 0".into(),
-        })
+        NonZeroU32::new(ctx)
+            .map(Self)
+            .ok_or_else(|| ConfigError::InvalidValue {
+                field: "num_ctx",
+                reason: "context window size must be greater than 0".into(),
+            })
     }
 
     /// Get the context window size
@@ -167,8 +169,10 @@ impl OllamaConfig {
         );
 
         // num_ctx is critical for Ollama - require it
-        let num_ctx_str = std::env::var("OLLAMA_NUM_CTX")
-            .map_err(|_| ConfigError::MissingField { field: "OLLAMA_NUM_CTX" })?;
+        let num_ctx_str =
+            std::env::var("OLLAMA_NUM_CTX").map_err(|_| ConfigError::MissingField {
+                field: "OLLAMA_NUM_CTX",
+            })?;
         let num_ctx_val: u32 = num_ctx_str.parse().map_err(|_| ConfigError::InvalidValue {
             field: "OLLAMA_NUM_CTX",
             reason: "must be a positive integer".into(),

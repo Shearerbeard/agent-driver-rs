@@ -16,7 +16,7 @@ use agent_driver_rs::provider::mock::*;
 use agent_driver_rs::session::SessionBuilder;
 use agent_driver_rs::streaming::StreamEvent;
 use agent_driver_rs::tool::{DynTool, FnTool, ToolDefinition, ToolResult, ToolSchema};
-use agent_driver_rs::types::{ModelId, Message, Role, SystemPrompt, ToolName};
+use agent_driver_rs::types::{Message, ModelId, Role, SystemPrompt, ToolName};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -171,12 +171,7 @@ async fn history_trimming_preserves_recent() {
 /// protecting the message history.
 #[tokio::test]
 async fn concurrent_add_message() {
-    let session = Arc::new(
-        mock_session(vec![])
-            .build()
-            .await
-            .unwrap(),
-    );
+    let session = Arc::new(mock_session(vec![]).build().await.unwrap());
 
     let mut handles = vec![];
     for i in 0..10 {
@@ -238,10 +233,11 @@ async fn remove_tool_between_turns() {
     assert_eq!(session.list_tools().await.len(), 1);
 
     // Remove it
-    let removed = session
-        .remove_tool(&ToolName::new("echo").unwrap())
-        .await;
-    assert!(removed.is_some(), "remove_tool should return the removed tool");
+    let removed = session.remove_tool(&ToolName::new("echo").unwrap()).await;
+    assert!(
+        removed.is_some(),
+        "remove_tool should return the removed tool"
+    );
 
     // Tool is gone
     assert_eq!(session.list_tools().await.len(), 0);
@@ -273,10 +269,7 @@ async fn system_prompt_change_mid_conversation() {
 /// `is_cancelled()` returns true.
 #[tokio::test]
 async fn shutdown_cancels_operations() {
-    let session = mock_session(vec![])
-        .build()
-        .await
-        .unwrap();
+    let session = mock_session(vec![]).build().await.unwrap();
 
     assert!(!session.is_cancelled());
 

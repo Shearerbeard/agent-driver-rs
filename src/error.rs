@@ -171,7 +171,9 @@ impl ProviderError {
     pub fn is_retriable(&self) -> bool {
         match self {
             Self::RateLimited { .. } | Self::Timeout(_) => true,
-            Self::HttpError { status: Some(s), .. } => *s >= 500,
+            Self::HttpError {
+                status: Some(s), ..
+            } => *s >= 500,
             _ => false,
         }
     }
@@ -245,7 +247,10 @@ pub enum ToolError {
         message: String,
     },
     #[error("Execution of tool '{}' failed: {message}", tool_name.as_str())]
-    ExecutionFailed { tool_name: ToolName, message: String },
+    ExecutionFailed {
+        tool_name: ToolName,
+        message: String,
+    },
     #[error("MCP error: {0}")]
     Mcp(#[from] McpToolError),
 }
@@ -321,12 +326,12 @@ impl AgentLoopError {
     /// errors arrive mid-stream).
     pub fn is_context_overflow(&self) -> bool {
         match self {
-            Self::Session(SessionError::Provider(ProviderError::ContextWindowExceeded { .. })) => {
-                true
-            }
-            Self::Session(SessionError::Stream(StreamError::ConnectionLost { message, .. })) => {
-                is_context_window_message(message)
-            }
+            Self::Session(SessionError::Provider(ProviderError::ContextWindowExceeded {
+                ..
+            })) => true,
+            Self::Session(SessionError::Stream(StreamError::ConnectionLost {
+                message, ..
+            })) => is_context_window_message(message),
             _ => false,
         }
     }
@@ -337,12 +342,12 @@ impl AgentLoopError {
     /// and the `StreamError::ConnectionLost` path (SSE providers).
     pub fn is_content_policy_violation(&self) -> bool {
         match self {
-            Self::Session(SessionError::Provider(
-                ProviderError::ContentPolicyViolation { .. },
-            )) => true,
-            Self::Session(SessionError::Stream(StreamError::ConnectionLost { message, .. })) => {
-                is_content_policy_message(message)
-            }
+            Self::Session(SessionError::Provider(ProviderError::ContentPolicyViolation {
+                ..
+            })) => true,
+            Self::Session(SessionError::Stream(StreamError::ConnectionLost {
+                message, ..
+            })) => is_content_policy_message(message),
             _ => false,
         }
     }
@@ -558,7 +563,9 @@ mod tests {
             "This model's maximum context length is 8192 tokens"
         ));
         assert!(is_context_window_message("context_length_exceeded"));
-        assert!(is_context_window_message("The prompt is too long for this model"));
+        assert!(is_context_window_message(
+            "The prompt is too long for this model"
+        ));
         assert!(is_context_window_message(
             "Request exceeds the context window limit"
         ));

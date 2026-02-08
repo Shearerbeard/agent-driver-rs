@@ -201,9 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(not(feature = "mcp"))]
     if !args.mcp_servers.is_empty() {
-        eprintln!(
-            "Warning: --mcp flag requires the 'mcp' feature. Recompile with --features mcp"
-        );
+        eprintln!("Warning: --mcp flag requires the 'mcp' feature. Recompile with --features mcp");
     }
 
     // ── Show registered tools ─────────────────────────────────────────
@@ -357,7 +355,9 @@ async fn create_provider(
                 max_tokens: cfg
                     .max_tokens
                     // Safe: 4096 is a hardcoded non-zero constant
-                    .unwrap_or_else(|| agent_driver_rs::MaxTokens::new(4096).expect("4096 is non-zero")),
+                    .unwrap_or_else(|| {
+                        agent_driver_rs::MaxTokens::new(4096).expect("4096 is non-zero")
+                    }),
                 temperature: cfg.temperature,
                 stop_sequences: vec![],
             };
@@ -466,7 +466,11 @@ async fn setup_mcp_connections(
         .sync_all_tools_concurrent(session.tool_registry())
         .await;
     if total > 0 {
-        eprintln!("  Discovered {} tools from {} server(s)", total, manager.server_count());
+        eprintln!(
+            "  Discovered {} tools from {} server(s)",
+            total,
+            manager.server_count()
+        );
     }
     for err in sync_errors {
         eprintln!("  Warning: failed to discover tools: {}", err);

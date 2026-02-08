@@ -33,13 +33,13 @@ async fn mid_stream_error_propagates() {
     let provider = MockProvider::new(vec![events]);
     let ctx = ProviderContext::default();
 
-    let handle = provider
-        .complete_stream(mock_request(), ctx)
-        .await
-        .unwrap();
+    let handle = provider.complete_stream(mock_request(), ctx).await.unwrap();
     let result = handle.collect().await;
 
-    assert!(result.is_err(), "collect() should return Err on stream error");
+    assert!(
+        result.is_err(),
+        "collect() should return Err on stream error"
+    );
     assert!(
         matches!(result.unwrap_err(), StreamError::ConnectionLost { ref message, .. } if message == "gone"),
         "error should be ConnectionLost with the original message",
@@ -59,10 +59,7 @@ async fn multiple_tool_uses_one_stream() {
     let provider = MockProvider::new(vec![events]);
     let ctx = ProviderContext::default();
 
-    let handle = provider
-        .complete_stream(mock_request(), ctx)
-        .await
-        .unwrap();
+    let handle = provider.complete_stream(mock_request(), ctx).await.unwrap();
     let response = handle.collect().await.expect("collect should succeed");
 
     let tool_uses = response.tool_uses();
@@ -81,10 +78,7 @@ async fn mixed_text_and_tool_blocks() {
     let provider = MockProvider::new(vec![events]);
     let ctx = ProviderContext::default();
 
-    let handle = provider
-        .complete_stream(mock_request(), ctx)
-        .await
-        .unwrap();
+    let handle = provider.complete_stream(mock_request(), ctx).await.unwrap();
     let response = handle.collect().await.expect("collect should succeed");
 
     assert_eq!(response.text(), "thinking out loud");
@@ -102,10 +96,7 @@ async fn thinking_plus_text_blocks() {
     let provider = MockProvider::new(vec![events]);
     let ctx = ProviderContext::default();
 
-    let handle = provider
-        .complete_stream(mock_request(), ctx)
-        .await
-        .unwrap();
+    let handle = provider.complete_stream(mock_request(), ctx).await.unwrap();
     let response = handle.collect().await.expect("collect should succeed");
 
     assert_eq!(response.thinking(), "let me think about this");
@@ -164,18 +155,13 @@ async fn flush_pending_on_incomplete() {
             text: "partial".to_string(),
         }),
         // Intentionally no ContentBlockStop here.
-        StreamEvent::Completed {
-            metadata: end_meta,
-        },
+        StreamEvent::Completed { metadata: end_meta },
     ];
 
     let provider = MockProvider::new(vec![events]);
     let ctx = ProviderContext::default();
 
-    let handle = provider
-        .complete_stream(mock_request(), ctx)
-        .await
-        .unwrap();
+    let handle = provider.complete_stream(mock_request(), ctx).await.unwrap();
     let response = handle.collect().await.expect("collect should succeed");
 
     assert_eq!(
@@ -195,10 +181,7 @@ async fn manual_stream_consumption() {
     let provider = MockProvider::new(vec![events]);
     let ctx = ProviderContext::default();
 
-    let mut handle = provider
-        .complete_stream(mock_request(), ctx)
-        .await
-        .unwrap();
+    let mut handle = provider.complete_stream(mock_request(), ctx).await.unwrap();
 
     // Event 1: Started
     let ev1 = handle.next().await.expect("should have Started event");

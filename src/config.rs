@@ -15,9 +15,7 @@ pub use anthropic::{AnthropicConfig, AnthropicModel, ThinkingConfig, WellKnownAn
 pub use bedrock::{BedrockConfig, BedrockModel};
 pub use common::{ApiKey, AwsRegion};
 pub use ollama::{KeepAlive, NumCtx, OllamaConfig, OllamaModel, WellKnownOllamaModel};
-pub use openai::{
-    OpenAiConfig, OpenAiModel, ReasoningConfig, ReasoningEffort, ReasoningSummary,
-};
+pub use openai::{OpenAiConfig, OpenAiModel, ReasoningConfig, ReasoningEffort, ReasoningSummary};
 pub use openrouter::{
     OpenRouterConfig, OpenRouterModel, ProviderPreferences, WellKnownOpenRouterModel,
 };

@@ -22,11 +22,7 @@ pub struct ToolDefinition {
 
 impl ToolDefinition {
     /// Create a new tool definition
-    pub fn new(
-        name: ToolName,
-        description: impl Into<String>,
-        input_schema: ToolSchema,
-    ) -> Self {
+    pub fn new(name: ToolName, description: impl Into<String>, input_schema: ToolSchema) -> Self {
         Self {
             name,
             description: description.into(),

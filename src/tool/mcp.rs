@@ -63,19 +63,21 @@ impl McpConnection {
         let mut cmd = tokio::process::Command::new(command.as_ref());
         cmd.args(args);
 
-        let transport = rmcp::transport::TokioChildProcess::new(cmd)
-            .map_err(|e| McpToolError::ConnectionFailed {
-                server_name: name.clone(),
-                message: e.to_string(),
-            })?;
-
-        use rmcp::ServiceExt;
-        let service = ().serve(transport).await.map_err(|e| {
+        let transport = rmcp::transport::TokioChildProcess::new(cmd).map_err(|e| {
             McpToolError::ConnectionFailed {
                 server_name: name.clone(),
                 message: e.to_string(),
             }
         })?;
+
+        use rmcp::ServiceExt;
+        let service =
+            ().serve(transport)
+                .await
+                .map_err(|e| McpToolError::ConnectionFailed {
+                    server_name: name.clone(),
+                    message: e.to_string(),
+                })?;
 
         tracing::info!(server = %name, "Connected to MCP server");
 
@@ -92,12 +94,13 @@ impl McpConnection {
         let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(uri);
 
         use rmcp::ServiceExt;
-        let service = ().serve(transport).await.map_err(|e| {
-            McpToolError::ConnectionFailed {
-                server_name: name.clone(),
-                message: e.to_string(),
-            }
-        })?;
+        let service =
+            ().serve(transport)
+                .await
+                .map_err(|e| McpToolError::ConnectionFailed {
+                    server_name: name.clone(),
+                    message: e.to_string(),
+                })?;
 
         tracing::info!(server = %name, "Connected to MCP server via HTTP");
 
@@ -106,14 +109,14 @@ impl McpConnection {
 
     /// Discover available tools from the MCP server
     pub async fn discover_tools(&self) -> Result<Vec<DynTool>, McpToolError> {
-        let mcp_tools = self
-            .service
-            .list_all_tools()
-            .await
-            .map_err(|e| McpToolError::ToolDiscoveryFailed {
-                server_name: self.name.clone(),
-                message: e.to_string(),
-            })?;
+        let mcp_tools =
+            self.service
+                .list_all_tools()
+                .await
+                .map_err(|e| McpToolError::ToolDiscoveryFailed {
+                    server_name: self.name.clone(),
+                    message: e.to_string(),
+                })?;
 
         let mut tools = Vec::with_capacity(mcp_tools.len());
         for mcp_tool in mcp_tools {
@@ -130,8 +133,8 @@ impl McpConnection {
                 }
             };
 
-            let schema = ToolSchema::from_value(mcp_tool.schema_as_json_value())
-                .unwrap_or_default();
+            let schema =
+                ToolSchema::from_value(mcp_tool.schema_as_json_value()).unwrap_or_default();
 
             let definition = ToolDefinition::new(
                 tool_name,
@@ -179,7 +182,10 @@ impl McpConnection {
     /// Disconnect from the MCP server
     pub async fn disconnect(mut self) {
         tracing::info!(server = %self.name, "Disconnecting from MCP server");
-        let _ = self.service.close_with_timeout(std::time::Duration::from_secs(5)).await;
+        let _ = self
+            .service
+            .close_with_timeout(std::time::Duration::from_secs(5))
+            .await;
     }
 }
 
@@ -365,8 +371,7 @@ impl McpManager {
             .into_iter()
             .map(|spec| async move {
                 let args: Vec<&str> = spec.args.iter().map(|s| s.as_str()).collect();
-                let result =
-                    McpConnection::connect_stdio(&spec.name, &spec.command, &args).await;
+                let result = McpConnection::connect_stdio(&spec.name, &spec.command, &args).await;
                 (spec.name, result)
             })
             .collect();
@@ -396,8 +401,7 @@ impl McpManager {
         let futures: Vec<_> = specs
             .into_iter()
             .map(|spec| async move {
-                let result =
-                    McpConnection::connect_http(&spec.name, spec.uri.as_str()).await;
+                let result = McpConnection::connect_http(&spec.name, spec.uri.as_str()).await;
                 (spec.name, result)
             })
             .collect();

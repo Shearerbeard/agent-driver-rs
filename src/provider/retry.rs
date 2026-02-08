@@ -102,7 +102,8 @@ where
                 }
 
                 // Use retry_after if provided, otherwise use backoff
-                let delay = e.retry_after()
+                let delay = e
+                    .retry_after()
                     .or_else(|| backoff.next_backoff())
                     .unwrap_or(config.max_interval);
 
@@ -146,7 +147,10 @@ mod tests {
             async move {
                 let n = attempts.fetch_add(1, Ordering::SeqCst);
                 if n < 2 {
-                    Err(ProviderError::RateLimited { provider: crate::provider::ProviderKind::Anthropic, retry_after: None })
+                    Err(ProviderError::RateLimited {
+                        provider: crate::provider::ProviderKind::Anthropic,
+                        retry_after: None,
+                    })
                 } else {
                     Ok(42)
                 }
@@ -171,7 +175,10 @@ mod tests {
             let attempts = attempts_clone.clone();
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
-                Err::<i32, _>(ProviderError::RateLimited { provider: crate::provider::ProviderKind::Anthropic, retry_after: None })
+                Err::<i32, _>(ProviderError::RateLimited {
+                    provider: crate::provider::ProviderKind::Anthropic,
+                    retry_after: None,
+                })
             }
         })
         .await;

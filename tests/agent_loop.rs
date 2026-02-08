@@ -150,10 +150,7 @@ async fn multi_round_tool_chain_depth_3() {
 #[tokio::test]
 async fn parallel_tool_calls_single_response() {
     let provider = MockProvider::new(vec![
-        mock_multi_tool_response(&[
-            ("call_a", "echo", "{}"),
-            ("call_b", "echo", "{}"),
-        ]),
+        mock_multi_tool_response(&[("call_a", "echo", "{}"), ("call_b", "echo", "{}")]),
         mock_text_response("Done!"),
     ]);
 
@@ -272,9 +269,7 @@ async fn tool_error_continues_when_configured() {
 /// `Err(AgentLoopError::Cancelled)` immediately, before the loop body executes.
 #[tokio::test]
 async fn cancellation_stops_loop() {
-    let provider = MockProvider::new(vec![
-        mock_tool_call_response("call_1", "echo", "{}"),
-    ]);
+    let provider = MockProvider::new(vec![mock_tool_call_response("call_1", "echo", "{}")]);
 
     let session = SessionBuilder::new()
         .with_provider(provider)
@@ -451,14 +446,22 @@ async fn parallel_tool_preserves_history_order() {
         .await
         .unwrap();
 
-    let outcome = AgentLoop::new(&session).run("parallel order").await.unwrap();
+    let outcome = AgentLoop::new(&session)
+        .run("parallel order")
+        .await
+        .unwrap();
 
     assert_eq!(outcome.iterations, 1);
     assert_eq!(outcome.final_response.text(), "Done!");
 
     // History: user + assistant(2 tool_use) + tool_result(slow) + tool_result(fast) + assistant(text)
     let msgs = session.messages().await;
-    assert_eq!(msgs.len(), 5, "expected 5 messages in history, got {}", msgs.len());
+    assert_eq!(
+        msgs.len(),
+        5,
+        "expected 5 messages in history, got {}",
+        msgs.len()
+    );
 
     // Tool results should be in response order: slow first, fast second
     // msgs[2] = tool_result for slow_tool, msgs[3] = tool_result for fast_tool
@@ -486,10 +489,7 @@ async fn parallel_tool_preserves_history_order() {
 async fn parallel_tool_observer_batching() {
     // Two tools in one response
     let provider = MockProvider::new(vec![
-        mock_multi_tool_response(&[
-            ("call_a", "echo", "{}"),
-            ("call_b", "echo", "{}"),
-        ]),
+        mock_multi_tool_response(&[("call_a", "echo", "{}"), ("call_b", "echo", "{}")]),
         mock_text_response("Done!"),
     ]);
 
@@ -525,8 +525,18 @@ async fn parallel_tool_observer_batching() {
         .map(|(i, _)| i)
         .collect();
 
-    assert_eq!(start_indices.len(), 2, "expected 2 ToolCallStart events, got: {:?}", *recorded);
-    assert_eq!(complete_indices.len(), 2, "expected 2 ToolCallComplete events, got: {:?}", *recorded);
+    assert_eq!(
+        start_indices.len(),
+        2,
+        "expected 2 ToolCallStart events, got: {:?}",
+        *recorded
+    );
+    assert_eq!(
+        complete_indices.len(),
+        2,
+        "expected 2 ToolCallComplete events, got: {:?}",
+        *recorded
+    );
 
     // All ToolCallStart events should precede all ToolCallComplete events
     let last_start = *start_indices.last().unwrap();
@@ -597,7 +607,12 @@ async fn parallel_tool_mixed_success_failure() {
 
     // History: user + assistant(2 tool_use) + tool_result(fail) + tool_result(ok) + assistant(text)
     let msgs = session.messages().await;
-    assert_eq!(msgs.len(), 5, "expected 5 messages in history, got {}", msgs.len());
+    assert_eq!(
+        msgs.len(),
+        5,
+        "expected 5 messages in history, got {}",
+        msgs.len()
+    );
 
     // Both tool results should be in history
     assert_eq!(msgs[2].role, agent_driver_rs::types::Role::Tool);

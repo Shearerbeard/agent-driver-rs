@@ -6,6 +6,7 @@ version = 4
 name = "agent-driver-rs"
 version = "0.1.0"
 dependencies = [
+ "agent-driver-rs",
  "async-openai",
  "async-trait",
  "aws-config",

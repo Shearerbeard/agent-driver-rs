@@ -19,7 +19,7 @@
 //! | Error | When to use | Recovery |
 //! |-------|-------------|----------|
 //! | [`ConfigError`] | Startup-time: missing env vars, invalid config values | Fix configuration and restart |
-//! | [`ProviderError`] | Network failures, auth errors, rate limits | Retry (with backoff for rate limits), check credentials |
+//! | [`ProviderError`] | Network failures, auth errors, rate limits, context overflow, content policy | Retry (with backoff for rate limits), trim history (context overflow), modify content (policy) |
 //! | [`StreamError`] | Mid-stream failures: connection lost, parse errors | Retry the request; cancelled streams are intentional |
 //! | [`ToolError`] | Tool not found, invalid input, execution failure | Check tool name, validate input schema, handle gracefully |
 //! | [`SessionError`] | Wraps provider/tool/stream errors at session level | Match inner error and handle accordingly |
@@ -148,16 +148,47 @@ pub enum ProviderError {
         provider: ProviderKind,
         message: String,
     },
+    #[error("[{provider}] context window exceeded: {message}")]
+    ContextWindowExceeded {
+        provider: ProviderKind,
+        message: String,
+        /// The provider's maximum context window size in tokens, if known.
+        context_window: Option<u32>,
+        /// How many tokens the request used, if known.
+        tokens_used: Option<u32>,
+    },
+    #[error("[{provider}] content policy violation: {message}")]
+    ContentPolicyViolation {
+        provider: ProviderKind,
+        message: String,
+    },
 }
 
 impl ProviderError {
     /// Returns `true` if the error is retriable (rate limited, timeout, or 5xx HTTP).
+    ///
+    /// Retriable means the same request can be sent again without modification.
     pub fn is_retriable(&self) -> bool {
         match self {
             Self::RateLimited { .. } | Self::Timeout(_) => true,
             Self::HttpError { status: Some(s), .. } => *s >= 500,
             _ => false,
         }
+    }
+
+    /// Returns `true` if the error is recoverable by modifying the request.
+    ///
+    /// Recoverable errors include context window exceeded (trim history),
+    /// content policy violations (modify content), and rate limits (wait and retry).
+    /// Unlike [`is_retriable`](Self::is_retriable), recoverable errors generally
+    /// require changing the request before retrying.
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            Self::ContextWindowExceeded { .. }
+                | Self::ContentPolicyViolation { .. }
+                | Self::RateLimited { .. }
+        )
     }
 
     /// Returns the retry-after duration hint, if available.
@@ -176,7 +207,9 @@ impl ProviderError {
             | Self::ModelNotFound { provider, .. }
             | Self::HttpError { provider, .. }
             | Self::StreamingNotSupported { provider, .. }
-            | Self::InvalidRequest { provider, .. } => Some(*provider),
+            | Self::InvalidRequest { provider, .. }
+            | Self::ContextWindowExceeded { provider, .. }
+            | Self::ContentPolicyViolation { provider, .. } => Some(*provider),
             Self::Cancelled | Self::Timeout(_) | Self::Stream(_) => None,
         }
     }
@@ -280,6 +313,77 @@ pub enum AgentLoopError {
     MaxToolDepthReached(u32),
 }
 
+impl AgentLoopError {
+    /// Returns `true` if the error is a context window overflow.
+    ///
+    /// Checks both the `ProviderError::ContextWindowExceeded` path (SDK providers)
+    /// and the `StreamError::ConnectionLost` path (SSE providers where HTTP 400
+    /// errors arrive mid-stream).
+    pub fn is_context_overflow(&self) -> bool {
+        match self {
+            Self::Session(SessionError::Provider(ProviderError::ContextWindowExceeded { .. })) => {
+                true
+            }
+            Self::Session(SessionError::Stream(StreamError::ConnectionLost { message, .. })) => {
+                is_context_window_message(message)
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if the error is a content policy violation.
+    ///
+    /// Checks both the `ProviderError::ContentPolicyViolation` path (SDK providers)
+    /// and the `StreamError::ConnectionLost` path (SSE providers).
+    pub fn is_content_policy_violation(&self) -> bool {
+        match self {
+            Self::Session(SessionError::Provider(
+                ProviderError::ContentPolicyViolation { .. },
+            )) => true,
+            Self::Session(SessionError::Stream(StreamError::ConnectionLost { message, .. })) => {
+                is_content_policy_message(message)
+            }
+            _ => false,
+        }
+    }
+
+    /// Extracts the inner [`ProviderError`], if present.
+    pub fn as_provider_error(&self) -> Option<&ProviderError> {
+        match self {
+            Self::Session(SessionError::Provider(e)) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+// ── Centralized error message detection ──────────────────────────────────
+
+/// Returns `true` if the message indicates a context window overflow.
+///
+/// This is the single source of truth for context window detection patterns.
+/// All providers should use this instead of scattering detection logic.
+pub(crate) fn is_context_window_message(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("context_length_exceeded")
+        || lower.contains("prompt is too long")
+        || (lower.contains("exceed") && lower.contains("context"))
+        || lower.contains("too many tokens")
+        || lower.contains("maximum context length")
+        || lower.contains("input is too long")
+}
+
+/// Returns `true` if the message indicates a content policy violation.
+///
+/// This is the single source of truth for content policy detection patterns.
+pub(crate) fn is_content_policy_message(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("content_policy_violation")
+        || lower.contains("content policy")
+        || lower.contains("usage policy")
+        || lower.contains("content management policy")
+        || lower.contains("guardrail")
+}
+
 // Validation errors for newtypes
 
 /// Error when constructing a [`ModelId`](crate::types::ModelId).
@@ -373,5 +477,170 @@ mod tests {
             ProviderError::Timeout(Duration::from_secs(1)).provider(),
             None
         );
+    }
+
+    #[test]
+    fn provider_error_provider_accessor_new_variants() {
+        let err = ProviderError::ContextWindowExceeded {
+            provider: ProviderKind::OpenAi,
+            message: "too long".into(),
+            context_window: Some(128_000),
+            tokens_used: Some(130_000),
+        };
+        assert_eq!(err.provider(), Some(ProviderKind::OpenAi));
+
+        let err = ProviderError::ContentPolicyViolation {
+            provider: ProviderKind::Anthropic,
+            message: "blocked".into(),
+        };
+        assert_eq!(err.provider(), Some(ProviderKind::Anthropic));
+    }
+
+    #[test]
+    fn provider_error_is_recoverable() {
+        assert!(ProviderError::ContextWindowExceeded {
+            provider: ProviderKind::OpenAi,
+            message: "too long".into(),
+            context_window: None,
+            tokens_used: None,
+        }
+        .is_recoverable());
+
+        assert!(ProviderError::ContentPolicyViolation {
+            provider: ProviderKind::Anthropic,
+            message: "blocked".into(),
+        }
+        .is_recoverable());
+
+        assert!(ProviderError::RateLimited {
+            provider: ProviderKind::Bedrock,
+            retry_after: None,
+        }
+        .is_recoverable());
+
+        // Not recoverable:
+        assert!(!ProviderError::Auth {
+            provider: ProviderKind::Anthropic,
+            kind: AuthErrorKind::Rejected,
+            message: "nope".into(),
+        }
+        .is_recoverable());
+
+        assert!(!ProviderError::InvalidRequest {
+            provider: ProviderKind::OpenAi,
+            message: "bad request".into(),
+        }
+        .is_recoverable());
+
+        assert!(!ProviderError::Cancelled.is_recoverable());
+    }
+
+    #[test]
+    fn context_window_not_retriable() {
+        assert!(!ProviderError::ContextWindowExceeded {
+            provider: ProviderKind::OpenAi,
+            message: "too long".into(),
+            context_window: None,
+            tokens_used: None,
+        }
+        .is_retriable());
+
+        assert!(!ProviderError::ContentPolicyViolation {
+            provider: ProviderKind::Anthropic,
+            message: "blocked".into(),
+        }
+        .is_retriable());
+    }
+
+    #[test]
+    fn is_context_window_message_patterns() {
+        assert!(is_context_window_message(
+            "This model's maximum context length is 8192 tokens"
+        ));
+        assert!(is_context_window_message("context_length_exceeded"));
+        assert!(is_context_window_message("The prompt is too long for this model"));
+        assert!(is_context_window_message(
+            "Request exceeds the context window limit"
+        ));
+        assert!(is_context_window_message("Too many tokens in the request"));
+        assert!(is_context_window_message("input is too long"));
+        assert!(!is_context_window_message("invalid API key"));
+        assert!(!is_context_window_message("rate limited"));
+    }
+
+    #[test]
+    fn is_content_policy_message_patterns() {
+        assert!(is_content_policy_message("content_policy_violation"));
+        assert!(is_content_policy_message("Violates our content policy"));
+        assert!(is_content_policy_message("Violates our usage policy"));
+        assert!(is_content_policy_message(
+            "Blocked by content management policy"
+        ));
+        assert!(is_content_policy_message("Blocked by guardrail"));
+        assert!(!is_content_policy_message("invalid request"));
+        assert!(!is_content_policy_message("rate limited"));
+    }
+
+    #[test]
+    fn agent_loop_error_is_context_overflow() {
+        // Direct ProviderError path
+        let err = AgentLoopError::Session(SessionError::Provider(
+            ProviderError::ContextWindowExceeded {
+                provider: ProviderKind::OpenAi,
+                message: "too long".into(),
+                context_window: None,
+                tokens_used: None,
+            },
+        ));
+        assert!(err.is_context_overflow());
+
+        // StreamError path (SSE providers)
+        let err = AgentLoopError::Session(SessionError::Stream(StreamError::ConnectionLost {
+            kind: StreamErrorKind::ProviderError,
+            message: "context_length_exceeded: max 128000 tokens".into(),
+        }));
+        assert!(err.is_context_overflow());
+
+        // Non-matching
+        let err = AgentLoopError::Cancelled;
+        assert!(!err.is_context_overflow());
+    }
+
+    #[test]
+    fn agent_loop_error_is_content_policy_violation() {
+        let err = AgentLoopError::Session(SessionError::Provider(
+            ProviderError::ContentPolicyViolation {
+                provider: ProviderKind::Anthropic,
+                message: "blocked".into(),
+            },
+        ));
+        assert!(err.is_content_policy_violation());
+
+        let err = AgentLoopError::Session(SessionError::Stream(StreamError::ConnectionLost {
+            kind: StreamErrorKind::ProviderError,
+            message: "content_policy_violation".into(),
+        }));
+        assert!(err.is_content_policy_violation());
+
+        let err = AgentLoopError::Cancelled;
+        assert!(!err.is_content_policy_violation());
+    }
+
+    #[test]
+    fn agent_loop_error_as_provider_error() {
+        let err = AgentLoopError::Session(SessionError::Provider(
+            ProviderError::ContextWindowExceeded {
+                provider: ProviderKind::OpenAi,
+                message: "too long".into(),
+                context_window: Some(128_000),
+                tokens_used: None,
+            },
+        ));
+        let pe = err.as_provider_error().unwrap();
+        assert!(matches!(pe, ProviderError::ContextWindowExceeded { .. }));
+        assert_eq!(pe.provider(), Some(ProviderKind::OpenAi));
+
+        let err = AgentLoopError::Cancelled;
+        assert!(err.as_provider_error().is_none());
     }
 }

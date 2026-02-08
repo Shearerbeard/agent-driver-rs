@@ -18,7 +18,10 @@ use async_openai::types::{
 use async_openai::Client;
 
 use crate::config::OpenAiConfig;
-use crate::error::{AuthErrorKind, ProviderError, StreamError, StreamErrorKind};
+use crate::error::{
+    is_content_policy_message, is_context_window_message, AuthErrorKind, ProviderError,
+    StreamError, StreamErrorKind,
+};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -90,14 +93,9 @@ impl OpenAiProvider {
                             ChatCompletionRequestSystemMessageArgs::default()
                                 .content(text)
                                 .build()
-                                .map_err(|e| {
-                                    ProviderError::InvalidRequest {
-                                        provider: super::ProviderKind::OpenAi,
-                                        message: format!(
-                                            "Failed to build system message: {}",
-                                            e
-                                        ),
-                                    }
+                                .map_err(|e| ProviderError::InvalidRequest {
+                                    provider: super::ProviderKind::OpenAi,
+                                    message: format!("Failed to build system message: {}", e),
                                 })?
                                 .into(),
                         );
@@ -119,14 +117,9 @@ impl OpenAiProvider {
                             ChatCompletionRequestUserMessageArgs::default()
                                 .content(text)
                                 .build()
-                                .map_err(|e| {
-                                    ProviderError::InvalidRequest {
-                                        provider: super::ProviderKind::OpenAi,
-                                        message: format!(
-                                            "Failed to build user message: {}",
-                                            e
-                                        ),
-                                    }
+                                .map_err(|e| ProviderError::InvalidRequest {
+                                    provider: super::ProviderKind::OpenAi,
+                                    message: format!("Failed to build user message: {}", e),
                                 })?
                                 .into(),
                         );
@@ -180,15 +173,15 @@ impl OpenAiProvider {
                         builder.tool_calls(tc);
                     }
 
-                    openai_messages.push(builder.build().map_err(|e| {
-                        ProviderError::InvalidRequest {
-                            provider: super::ProviderKind::OpenAi,
-                            message: format!(
-                                "Failed to build assistant message: {}",
-                                e
-                            ),
-                        }
-                    })?.into());
+                    openai_messages.push(
+                        builder
+                            .build()
+                            .map_err(|e| ProviderError::InvalidRequest {
+                                provider: super::ProviderKind::OpenAi,
+                                message: format!("Failed to build assistant message: {}", e),
+                            })?
+                            .into(),
+                    );
                 }
                 Role::Tool => {
                     // Tool results
@@ -207,14 +200,9 @@ impl OpenAiProvider {
                                     .tool_call_id(tool_use_id.as_str())
                                     .content(content_str)
                                     .build()
-                                    .map_err(|e| {
-                                        ProviderError::InvalidRequest {
-                                            provider: super::ProviderKind::OpenAi,
-                                            message: format!(
-                                                "Failed to build tool message: {}",
-                                                e
-                                            ),
-                                        }
+                                    .map_err(|e| ProviderError::InvalidRequest {
+                                        provider: super::ProviderKind::OpenAi,
+                                        message: format!("Failed to build tool message: {}", e),
                                     })?
                                     .into(),
                             );
@@ -240,22 +228,18 @@ impl OpenAiProvider {
                     .description(t.description.clone())
                     .parameters(t.input_schema.to_value())
                     .build()
-                    .map_err(|e| {
-                        ProviderError::InvalidRequest {
+                    .map_err(|e| ProviderError::InvalidRequest {
                         provider: super::ProviderKind::OpenAi,
                         message: format!("Failed to build function: {}", e),
-                    }
                     })?;
 
                 ChatCompletionToolArgs::default()
                     .r#type(ChatCompletionToolType::Function)
                     .function(function)
                     .build()
-                    .map_err(|e| {
-                        ProviderError::InvalidRequest {
-                            provider: super::ProviderKind::OpenAi,
-                            message: format!("Failed to build tool: {}", e),
-                        }
+                    .map_err(|e| ProviderError::InvalidRequest {
+                        provider: super::ProviderKind::OpenAi,
+                        message: format!("Failed to build tool: {}", e),
                     })
             })
             .collect()
@@ -293,14 +277,9 @@ impl Provider for OpenAiProvider {
                         ChatCompletionRequestSystemMessageArgs::default()
                             .content(system.as_str())
                             .build()
-                            .map_err(|e| {
-                                ProviderError::InvalidRequest {
-                                    provider: super::ProviderKind::OpenAi,
-                                    message: format!(
-                                        "Failed to build system message: {}",
-                                        e
-                                    ),
-                                }
+                            .map_err(|e| ProviderError::InvalidRequest {
+                                provider: super::ProviderKind::OpenAi,
+                                message: format!("Failed to build system message: {}", e),
                             })?
                             .into(),
                     );
@@ -336,39 +315,57 @@ impl Provider for OpenAiProvider {
                 req_builder.stop(request.config.stop_sequences.clone());
             }
 
-            let openai_request = req_builder.build().map_err(|e| {
-                ProviderError::InvalidRequest {
-                    provider: super::ProviderKind::OpenAi,
-                    message: format!("Failed to build request: {}", e),
-                }
-            })?;
+            let openai_request =
+                req_builder
+                    .build()
+                    .map_err(|e| ProviderError::InvalidRequest {
+                        provider: super::ProviderKind::OpenAi,
+                        message: format!("Failed to build request: {}", e),
+                    })?;
 
             // Create stream
-            let stream = self.client.chat().create_stream(openai_request).await.map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("401") || msg.contains("Unauthorized") {
-                    ProviderError::Auth {
-                        provider: super::ProviderKind::OpenAi,
-                        kind: AuthErrorKind::Rejected,
-                        message: msg,
+            let stream = self
+                .client
+                .chat()
+                .create_stream(openai_request)
+                .await
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("401") || msg.contains("Unauthorized") {
+                        ProviderError::Auth {
+                            provider: super::ProviderKind::OpenAi,
+                            kind: AuthErrorKind::Rejected,
+                            message: msg,
+                        }
+                    } else if msg.contains("429") || msg.contains("rate") {
+                        ProviderError::RateLimited {
+                            provider: super::ProviderKind::OpenAi,
+                            retry_after: None,
+                        }
+                    } else if msg.contains("model") && msg.contains("not found") {
+                        ProviderError::ModelNotFound {
+                            provider: super::ProviderKind::OpenAi,
+                            model: model.to_string(),
+                        }
+                    } else if is_context_window_message(&msg) {
+                        ProviderError::ContextWindowExceeded {
+                            provider: super::ProviderKind::OpenAi,
+                            message: msg,
+                            context_window: None,
+                            tokens_used: None,
+                        }
+                    } else if is_content_policy_message(&msg) {
+                        ProviderError::ContentPolicyViolation {
+                            provider: super::ProviderKind::OpenAi,
+                            message: msg,
+                        }
+                    } else {
+                        ProviderError::InvalidRequest {
+                            provider: super::ProviderKind::OpenAi,
+                            message: msg,
+                        }
                     }
-                } else if msg.contains("429") || msg.contains("rate") {
-                    ProviderError::RateLimited {
-                        provider: super::ProviderKind::OpenAi,
-                        retry_after: None,
-                    }
-                } else if msg.contains("model") && msg.contains("not found") {
-                    ProviderError::ModelNotFound {
-                        provider: super::ProviderKind::OpenAi,
-                        model: model.to_string(),
-                    }
-                } else {
-                    ProviderError::InvalidRequest {
-                        provider: super::ProviderKind::OpenAi,
-                        message: msg,
-                    }
-                }
-            })?;
+                })?;
 
             let event_stream = super::stream_adapter::buffered_sdk_stream(
                 stream,
@@ -525,8 +522,9 @@ fn parse_openai_chunk(
                             events.push(Ok(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                 id: ToolCallId::new(id),
                                 // Safety: "unknown" is a valid tool name (alphanumeric)
-                                name: ToolName::new(name)
-                                    .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
+                                name: ToolName::new(name).unwrap_or_else(|_| {
+                                    ToolName::new("unknown").expect("hardcoded valid tool name")
+                                }),
                             })));
                         }
                     }
@@ -632,8 +630,10 @@ mod tests {
 
     #[test]
     fn parse_finish_reason_stop() {
-        let mut state = StreamState::default();
-        state.started = true;
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
 
         let _ = parse_openai_chunk(finish_chunk("stop"), &mut state);
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
@@ -641,8 +641,10 @@ mod tests {
 
     #[test]
     fn parse_finish_reason_tool_calls() {
-        let mut state = StreamState::default();
-        state.started = true;
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
 
         let _ = parse_openai_chunk(finish_chunk("tool_calls"), &mut state);
         assert_eq!(state.stop_reason, Some(StopReason::ToolUse));
@@ -650,8 +652,10 @@ mod tests {
 
     #[test]
     fn parse_tool_call_start_and_arguments() {
-        let mut state = StreamState::default();
-        state.started = true;
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
 
         let events = parse_openai_chunk(
             tool_call_chunk("call_abc", "read_file", r#"{"path":"/tmp"}"#),

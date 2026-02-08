@@ -114,6 +114,8 @@ pub enum LoopStopReason {
     MaxToolDepthReached,
     /// Cancellation token was triggered
     Cancelled,
+    /// The provider's content filter triggered, blocking further output
+    ContentFilter,
     /// A tool error stopped the loop (when continue_on_tool_error is false)
     ToolError {
         tool_name: ToolName,
@@ -127,6 +129,7 @@ impl std::fmt::Display for LoopStopReason {
             Self::EndTurn => write!(f, "end_turn"),
             Self::MaxTokens => write!(f, "max_tokens"),
             Self::StopSequence => write!(f, "stop_sequence"),
+            Self::ContentFilter => write!(f, "content_filter"),
             Self::MaxToolDepthReached => write!(f, "max_tool_depth_reached"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::ToolError { tool_name, message } => {
@@ -184,6 +187,7 @@ mod tests {
     fn stop_reason_display() {
         assert_eq!(LoopStopReason::EndTurn.to_string(), "end_turn");
         assert_eq!(LoopStopReason::Cancelled.to_string(), "cancelled");
+        assert_eq!(LoopStopReason::ContentFilter.to_string(), "content_filter");
         assert_eq!(
             LoopStopReason::ToolError {
                 tool_name: ToolName::new("my_tool").unwrap(),

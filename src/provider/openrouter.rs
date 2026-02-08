@@ -98,12 +98,20 @@ impl OpenRouterProvider {
             let mut provider_obj = serde_json::json!({});
             if !prefs.allow.is_empty() {
                 provider_obj["allow"] = JsonValue::Array(
-                    prefs.allow.iter().map(|s| JsonValue::String(s.clone())).collect(),
+                    prefs
+                        .allow
+                        .iter()
+                        .map(|s| JsonValue::String(s.clone()))
+                        .collect(),
                 );
             }
             if !prefs.deny.is_empty() {
                 provider_obj["deny"] = JsonValue::Array(
-                    prefs.deny.iter().map(|s| JsonValue::String(s.clone())).collect(),
+                    prefs
+                        .deny
+                        .iter()
+                        .map(|s| JsonValue::String(s.clone()))
+                        .collect(),
                 );
             }
             if prefs.require_primary {
@@ -147,7 +155,9 @@ impl OpenRouterProvider {
         if msg.role == crate::types::Role::Tool {
             // Tool results in OpenAI format — each tool result must be its own message.
             // The agent loop creates one ToolResult per message, so we take the first.
-            let tool_result_count = msg.content.iter()
+            let tool_result_count = msg
+                .content
+                .iter()
                 .filter(|b| matches!(b, ContentBlock::ToolResult { .. }))
                 .count();
             if tool_result_count > 1 {
@@ -242,12 +252,10 @@ impl OpenRouterProvider {
         let auth_value = format!("Bearer {}", self.config.api_key.as_str());
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&auth_value).map_err(|_| {
-                ProviderError::Auth {
-                    provider: super::ProviderKind::OpenRouter,
-                    kind: AuthErrorKind::InvalidApiKey,
-                    message: "OPENROUTER_API_KEY contains invalid header characters".to_string(),
-                }
+            HeaderValue::from_str(&auth_value).map_err(|_| ProviderError::Auth {
+                provider: super::ProviderKind::OpenRouter,
+                kind: AuthErrorKind::InvalidApiKey,
+                message: "OPENROUTER_API_KEY contains invalid header characters".to_string(),
             })?,
         );
 
@@ -282,13 +290,12 @@ impl Provider for OpenRouterProvider {
                 .headers(headers)
                 .json(&body);
 
-            let event_source = EventSource::new(request_builder)
-                .map_err(|e| {
-                    ProviderError::Stream(StreamError::ConnectionLost {
-                        kind: StreamErrorKind::ConnectionDropped,
-                        message: e.to_string(),
-                    })
-                })?;
+            let event_source = EventSource::new(request_builder).map_err(|e| {
+                ProviderError::Stream(StreamError::ConnectionLost {
+                    kind: StreamErrorKind::ConnectionDropped,
+                    message: e.to_string(),
+                })
+            })?;
 
             let stream = create_openrouter_stream(event_source, ctx.cancellation.clone());
 
@@ -308,7 +315,8 @@ impl Provider for OpenRouterProvider {
             // Safety: all model IDs below are hardcoded valid strings (alphanumeric + slashes/hyphens/dots)
             Ok(vec![
                 ModelInfo {
-                    id: ModelId::new("anthropic/claude-sonnet-4").expect("hardcoded valid model ID"),
+                    id: ModelId::new("anthropic/claude-sonnet-4")
+                        .expect("hardcoded valid model ID"),
                     name: "Claude Sonnet 4".to_string(),
                     context_window: Some(200_000),
                 },
@@ -462,8 +470,9 @@ fn parse_openrouter_event(
                                 events.push(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                     id: ToolCallId::new(id),
                                     // Safety: "unknown" is a valid tool name (alphanumeric)
-                                    name: ToolName::new(name)
-                                        .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
+                                    name: ToolName::new(name).unwrap_or_else(|_| {
+                                        ToolName::new("unknown").expect("hardcoded valid tool name")
+                                    }),
                                 }));
                             }
                         }
@@ -555,15 +564,17 @@ mod tests {
         assert!(result.is_some());
         let events = result.unwrap().unwrap();
         // First chunk: Started + ContentBlockStart + TextDelta
-        assert!(events.len() >= 1);
+        assert!(!events.is_empty());
     }
 
     #[test]
     fn parse_finish_chunk() {
         let data = r#"{"id":"gen-123","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
 
-        let mut state = StreamState::default();
-        state.started = true; // Simulate already started
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
         let _ = parse_openrouter_event(data, &mut state);
 
         // Should update stop_reason in state
@@ -574,8 +585,10 @@ mod tests {
     fn parse_tool_call_chunk() {
         let data = r#"{"id":"gen-123","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}"#;
 
-        let mut state = StreamState::default();
-        state.started = true;
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
         let result = parse_openrouter_event(data, &mut state);
 
         assert!(result.is_some());
@@ -586,8 +599,10 @@ mod tests {
     #[test]
     fn parse_tool_call_with_arguments() {
         let data = r#"{"id":"gen-456","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_xyz","function":{"name":"list_dir","arguments":"{\"path\":\"/tmp\"}"}}]},"finish_reason":null}]}"#;
-        let mut state = StreamState::default();
-        state.started = true;
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
 
         let result = parse_openrouter_event(data, &mut state);
         let events = result.unwrap().unwrap();
@@ -608,8 +623,10 @@ mod tests {
     #[test]
     fn parse_usage_tracking() {
         let data = r#"{"id":"gen-789","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":50}}"#;
-        let mut state = StreamState::default();
-        state.started = true;
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
 
         let _ = parse_openrouter_event(data, &mut state);
 

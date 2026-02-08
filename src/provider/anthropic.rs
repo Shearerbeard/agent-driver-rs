@@ -411,9 +411,15 @@ fn parse_anthropic_event(
         }
         AnthropicStreamEvent::Ping => vec![],
         AnthropicStreamEvent::Error { error } => {
+            let message = match (&error.error_type, &error.message) {
+                (Some(t), Some(m)) => format!("{}: {}", t, m),
+                (None, Some(m)) => m.clone(),
+                (Some(t), None) => t.clone(),
+                (None, None) => "Unknown error".into(),
+            };
             return Some(Err(StreamError::ConnectionLost {
                 kind: StreamErrorKind::ProviderError,
-                message: error.message.unwrap_or_else(|| "Unknown error".into()),
+                message,
             }));
         }
     };
@@ -492,6 +498,8 @@ struct UsageData {
 
 #[derive(Debug, Deserialize)]
 struct ErrorData {
+    #[serde(rename = "type")]
+    error_type: Option<String>,
     message: Option<String>,
 }
 
@@ -604,7 +612,7 @@ mod tests {
 
         assert!(matches!(
             result.unwrap(),
-            Err(StreamError::ConnectionLost { message: ref msg, .. }) if msg == "Overloaded"
+            Err(StreamError::ConnectionLost { message: ref msg, .. }) if msg == "overloaded_error: Overloaded"
         ));
     }
 

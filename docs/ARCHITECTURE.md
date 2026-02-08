@@ -255,12 +255,27 @@ a `&Session` and drives the send/collect/execute/continue cycle.
 - **Depth counting:** Counts *tool execution rounds*, not model responses. A
   single round may execute multiple parallel tool calls. The default limit is
   25 rounds (`MaxToolDepth::default()`).
+- **Parallel tool execution:** When a model response contains multiple `tool_use`
+  blocks, all tools execute concurrently via `futures::future::join_all`. The
+  `execute_tools()` function uses a 3-phase approach to preserve deterministic
+  ordering while maximizing concurrency:
+  1. **Emit `ToolCallStart`** events sequentially (preserves response order)
+  2. **Execute all tools concurrently** — `join_all` polls futures on the current
+     task (no `'static` bound needed, so `&Session` can be borrowed directly).
+     Results come back in input order.
+  3. **Add results to history & emit `ToolCallComplete`** sequentially (preserves
+     order). Tool results are added to history via `session.add_message()`, not
+     `session.execute_tool()`, to avoid interleaved history writes.
+
+  This design means 3 MCP tools at 2s each complete in ~2s instead of ~6s.
+  `join_all` is preferred over `JoinSet` because tool counts per response are
+  small (1-5) and spawn overhead isn't justified.
 - **Observer forwarding:** During `collect_with_observer()`, `TextDelta` and
   `ThinkingDelta` events are forwarded to the observer in real time. Other stream
   events (block lifecycle, metadata) are consumed silently.
 - **Tool error handling:** When `continue_on_tool_error` is `true` (the default),
   tool errors are sent back to the model as error results, letting it recover.
-  When `false`, the loop stops on the first tool error.
+  When `false`, the loop stops on the first tool error (in response order).
 - **`complete_loop()` deduplication:** All exit paths go through `complete_loop()`,
   which fires the `LoopComplete` observer event and assembles the `AgentOutcome`.
 
@@ -362,6 +377,37 @@ Two shared streaming helpers eliminate duplication across providers:
 **Bedrock** does not use either adapter. The AWS SDK's `EventReceiver` has a
 `.recv()` API that does not implement `futures::Stream`. The Bedrock provider
 has its own polling loop that calls `.recv()` in a `loop` with cancellation checks.
+
+## Error Classification and Recovery
+
+`ProviderError` variants are classified into two categories:
+
+- **Retriable** (`is_retriable()`): The same request can be sent again.
+  Includes `RateLimited`, `Timeout`, and 5xx `HttpError`.
+- **Recoverable** (`is_recoverable()`): The request can succeed if modified.
+  Includes `ContextWindowExceeded` (trim history), `ContentPolicyViolation`
+  (modify content), and `RateLimited` (wait and retry).
+
+Two structured variants enable context-aware recovery:
+
+- `ContextWindowExceeded { provider, message, context_window, tokens_used }` --
+  signals that the request exceeded the model's context window. `context_window`
+  and `tokens_used` are `Option<u32>` because most providers don't include exact
+  counts in error messages, but when available they enable precise trimming.
+- `ContentPolicyViolation { provider, message }` -- the provider rejected the
+  request due to content policy.
+
+**Two error paths** exist depending on provider type:
+- SDK providers (OpenAI, Bedrock, Ollama) classify errors at `complete_stream()`
+  time, producing `ProviderError::ContextWindowExceeded` directly.
+- SSE providers (Anthropic, OpenRouter) receive HTTP 400 errors mid-stream as
+  `StreamError::ConnectionLost`. The `AgentLoopError` convenience helpers
+  (`is_context_overflow()`, `is_content_policy_violation()`) check both paths,
+  giving consumers consistent behavior regardless of provider.
+
+Centralized detection functions (`is_context_window_message()`,
+`is_content_policy_message()`) in `error.rs` are the single source of truth for
+pattern matching across all providers.
 
 ## Retry Logic
 

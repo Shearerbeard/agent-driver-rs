@@ -21,7 +21,10 @@ use aws_sdk_bedrockruntime::Client;
 use aws_smithy_types::Document;
 
 use crate::config::BedrockConfig;
-use crate::error::{AuthErrorKind, ProviderError, StreamError, StreamErrorKind};
+use crate::error::{
+    is_content_policy_message, is_context_window_message, AuthErrorKind, ProviderError,
+    StreamError, StreamErrorKind,
+};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -97,8 +100,9 @@ impl BedrockProvider {
                 .description(t.description.clone())
                 .input_schema(ToolInputSchema::Json(schema_doc))
                 .build()
-                .map_err(|e| {
-                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!("Failed to build tool spec: {}", e) }
+                .map_err(|e| ProviderError::InvalidRequest {
+                    provider: super::ProviderKind::Bedrock,
+                    message: format!("Failed to build tool spec: {}", e),
                 })?;
 
             bedrock_tools.push(Tool::ToolSpec(spec));
@@ -108,8 +112,9 @@ impl BedrockProvider {
             ToolConfiguration::builder()
                 .set_tools(Some(bedrock_tools))
                 .build()
-                .map_err(|e| {
-                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!("Failed to build tool config: {}", e) }
+                .map_err(|e| ProviderError::InvalidRequest {
+                    provider: super::ProviderKind::Bedrock,
+                    message: format!("Failed to build tool config: {}", e),
                 })?,
         ))
     }
@@ -166,11 +171,9 @@ fn convert_messages(
                                     .unwrap_or_default(),
                             ))
                             .build()
-                            .map_err(|e| {
-                                ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!(
-                                    "Failed to build tool use: {}",
-                                    e
-                                ) }
+                            .map_err(|e| ProviderError::InvalidRequest {
+                                provider: super::ProviderKind::Bedrock,
+                                message: format!("Failed to build tool use: {}", e),
                             })?,
                     ));
                 }
@@ -192,11 +195,9 @@ fn convert_messages(
                                 aws_sdk_bedrockruntime::types::ToolResultStatus::Success
                             })
                             .build()
-                            .map_err(|e| {
-                                ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!(
-                                    "Failed to build tool result: {}",
-                                    e
-                                ) }
+                            .map_err(|e| ProviderError::InvalidRequest {
+                                provider: super::ProviderKind::Bedrock,
+                                message: format!("Failed to build tool result: {}", e),
                             })?,
                     ));
                 }
@@ -227,8 +228,9 @@ fn convert_messages(
                 .role(role)
                 .set_content(Some(blocks))
                 .build()
-                .map_err(|e| {
-                    ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!("Failed to build message: {}", e) }
+                .map_err(|e| ProviderError::InvalidRequest {
+                    provider: super::ProviderKind::Bedrock,
+                    message: format!("Failed to build message: {}", e),
                 })
         })
         .collect()
@@ -289,7 +291,9 @@ impl Provider for BedrockProvider {
                 .set_messages(Some(messages))
                 .inference_config(
                     aws_sdk_bedrockruntime::types::InferenceConfiguration::builder()
-                        .max_tokens(i32::try_from(request.config.max_tokens.get()).unwrap_or(i32::MAX))
+                        .max_tokens(
+                            i32::try_from(request.config.max_tokens.get()).unwrap_or(i32::MAX),
+                        )
                         .set_temperature(request.config.temperature.map(|t| t.get()))
                         .set_stop_sequences(if request.config.stop_sequences.is_empty() {
                             None
@@ -326,6 +330,10 @@ impl Provider for BedrockProvider {
                         "Model requires an inference profile. Set BEDROCK_INFERENCE_PROFILE env var. Error: {}",
                         msg
                     ) }
+                } else if is_context_window_message(&msg) {
+                    ProviderError::ContextWindowExceeded { provider: super::ProviderKind::Bedrock, message: msg, context_window: None, tokens_used: None }
+                } else if is_content_policy_message(&msg) {
+                    ProviderError::ContentPolicyViolation { provider: super::ProviderKind::Bedrock, message: msg }
                 } else {
                     ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: msg }
                 }
@@ -346,7 +354,12 @@ impl Provider for BedrockProvider {
             // 0 or 1 events. The buffer is fully drained before fetching the
             // next raw event, so it never accumulates across events.
             let event_stream = futures::stream::unfold(
-                (stream, cancellation.clone(), StreamState::default(), std::collections::VecDeque::new()),
+                (
+                    stream,
+                    cancellation.clone(),
+                    StreamState::default(),
+                    std::collections::VecDeque::new(),
+                ),
                 |(mut stream, cancel, mut state, mut pending)| async move {
                     // Drain pending events first
                     if let Some(event) = pending.pop_front() {
@@ -404,22 +417,26 @@ impl Provider for BedrockProvider {
             // Safety: all model IDs below are hardcoded valid strings (alphanumeric + dots/hyphens/colons)
             Ok(vec![
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-opus-4-5-20251101-v1:0").expect("hardcoded valid model ID"),
+                    id: ModelId::new("anthropic.claude-opus-4-5-20251101-v1:0")
+                        .expect("hardcoded valid model ID"),
                     name: "Claude Opus 4.5 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-sonnet-4-5-20250929-v1:0").expect("hardcoded valid model ID"),
+                    id: ModelId::new("anthropic.claude-sonnet-4-5-20250929-v1:0")
+                        .expect("hardcoded valid model ID"),
                     name: "Claude Sonnet 4.5 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-haiku-4-5-20251001-v1:0").expect("hardcoded valid model ID"),
+                    id: ModelId::new("anthropic.claude-haiku-4-5-20251001-v1:0")
+                        .expect("hardcoded valid model ID"),
                     name: "Claude Haiku 4.5 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
-                    id: ModelId::new("anthropic.claude-sonnet-4-20250514-v1:0").expect("hardcoded valid model ID"),
+                    id: ModelId::new("anthropic.claude-sonnet-4-20250514-v1:0")
+                        .expect("hardcoded valid model ID"),
                     name: "Claude Sonnet 4 (Bedrock)".to_string(),
                     context_window: Some(200_000),
                 },
@@ -493,8 +510,9 @@ fn parse_bedrock_event(
                             Ok(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                 id: ToolCallId::new(tool.tool_use_id()),
                                 // Safety: "unknown" is a valid tool name (alphanumeric)
-                                name: ToolName::new(tool.name())
-                                    .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid tool name")),
+                                name: ToolName::new(tool.name()).unwrap_or_else(|_| {
+                                    ToolName::new("unknown").expect("hardcoded valid tool name")
+                                }),
                             })),
                         ]
                     }
@@ -547,7 +565,16 @@ fn parse_bedrock_event(
                 aws_sdk_bedrockruntime::types::StopReason::StopSequence => {
                     Some(StopReason::StopSequence)
                 }
-                _ => Some(StopReason::EndTurn),
+                other => {
+                    // Bedrock uses non_exhaustive StopReason; match string representation
+                    // for ContentFiltered and GuardrailIntervened variants.
+                    let s = other.as_str();
+                    if s == "content_filtered" || s == "guardrail_intervened" {
+                        Some(StopReason::ContentFilter)
+                    } else {
+                        Some(StopReason::EndTurn)
+                    }
+                }
             };
             vec![]
         }
@@ -609,7 +636,10 @@ mod tests {
         // Simulate: user asks, assistant calls 2 tools, 2 separate tool results
         let messages = vec![
             user_msg("List files in /tmp"),
-            assistant_tool_use(&[("tu1", "list_allowed_directories"), ("tu2", "list_directory")]),
+            assistant_tool_use(&[
+                ("tu1", "list_allowed_directories"),
+                ("tu2", "list_directory"),
+            ]),
             tool_result("tu1", "[/tmp]"),
             tool_result("tu2", "file1.txt\nfile2.txt"),
         ];
@@ -617,7 +647,12 @@ mod tests {
         let bedrock = convert_messages(&messages).unwrap();
 
         // Should be 3 messages: User, Assistant, User (merged tool results)
-        assert_eq!(bedrock.len(), 3, "expected 3 Bedrock messages, got {}", bedrock.len());
+        assert_eq!(
+            bedrock.len(),
+            3,
+            "expected 3 Bedrock messages, got {}",
+            bedrock.len()
+        );
 
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
         assert_eq!(bedrock[1].role(), &ConversationRole::Assistant);
@@ -625,7 +660,11 @@ mod tests {
 
         // The merged User message should contain both tool results
         let merged_content = bedrock[2].content();
-        assert_eq!(merged_content.len(), 2, "merged message should have 2 content blocks");
+        assert_eq!(
+            merged_content.len(),
+            2,
+            "merged message should have 2 content blocks"
+        );
         assert!(merged_content.iter().all(is_tool_result));
     }
 
@@ -652,7 +691,12 @@ mod tests {
     #[test]
     fn system_messages_skipped() {
         let messages = vec![
-            Message::new(Role::System, vec![ContentBlock::Text { text: "You are helpful.".into() }]),
+            Message::new(
+                Role::System,
+                vec![ContentBlock::Text {
+                    text: "You are helpful.".into(),
+                }],
+            ),
             user_msg("Hello"),
         ];
 
@@ -667,11 +711,20 @@ mod tests {
         use aws_smithy_types::Document;
 
         // Null
-        assert!(matches!(json_to_document(&serde_json::json!(null)), Document::Null));
+        assert!(matches!(
+            json_to_document(&serde_json::json!(null)),
+            Document::Null
+        ));
 
         // Bool
-        assert!(matches!(json_to_document(&serde_json::json!(true)), Document::Bool(true)));
-        assert!(matches!(json_to_document(&serde_json::json!(false)), Document::Bool(false)));
+        assert!(matches!(
+            json_to_document(&serde_json::json!(true)),
+            Document::Bool(true)
+        ));
+        assert!(matches!(
+            json_to_document(&serde_json::json!(false)),
+            Document::Bool(false)
+        ));
 
         // Positive integer
         match json_to_document(&serde_json::json!(42)) {
@@ -686,8 +739,8 @@ mod tests {
         }
 
         // Float
-        match json_to_document(&serde_json::json!(3.14)) {
-            Document::Number(n) => assert!((n.to_f64_lossy() - 3.14).abs() < f64::EPSILON),
+        match json_to_document(&serde_json::json!(2.72)) {
+            Document::Number(n) => assert!((n.to_f64_lossy() - 2.72).abs() < f64::EPSILON),
             other => panic!("expected Number, got {:?}", other),
         }
 
@@ -718,10 +771,7 @@ mod tests {
         // If a User text message is adjacent to a Tool result (shouldn't happen
         // in practice, but guard against it), they must NOT be merged because
         // Bedrock rejects messages mixing conversation and tool result blocks.
-        let messages = vec![
-            user_msg("Hello"),
-            tool_result("tu1", "result"),
-        ];
+        let messages = vec![user_msg("Hello"), tool_result("tu1", "result")];
         let bedrock = convert_messages(&messages).unwrap();
         // Should be 2 separate messages, not merged
         assert_eq!(bedrock.len(), 2);

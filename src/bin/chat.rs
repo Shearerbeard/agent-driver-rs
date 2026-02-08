@@ -147,6 +147,7 @@ struct McpServerEntry {
 
 /// Keepalive container for MCP connections so child processes don't get dropped
 #[cfg(feature = "mcp")]
+#[allow(dead_code)]
 struct McpKeepAlive {
     connections: Vec<agent_driver_rs::tool::McpConnection>,
 }
@@ -368,7 +369,7 @@ async fn create_provider(
     }
 }
 
-/// Connect to MCP servers from CLI args and config file.
+/// Connect to MCP servers from CLI args and config file using parallel setup.
 ///
 /// Returns a keepalive handle that must be held for the duration of the session
 /// to prevent the child processes from being dropped.
@@ -377,11 +378,13 @@ async fn setup_mcp_connections(
     args: &Args,
     session: &agent_driver_rs::Session,
 ) -> Result<McpKeepAlive, Box<dyn std::error::Error>> {
-    let mut keepalive = McpKeepAlive {
-        connections: Vec::new(),
-    };
+    use agent_driver_rs::tool::McpServerSpec;
 
-    // From CLI --mcp args
+    let mut manager = agent_driver_rs::tool::McpManager::new();
+
+    // Collect all stdio specs from CLI --mcp args and --mcp-config file
+    let mut stdio_specs = Vec::new();
+
     for (i, server_cmd) in args.mcp_servers.iter().enumerate() {
         let parts: Vec<&str> = server_cmd.split_whitespace().collect();
         if parts.is_empty() {
@@ -389,52 +392,12 @@ async fn setup_mcp_connections(
             continue;
         }
         let name = format!("mcp-{}", i);
-        let command = parts[0];
-        let cmd_args: Vec<&str> = parts[1..].to_vec();
         eprintln!("Connecting to MCP server '{}': {}", name, server_cmd);
-        match agent_driver_rs::tool::McpConnection::connect_stdio(&name, command, &cmd_args).await {
-            Ok(conn) => {
-                match conn.sync_tools(session.tool_registry()).await {
-                    Ok(count) => eprintln!("  Discovered {} tools from '{}'", count, name),
-                    Err(e) => eprintln!(
-                        "  Warning: failed to discover tools from '{}': {}",
-                        name, e
-                    ),
-                }
-                keepalive.connections.push(conn);
-            }
-            Err(e) => {
-                eprintln!(
-                    "  Warning: failed to connect to MCP server '{}': {}",
-                    name, e
-                );
-            }
-        }
-    }
-
-    // From CLI --mcp-http args
-    #[cfg(feature = "mcp-http")]
-    for (i, url) in args.mcp_http_servers.iter().enumerate() {
-        let name = format!("mcp-http-{}", i);
-        eprintln!("Connecting to MCP HTTP server '{}': {}", name, url);
-        match agent_driver_rs::tool::McpConnection::connect_http(&name, url.as_str()).await {
-            Ok(conn) => {
-                match conn.sync_tools(session.tool_registry()).await {
-                    Ok(count) => eprintln!("  Discovered {} tools from '{}'", count, name),
-                    Err(e) => eprintln!(
-                        "  Warning: failed to discover tools from '{}': {}",
-                        name, e
-                    ),
-                }
-                keepalive.connections.push(conn);
-            }
-            Err(e) => {
-                eprintln!(
-                    "  Warning: failed to connect to MCP HTTP server '{}': {}",
-                    name, e
-                );
-            }
-        }
+        stdio_specs.push(McpServerSpec {
+            name,
+            command: parts[0].to_string(),
+            args: parts[1..].iter().map(|s| s.to_string()).collect(),
+        });
     }
 
     // From --mcp-config file
@@ -444,42 +407,72 @@ async fn setup_mcp_connections(
         let config_file: McpConfigFile = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse MCP config '{}': {}", config_path, e))?;
 
-        for entry in &config_file.servers {
-            let cmd_args: Vec<&str> = entry.args.iter().map(|s| s.as_str()).collect();
+        for entry in config_file.servers {
             eprintln!(
                 "Connecting to MCP server '{}': {} {}",
                 entry.name,
                 entry.command,
                 entry.args.join(" ")
             );
-            match agent_driver_rs::tool::McpConnection::connect_stdio(
-                &entry.name,
-                &entry.command,
-                &cmd_args,
-            )
-            .await
-            {
-                Ok(conn) => {
-                    match conn.sync_tools(session.tool_registry()).await {
-                        Ok(count) => {
-                            eprintln!("  Discovered {} tools from '{}'", count, entry.name)
-                        }
-                        Err(e) => eprintln!(
-                            "  Warning: failed to discover tools from '{}': {}",
-                            entry.name, e
-                        ),
-                    }
-                    keepalive.connections.push(conn);
-                }
-                Err(e) => {
-                    eprintln!(
-                        "  Warning: failed to connect to MCP server '{}': {}",
-                        entry.name, e
-                    );
-                }
-            }
+            stdio_specs.push(McpServerSpec {
+                name: entry.name,
+                command: entry.command,
+                args: entry.args,
+            });
         }
     }
 
-    Ok(keepalive)
+    // Connect all stdio servers in parallel
+    if !stdio_specs.is_empty() {
+        let errors = manager.connect_all_stdio(stdio_specs).await;
+        for (name, err) in errors {
+            eprintln!(
+                "  Warning: failed to connect to MCP server '{}': {}",
+                name, err
+            );
+        }
+    }
+
+    // Connect all HTTP servers in parallel
+    #[cfg(feature = "mcp-http")]
+    if !args.mcp_http_servers.is_empty() {
+        use agent_driver_rs::tool::McpHttpSpec;
+
+        let http_specs: Vec<_> = args
+            .mcp_http_servers
+            .iter()
+            .enumerate()
+            .map(|(i, url)| {
+                let name = format!("mcp-http-{}", i);
+                eprintln!("Connecting to MCP HTTP server '{}': {}", name, url);
+                McpHttpSpec {
+                    name,
+                    uri: url.clone(),
+                }
+            })
+            .collect();
+
+        let errors = manager.connect_all_http(http_specs).await;
+        for (name, err) in errors {
+            eprintln!(
+                "  Warning: failed to connect to MCP HTTP server '{}': {}",
+                name, err
+            );
+        }
+    }
+
+    // Sync tools from all connected servers concurrently
+    let (total, sync_errors) = manager
+        .sync_all_tools_concurrent(session.tool_registry())
+        .await;
+    if total > 0 {
+        eprintln!("  Discovered {} tools from {} server(s)", total, manager.server_count());
+    }
+    for err in sync_errors {
+        eprintln!("  Warning: failed to discover tools: {}", err);
+    }
+
+    Ok(McpKeepAlive {
+        connections: manager.into_connections(),
+    })
 }

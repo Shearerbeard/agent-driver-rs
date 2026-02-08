@@ -320,84 +320,117 @@ async fn collect_with_observer(
     }
 }
 
-/// Execute tool calls from a response, emitting observer events.
-/// Returns `Some((tool_name, error_message))` if any tool execution failed.
+/// Execute tool calls from a response in parallel, emitting observer events.
+///
+/// Uses a 3-phase approach to maximize concurrency while preserving deterministic
+/// ordering in both observer events and message history:
+///
+/// 1. **Emit ToolCallStart** events sequentially (preserves response order)
+/// 2. **Execute all tools concurrently** via `futures::future::join_all`
+/// 3. **Add results to history & emit ToolCallComplete** sequentially (preserves order)
+///
+/// Returns `Some((tool_name, error_message))` for the first tool error encountered.
 async fn execute_tools(
     session: &Session,
     observer: &dyn AgentObserver,
     response: &CollectedResponse,
 ) -> Option<(ToolName, String)> {
-    let mut error_info = None;
+    // Collect tool_use blocks in response order
+    let tool_calls: Vec<_> = response
+        .content
+        .iter()
+        .filter_map(|block| {
+            if let ContentBlock::ToolUse { id, name, input } = block {
+                Some((id.clone(), name.clone(), input.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    for block in &response.content {
-        if let ContentBlock::ToolUse { id, name, input } = block {
-            observer
-                .on_event(&AgentEvent::ToolCallStart {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input: input.clone(),
-                })
-                .await;
+    if tool_calls.is_empty() {
+        return None;
+    }
 
-            let tool_input = match crate::tool::ToolInput::from_value(input.clone()) {
-                Ok(ti) => ti,
-                Err(e) => {
-                    let err = format!("Invalid tool input: {}", e);
-                    // Add error result to history so model can see it
-                    session
-                        .add_message(Message::tool_result(id.clone(), &err, true))
-                        .await;
-                    observer
-                        .on_event(&AgentEvent::ToolCallComplete {
-                            id: id.clone(),
-                            name: name.clone(),
-                            result: err.clone(),
-                            is_error: true,
-                        })
-                        .await;
-                    error_info = Some((name.clone(), err));
-                    continue;
-                }
-            };
+    // Phase 1: Emit all ToolCallStart events (sequential, preserves order)
+    for (id, name, input) in &tool_calls {
+        observer
+            .on_event(&AgentEvent::ToolCallStart {
+                id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+            })
+            .await;
+    }
 
-            match session.execute_tool(id.clone(), name, tool_input).await {
-                Ok(result) => {
-                    let is_error = result.is_error();
-                    let content = result.content().to_string();
-                    observer
-                        .on_event(&AgentEvent::ToolCallComplete {
-                            id: id.clone(),
-                            name: name.clone(),
-                            result: content,
-                            is_error,
-                        })
-                        .await;
-                    if is_error {
-                        error_info = Some((name.clone(), result.content().to_string()));
+    // Phase 2: Execute all tools concurrently via join_all
+    // Create one shared ToolContext from session's child token
+    let tool_ctx = crate::tool::ToolContext::new(session.child_token());
+
+    let futures: Vec<_> = tool_calls
+        .iter()
+        .map(|(id, name, input)| {
+            let ctx = tool_ctx.clone();
+            let id = id.clone();
+            let name = name.clone();
+            let input = input.clone();
+            async move {
+                // Validate input
+                let tool_input = match crate::tool::ToolInput::from_value(input) {
+                    Ok(ti) => ti,
+                    Err(e) => {
+                        let err = format!("Invalid tool input: {}", e);
+                        return (id, name, err, true);
+                    }
+                };
+
+                // Look up and execute
+                match session.get_tool(&name).await {
+                    Some(tool) => match tool.execute(&tool_input, &ctx).await {
+                        Ok(result) => {
+                            let is_error = result.is_error();
+                            let content = result.content().to_string();
+                            (id, name, content, is_error)
+                        }
+                        Err(e) => {
+                            let err = format!("Tool execution error: {}", e);
+                            (id, name, err, true)
+                        }
+                    },
+                    None => {
+                        let err = format!("Tool execution error: tool '{}' not found", name);
+                        (id, name, err, true)
                     }
                 }
-                Err(e) => {
-                    let err = format!("Tool execution error: {}", e);
-                    // execute_tool already adds to history on success,
-                    // but on error we need to add a result manually
-                    session
-                        .add_message(Message::tool_result(id.clone(), &err, true))
-                        .await;
-                    observer
-                        .on_event(&AgentEvent::ToolCallComplete {
-                            id: id.clone(),
-                            name: name.clone(),
-                            result: err.clone(),
-                            is_error: true,
-                        })
-                        .await;
-                    error_info = Some((name.clone(), err));
-                }
             }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    // Phase 3: Add results to history & emit ToolCallComplete (sequential, preserves order)
+    let mut first_error = None;
+
+    for (id, name, content, is_error) in results {
+        session
+            .add_message(Message::tool_result(id.clone(), &content, is_error))
+            .await;
+
+        observer
+            .on_event(&AgentEvent::ToolCallComplete {
+                id,
+                name: name.clone(),
+                result: content.clone(),
+                is_error,
+            })
+            .await;
+
+        if is_error && first_error.is_none() {
+            first_error = Some((name, content));
         }
     }
 
-    error_info
+    first_error
 }
 
 /// Add assistant response content to session history
@@ -418,7 +451,7 @@ fn stop_reason_from_metadata(metadata: &CompletionMetadata) -> LoopStopReason {
         Some(StopReason::EndTurn) | Some(StopReason::ToolUse) => LoopStopReason::EndTurn,
         Some(StopReason::MaxTokens) => LoopStopReason::MaxTokens,
         Some(StopReason::StopSequence) => LoopStopReason::StopSequence,
-        Some(StopReason::ContentFilter) => LoopStopReason::EndTurn,
+        Some(StopReason::ContentFilter) => LoopStopReason::ContentFilter,
         None => LoopStopReason::EndTurn,
     }
 }
@@ -445,6 +478,15 @@ mod tests {
         assert!(matches!(
             stop_reason_from_metadata(&meta),
             LoopStopReason::MaxTokens
+        ));
+
+        let meta = CompletionMetadata {
+            stop_reason: Some(StopReason::ContentFilter),
+            ..Default::default()
+        };
+        assert!(matches!(
+            stop_reason_from_metadata(&meta),
+            LoopStopReason::ContentFilter
         ));
 
         let meta = CompletionMetadata {

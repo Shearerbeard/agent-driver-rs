@@ -24,4 +24,7 @@ pub use types::{McpServerName, PluginId, ToolSchema, ToolSource};
 pub mod mcp;
 
 #[cfg(feature = "mcp")]
-pub use mcp::{McpConnection, McpManager};
+pub use mcp::{McpConnection, McpManager, McpServerSpec};
+
+#[cfg(feature = "mcp-http")]
+pub use mcp::McpHttpSpec;

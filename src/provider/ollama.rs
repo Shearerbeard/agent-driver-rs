@@ -13,7 +13,7 @@ use ollama_rs::models::ModelOptions;
 use ollama_rs::Ollama;
 
 use crate::config::OllamaConfig;
-use crate::error::{ProviderError, StreamError, StreamErrorKind};
+use crate::error::{is_context_window_message, ProviderError, StreamError, StreamErrorKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -156,7 +156,14 @@ impl Provider for OllamaProvider {
                 .client
                 .send_chat_messages_stream(chat_request)
                 .await
-                .map_err(|e| ProviderError::InvalidRequest { provider: super::ProviderKind::Ollama, message: format!("Ollama error: {}", e) })?;
+                .map_err(|e| {
+                    let msg = format!("Ollama error: {}", e);
+                    if is_context_window_message(&msg) {
+                        ProviderError::ContextWindowExceeded { provider: super::ProviderKind::Ollama, message: msg, context_window: None, tokens_used: None }
+                    } else {
+                        ProviderError::InvalidRequest { provider: super::ProviderKind::Ollama, message: msg }
+                    }
+                })?;
 
             let event_stream = super::stream_adapter::buffered_sdk_stream(
                 stream,

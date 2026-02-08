@@ -250,6 +250,37 @@ pub fn mock_thinking_response(thinking: &str, text: &str) -> Vec<StreamEvent> {
     ]
 }
 
+/// Create a full event sequence for a text response that ends with `StopReason::ContentFilter`.
+///
+/// Simulates the provider's content filter triggering after producing some partial text.
+/// Produces: Started -> ContentBlockStart(Text) -> TextDelta -> ContentBlockStop -> Completed(ContentFilter)
+pub fn mock_content_filter_response(partial_text: &str) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::Started {
+            metadata: CompletionMetadata {
+                model: ModelId::new("mock-model").ok(),
+                stop_reason: None,
+                usage: None,
+            },
+        },
+        StreamEvent::ContentBlockStart {
+            index: 0,
+            block_type: ContentBlockType::Text,
+        },
+        StreamEvent::Delta(StreamDelta::TextDelta {
+            text: partial_text.to_string(),
+        }),
+        StreamEvent::ContentBlockStop { index: 0 },
+        StreamEvent::Completed {
+            metadata: CompletionMetadata {
+                model: ModelId::new("mock-model").ok(),
+                stop_reason: Some(StopReason::ContentFilter),
+                usage: None,
+            },
+        },
+    ]
+}
+
 /// Create a full event sequence with interleaved text and tool_use blocks.
 ///
 /// Produces: Started -> ContentBlockStart(Text) -> TextDelta -> ContentBlockStop
@@ -396,6 +427,17 @@ mod tests {
         assert!(matches!(&events[5], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "the answer"));
         assert!(matches!(&events[6], StreamEvent::ContentBlockStop { index: 1 }));
         assert!(matches!(&events[7], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::EndTurn)));
+    }
+
+    #[test]
+    fn mock_content_filter_response_has_correct_structure() {
+        let events = mock_content_filter_response("partial output");
+        assert_eq!(events.len(), 5);
+        assert!(matches!(&events[0], StreamEvent::Started { .. }));
+        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { block_type: ContentBlockType::Text, .. }));
+        assert!(matches!(&events[2], StreamEvent::Delta(StreamDelta::TextDelta { text }) if text == "partial output"));
+        assert!(matches!(&events[3], StreamEvent::ContentBlockStop { .. }));
+        assert!(matches!(&events[4], StreamEvent::Completed { metadata } if metadata.stop_reason == Some(StopReason::ContentFilter)));
     }
 
     #[test]

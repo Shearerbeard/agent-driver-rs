@@ -250,6 +250,31 @@ fn extract_text_content(content: &[rmcp::model::Content]) -> String {
         .join("\n")
 }
 
+/// Specification for connecting to an MCP server via stdio transport.
+///
+/// Used with [`McpManager::connect_all_stdio`] for parallel connection setup.
+#[derive(Debug, Clone)]
+pub struct McpServerSpec {
+    /// Human-readable name for this server
+    pub name: String,
+    /// Command to execute (e.g., "npx")
+    pub command: String,
+    /// Arguments to the command
+    pub args: Vec<String>,
+}
+
+/// Specification for connecting to an MCP server via Streamable HTTP transport.
+///
+/// Used with [`McpManager::connect_all_http`] for parallel connection setup.
+#[cfg(feature = "mcp-http")]
+#[derive(Debug, Clone)]
+pub struct McpHttpSpec {
+    /// Human-readable name for this server
+    pub name: String,
+    /// URI to connect to (e.g., "http://localhost:8000/mcp")
+    pub uri: String,
+}
+
 /// Manager for multiple MCP server connections.
 ///
 /// A convenience wrapper that owns several [`McpConnection`]s and provides
@@ -260,17 +285,31 @@ fn extract_text_content(content: &[rmcp::model::Content]) -> String {
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use agent_driver_rs::tool::{McpManager, ToolRegistry};
+/// use agent_driver_rs::tool::{McpManager, McpServerSpec, ToolRegistry};
 ///
 /// let registry = ToolRegistry::new();
 /// let mut manager = McpManager::new();
 ///
-/// // Connect to multiple servers
-/// manager.connect_stdio("time", "npx", &["-y", "@anthropic/mcp-server-time"]).await?;
-/// manager.connect_stdio("fs", "npx", &["-y", "@anthropic/mcp-server-fs"]).await?;
+/// // Connect to multiple servers in parallel
+/// let specs = vec![
+///     McpServerSpec {
+///         name: "time".into(),
+///         command: "npx".into(),
+///         args: vec!["-y".into(), "@anthropic/mcp-server-time".into()],
+///     },
+///     McpServerSpec {
+///         name: "fs".into(),
+///         command: "npx".into(),
+///         args: vec!["-y".into(), "@anthropic/mcp-server-fs".into()],
+///     },
+/// ];
+/// let errors = manager.connect_all_stdio(specs).await;
+/// for (name, err) in &errors {
+///     eprintln!("Failed to connect to '{}': {}", name, err);
+/// }
 ///
-/// // Sync all tools from all servers in one call
-/// let total = manager.sync_all_tools(&registry).await?;
+/// // Sync all tools from all servers concurrently
+/// let (total, sync_errors) = manager.sync_all_tools_concurrent(&registry).await;
 /// println!("{} tools from {} servers", total, manager.server_count());
 ///
 /// // Clean up
@@ -314,6 +353,68 @@ impl McpManager {
         Ok(())
     }
 
+    /// Connect to multiple MCP servers via stdio in parallel.
+    ///
+    /// Attempts all connections concurrently via `join_all`. Successful connections
+    /// are added to the manager; failures are returned as `(name, error)` pairs.
+    pub async fn connect_all_stdio(
+        &mut self,
+        specs: Vec<McpServerSpec>,
+    ) -> Vec<(String, McpToolError)> {
+        let futures: Vec<_> = specs
+            .into_iter()
+            .map(|spec| async move {
+                let args: Vec<&str> = spec.args.iter().map(|s| s.as_str()).collect();
+                let result =
+                    McpConnection::connect_stdio(&spec.name, &spec.command, &args).await;
+                (spec.name, result)
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        let mut errors = Vec::new();
+
+        for (name, result) in results {
+            match result {
+                Ok(conn) => self.connections.push(conn),
+                Err(e) => errors.push((name, e)),
+            }
+        }
+
+        errors
+    }
+
+    /// Connect to multiple MCP servers via Streamable HTTP in parallel.
+    ///
+    /// Attempts all connections concurrently via `join_all`. Successful connections
+    /// are added to the manager; failures are returned as `(name, error)` pairs.
+    #[cfg(feature = "mcp-http")]
+    pub async fn connect_all_http(
+        &mut self,
+        specs: Vec<McpHttpSpec>,
+    ) -> Vec<(String, McpToolError)> {
+        let futures: Vec<_> = specs
+            .into_iter()
+            .map(|spec| async move {
+                let result =
+                    McpConnection::connect_http(&spec.name, spec.uri.as_str()).await;
+                (spec.name, result)
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        let mut errors = Vec::new();
+
+        for (name, result) in results {
+            match result {
+                Ok(conn) => self.connections.push(conn),
+                Err(e) => errors.push((name, e)),
+            }
+        }
+
+        errors
+    }
+
     /// Sync all tools from all connections into a registry
     ///
     /// Returns the total number of tools synced.
@@ -325,9 +426,44 @@ impl McpManager {
         Ok(total)
     }
 
+    /// Sync tools from all connections concurrently.
+    ///
+    /// Returns `(total_tools_synced, errors)`. Unlike [`sync_all_tools`](Self::sync_all_tools),
+    /// this method continues past individual server failures and reports them all.
+    pub async fn sync_all_tools_concurrent(
+        &self,
+        registry: &ToolRegistry,
+    ) -> (usize, Vec<McpToolError>) {
+        let futures: Vec<_> = self
+            .connections
+            .iter()
+            .map(|conn| conn.sync_tools(registry))
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        let mut total = 0;
+        let mut errors = Vec::new();
+
+        for result in results {
+            match result {
+                Ok(count) => total += count,
+                Err(e) => errors.push(e),
+            }
+        }
+
+        (total, errors)
+    }
+
     /// Get the number of connected servers
     pub fn server_count(&self) -> usize {
         self.connections.len()
+    }
+
+    /// Extract all connections for keepalive purposes.
+    ///
+    /// Consumes the manager and returns the underlying connections.
+    pub fn into_connections(self) -> Vec<McpConnection> {
+        self.connections
     }
 
     /// Disconnect from all servers

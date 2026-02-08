@@ -7,61 +7,15 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::{mpsc, RwLock};
 use tracing;
 
 use crate::error::{McpToolError, ToolError};
 use crate::types::ToolName;
 
 use super::definition::ToolDefinition;
-use super::executor::{DynTool, Tool, ToolInput, ToolResult};
+use super::executor::{DynTool, Tool, ToolContext, ToolInput, ToolResult};
 use super::registry::ToolRegistry;
 use super::types::{McpServerName, ToolSchema, ToolSource};
-
-/// Handler for MCP client notifications
-///
-/// Stores the peer reference and notifies via channel when tool list changes.
-pub struct McpClientHandler {
-    peer: Option<rmcp::Peer<rmcp::RoleClient>>,
-    tool_list_changed_tx: mpsc::Sender<()>,
-}
-
-impl McpClientHandler {
-    fn new(tool_list_changed_tx: mpsc::Sender<()>) -> Self {
-        Self {
-            peer: None,
-            tool_list_changed_tx,
-        }
-    }
-}
-
-impl rmcp::ClientHandler for McpClientHandler {
-    fn get_peer(&self) -> Option<rmcp::Peer<rmcp::RoleClient>> {
-        self.peer.clone()
-    }
-
-    fn set_peer(&mut self, peer: rmcp::Peer<rmcp::RoleClient>) {
-        self.peer = Some(peer);
-    }
-
-    fn get_info(&self) -> rmcp::model::ClientInfo {
-        rmcp::model::ClientInfo {
-            protocol_version: Default::default(),
-            capabilities: Default::default(),
-            client_info: rmcp::model::Implementation {
-                name: "agent-driver-rs".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-        }
-    }
-
-    fn on_tool_list_changed(&self) -> impl std::future::Future<Output = ()> + Send + '_ {
-        let tx = self.tool_list_changed_tx.clone();
-        async move {
-            let _ = tx.send(()).await;
-        }
-    }
-}
 
 /// A live connection to one MCP server.
 ///
@@ -95,11 +49,7 @@ impl rmcp::ClientHandler for McpClientHandler {
 /// ```
 pub struct McpConnection {
     name: String,
-    service: rmcp::service::RunningService<rmcp::RoleClient, McpClientHandler>,
-    peer: rmcp::Peer<rmcp::RoleClient>,
-    // Retained for future reactive tool list updates (on_tool_list_changed notification)
-    #[allow(dead_code)]
-    tool_list_changed_rx: RwLock<mpsc::Receiver<()>>,
+    service: rmcp::service::RunningService<rmcp::RoleClient, ()>,
 }
 
 impl McpConnection {
@@ -113,41 +63,51 @@ impl McpConnection {
         let mut cmd = tokio::process::Command::new(command.as_ref());
         cmd.args(args);
 
-        let transport = rmcp::transport::TokioChildProcess::new(&mut cmd)
+        let transport = rmcp::transport::TokioChildProcess::new(cmd)
             .map_err(|e| McpToolError::ConnectionFailed {
                 server_name: name.clone(),
                 message: e.to_string(),
             })?;
 
-        let (tx, rx) = mpsc::channel(16);
-        let handler = McpClientHandler::new(tx);
-
-        let service: rmcp::service::RunningService<rmcp::RoleClient, McpClientHandler> =
-            rmcp::ServiceExt::serve(handler, transport)
-                .await
-                .map_err(|e: std::io::Error| {
-                    McpToolError::ConnectionFailed {
-                        server_name: name.clone(),
-                        message: e.to_string(),
-                    }
-                })?;
-
-        let peer = service.peer().clone();
+        use rmcp::ServiceExt;
+        let service = ().serve(transport).await.map_err(|e| {
+            McpToolError::ConnectionFailed {
+                server_name: name.clone(),
+                message: e.to_string(),
+            }
+        })?;
 
         tracing::info!(server = %name, "Connected to MCP server");
 
-        Ok(Self {
-            name,
-            service,
-            peer,
-            tool_list_changed_rx: RwLock::new(rx),
-        })
+        Ok(Self { name, service })
+    }
+
+    /// Connect to an MCP server via Streamable HTTP transport
+    #[cfg(feature = "mcp-http")]
+    pub async fn connect_http(
+        name: impl Into<String>,
+        uri: impl Into<std::sync::Arc<str>>,
+    ) -> Result<Self, McpToolError> {
+        let name = name.into();
+        let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(uri);
+
+        use rmcp::ServiceExt;
+        let service = ().serve(transport).await.map_err(|e| {
+            McpToolError::ConnectionFailed {
+                server_name: name.clone(),
+                message: e.to_string(),
+            }
+        })?;
+
+        tracing::info!(server = %name, "Connected to MCP server via HTTP");
+
+        Ok(Self { name, service })
     }
 
     /// Discover available tools from the MCP server
     pub async fn discover_tools(&self) -> Result<Vec<DynTool>, McpToolError> {
         let mcp_tools = self
-            .peer
+            .service
             .list_all_tools()
             .await
             .map_err(|e| McpToolError::ToolDiscoveryFailed {
@@ -175,7 +135,7 @@ impl McpConnection {
 
             let definition = ToolDefinition::new(
                 tool_name,
-                mcp_tool.description.as_ref().to_string(),
+                mcp_tool.description.as_deref().unwrap_or("").to_string(),
                 schema,
             )
             .with_source(ToolSource::Mcp {
@@ -185,7 +145,7 @@ impl McpConnection {
 
             let wrapper = McpToolWrapper {
                 definition,
-                peer: self.peer.clone(),
+                peer: self.service.peer().clone(),
                 mcp_tool_name: mcp_tool.name.to_string(),
             };
 
@@ -217,9 +177,9 @@ impl McpConnection {
     }
 
     /// Disconnect from the MCP server
-    pub async fn disconnect(self) {
+    pub async fn disconnect(mut self) {
         tracing::info!(server = %self.name, "Disconnecting from MCP server");
-        let _ = self.service.cancel().await;
+        let _ = self.service.close_with_timeout(std::time::Duration::from_secs(5)).await;
     }
 }
 
@@ -236,22 +196,33 @@ impl Tool for McpToolWrapper {
         &self.definition
     }
 
-    async fn execute(&self, input: &ToolInput) -> Result<ToolResult, ToolError> {
+    async fn execute(&self, input: &ToolInput, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
         let arguments = Some(input.inner().clone());
 
-        let params = rmcp::model::CallToolRequestParam {
+        let params = rmcp::model::CallToolRequestParams {
             name: Cow::Owned(self.mcp_tool_name.clone()),
             arguments,
+            meta: None,
+            task: None,
         };
 
-        let result = self
-            .peer
-            .call_tool(params)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                tool_name: self.definition.name.clone(),
-                message: format!("MCP call_tool failed: {}", e),
-            })?;
+        // Race MCP call against cancellation (matches codebase pattern in
+        // collect_with_observer and all stream adapters)
+        let result = tokio::select! {
+            biased;
+            _ = ctx.cancellation.cancelled() => {
+                return Err(ToolError::ExecutionFailed {
+                    tool_name: self.definition.name.clone(),
+                    message: "Tool execution cancelled".to_string(),
+                });
+            }
+            result = self.peer.call_tool(params) => {
+                result.map_err(|e| ToolError::ExecutionFailed {
+                    tool_name: self.definition.name.clone(),
+                    message: format!("MCP call_tool failed: {}", e),
+                })?
+            }
+        };
 
         // Check if the result is an error
         if result.is_error.unwrap_or(false) {
@@ -327,6 +298,18 @@ impl McpManager {
         args: &[&str],
     ) -> Result<(), McpToolError> {
         let conn = McpConnection::connect_stdio(name, command, args).await?;
+        self.connections.push(conn);
+        Ok(())
+    }
+
+    /// Connect to an MCP server via Streamable HTTP and add it to the manager
+    #[cfg(feature = "mcp-http")]
+    pub async fn connect_http(
+        &mut self,
+        name: impl Into<String>,
+        uri: impl Into<std::sync::Arc<str>>,
+    ) -> Result<(), McpToolError> {
+        let conn = McpConnection::connect_http(name, uri).await?;
         self.connections.push(conn);
         Ok(())
     }

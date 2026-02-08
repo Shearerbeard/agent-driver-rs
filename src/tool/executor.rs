@@ -11,10 +11,48 @@ use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value as JsonValue};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::ToolError;
 
 use super::definition::ToolDefinition;
+
+/// Context passed to tool execution, providing cancellation and future extensibility.
+///
+/// Wraps a [`CancellationToken`] so tools can check for cancellation during long-running
+/// operations. The `#[non_exhaustive]` attribute allows adding fields (e.g., correlation ID,
+/// timeout) in future versions without breaking existing implementations.
+///
+/// # Example
+///
+/// ```
+/// use agent_driver_rs::tool::ToolContext;
+/// use tokio_util::sync::CancellationToken;
+///
+/// let ctx = ToolContext::new(CancellationToken::new());
+/// assert!(!ctx.cancellation.is_cancelled());
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ToolContext {
+    /// Token for cooperative cancellation of tool execution.
+    pub cancellation: CancellationToken,
+}
+
+impl ToolContext {
+    /// Create a new context with the given cancellation token.
+    pub fn new(cancellation: CancellationToken) -> Self {
+        Self { cancellation }
+    }
+}
+
+impl Default for ToolContext {
+    fn default() -> Self {
+        Self {
+            cancellation: CancellationToken::new(),
+        }
+    }
+}
 
 /// Input for tool execution, wrapping a validated JSON object.
 ///
@@ -197,8 +235,8 @@ pub trait Tool: Send + Sync {
     /// Get the tool definition
     fn definition(&self) -> &ToolDefinition;
 
-    /// Execute the tool with the given input
-    async fn execute(&self, input: &ToolInput) -> Result<ToolResult, ToolError>;
+    /// Execute the tool with the given input and context
+    async fn execute(&self, input: &ToolInput, ctx: &ToolContext) -> Result<ToolResult, ToolError>;
 }
 
 /// Type-erased tool
@@ -207,7 +245,7 @@ pub type DynTool = Arc<dyn Tool>;
 /// Wrapper for function-based tools
 pub struct FnTool<F>
 where
-    F: Fn(&ToolInput) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
+    F: Fn(&ToolInput, &ToolContext) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
         + Send
         + Sync,
 {
@@ -217,7 +255,7 @@ where
 
 impl<F> FnTool<F>
 where
-    F: Fn(&ToolInput) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
+    F: Fn(&ToolInput, &ToolContext) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
         + Send
         + Sync,
 {
@@ -230,7 +268,7 @@ where
 #[async_trait]
 impl<F> Tool for FnTool<F>
 where
-    F: Fn(&ToolInput) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
+    F: Fn(&ToolInput, &ToolContext) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
         + Send
         + Sync,
 {
@@ -238,8 +276,8 @@ where
         &self.definition
     }
 
-    async fn execute(&self, input: &ToolInput) -> Result<ToolResult, ToolError> {
-        (self.func)(input).await
+    async fn execute(&self, input: &ToolInput, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
+        (self.func)(input, ctx).await
     }
 }
 
@@ -314,11 +352,11 @@ mod tests {
             ToolSchema::empty(),
         );
 
-        let tool = FnTool::new(definition, |_input| {
+        let tool = FnTool::new(definition, |_input, _ctx| {
             async { Ok(ToolResult::text("Hello from tool!")) }.boxed()
         });
 
-        let result = tool.execute(&ToolInput::default()).await.unwrap();
+        let result = tool.execute(&ToolInput::default(), &ToolContext::default()).await.unwrap();
         assert_eq!(result.content(), "Hello from tool!");
     }
 }

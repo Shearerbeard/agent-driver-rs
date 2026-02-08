@@ -50,7 +50,7 @@ pub use streaming::{
     StreamDelta, StreamEvent, StreamHandle, TokenUsage,
 };
 
-pub use tool::{DynTool, McpServerName, PluginId, Tool, ToolDefinition, ToolInput, ToolRegistry, ToolResult, ToolSchema, ToolSource};
+pub use tool::{DynTool, McpServerName, PluginId, Tool, ToolContext, ToolDefinition, ToolInput, ToolRegistry, ToolResult, ToolSchema, ToolSource};
 
 pub use task::{TaskHandle, TaskPool, TrackedSpawn};
 

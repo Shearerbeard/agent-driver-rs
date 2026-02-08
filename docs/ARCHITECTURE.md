@@ -31,7 +31,7 @@ lib.rs
   +-- tool/                   (depends on: types, error)
   |   +-- types.rs            (ToolSchema, ToolSource, McpServerName, PluginId)
   |   +-- definition.rs       (ToolDefinition, ToolAnnotations)
-  |   +-- executor.rs         (Tool trait, ToolInput, ToolResult, DynTool, FnTool)
+  |   +-- executor.rs         (Tool trait, ToolContext, ToolInput, ToolResult, DynTool, FnTool)
   |   +-- registry.rs         (ToolRegistry -- RwLock<HashMap<ToolName, DynTool>>)
   |   +-- serializer.rs       (ToolFormat -- Claude/OpenAI serialization)
   |   +-- mcp.rs              (McpConnection, McpManager) [feature = "mcp"]
@@ -170,7 +170,7 @@ consume events one at a time via the `Stream` trait or call `collect()`. The
     |                |                                                  |
     | get(name) -> DynTool                                             |
     |--------------->|                                                  |
-    |                | tool.execute(&input)                             |
+    |                | tool.execute(&input, &ctx)                       |
     |                | -> ToolResult                                    |
     |                |                                                  |
     |                | add Message::tool_result(id, content, is_error)  |
@@ -197,8 +197,9 @@ consume events one at a time via the `Stream` trait or call `collect()`. The
    - `StreamEvent::ContentBlockStop` -- finalises the block
 5. `CollectedResponse` accumulates these into `ContentBlock::ToolUse { id, name, input }`.
    If the JSON is malformed or the stream ends early, the input falls back to `{}`.
-6. `Session::execute_tool()` looks up the tool by name, calls `tool.execute(&input)`,
-   and adds the result to history as `Message::tool_result()`.
+6. `Session::execute_tool()` looks up the tool by name, calls `tool.execute(&input, &ctx)`
+   with a `ToolContext` carrying a child `CancellationToken`, and adds the result to
+   history as `Message::tool_result()`.
 7. `Session::continue_streaming()` re-snapshots state (including fresh tool list)
    and sends the updated history for the next model turn.
 
@@ -298,6 +299,8 @@ Session root token
   +-- child token (provider call 2)
   |
   +-- child token (provider call N)
+  |
+  +-- child token (tool execution via ToolContext)
 ```
 
 The Session owns a root `CancellationToken` (from `tokio-util`). Each call to
@@ -385,6 +388,7 @@ bedrock = ["dep:aws-sdk-bedrockruntime", "dep:aws-config", "dep:aws-smithy-types
 openrouter = []
 ollama = ["dep:ollama-rs"]
 mcp = ["dep:rmcp"]
+mcp-http = ["mcp", "rmcp/transport-streamable-http-client-reqwest"]
 ```
 
 The `MockProvider` is available under `cfg(test)` (always in test builds) or

@@ -15,7 +15,7 @@ use tokio_util::task::TaskTracker;
 use crate::error::{ConfigError, SessionError, ToolError};
 use crate::provider::{CompletionConfig, CompletionRequest, Provider, ProviderContext};
 use crate::streaming::{CollectedResponse, StreamHandle};
-use crate::tool::{DynTool, ToolDefinition, ToolInput, ToolRegistry, ToolResult};
+use crate::tool::{DynTool, ToolContext, ToolDefinition, ToolInput, ToolRegistry, ToolResult};
 use crate::types::{
     ContentBlock, CorrelationId, MaxTokens, Message, ModelId, Role, SystemPrompt, ToolCallId,
     ToolName,
@@ -264,7 +264,7 @@ impl Session {
             .await
             .ok_or_else(|| ToolError::NotFound(name.clone()))?;
 
-        let result = tool.execute(&input).await?;
+        let result = tool.execute(&input, &ToolContext::new(self.cancellation.child_token())).await?;
 
         // Add tool result to history
         let content = match &result {
@@ -578,7 +578,7 @@ mod tests {
             "Echoes input",
             ToolSchema::empty(),
         );
-        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input| {
+        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input, _ctx| {
             async { Ok(ToolResult::text("echoed!")) }.boxed()
         }));
         session.register_tool(tool).await;

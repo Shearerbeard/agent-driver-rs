@@ -39,7 +39,7 @@ fn echo_tool() -> DynTool {
         "Echoes back",
         ToolSchema::empty(),
     );
-    Arc::new(FnTool::new(definition, |_input| {
+    Arc::new(FnTool::new(definition, |_input, _ctx| {
         async { Ok(ToolResult::text("echoed!")) }.boxed()
     }))
 }

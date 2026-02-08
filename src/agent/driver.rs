@@ -555,7 +555,7 @@ mod tests {
             "Echoes back",
             ToolSchema::empty(),
         );
-        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input| {
+        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input, _ctx| {
             async { Ok(ToolResult::text("echoed!")) }.boxed()
         }));
 
@@ -594,7 +594,7 @@ mod tests {
             "Echoes back",
             ToolSchema::empty(),
         );
-        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input| {
+        let tool: crate::tool::DynTool = Arc::new(FnTool::new(definition, |_input, _ctx| {
             async { Ok(ToolResult::text("ok")) }.boxed()
         }));
 

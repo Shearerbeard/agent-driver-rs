@@ -41,6 +41,12 @@ struct Args {
     #[arg(long = "mcp", value_name = "COMMAND")]
     mcp_servers: Vec<String>,
 
+    /// MCP HTTP server URLs (e.g., "http://localhost:8000/mcp")
+    /// Can be specified multiple times for multiple servers
+    #[cfg(feature = "mcp-http")]
+    #[arg(long = "mcp-http", value_name = "URL")]
+    mcp_http_servers: Vec<String>,
+
     /// Path to MCP server config file (JSON)
     #[cfg(feature = "mcp")]
     #[arg(long = "mcp-config", value_name = "PATH")]
@@ -400,6 +406,31 @@ async fn setup_mcp_connections(
             Err(e) => {
                 eprintln!(
                     "  Warning: failed to connect to MCP server '{}': {}",
+                    name, e
+                );
+            }
+        }
+    }
+
+    // From CLI --mcp-http args
+    #[cfg(feature = "mcp-http")]
+    for (i, url) in args.mcp_http_servers.iter().enumerate() {
+        let name = format!("mcp-http-{}", i);
+        eprintln!("Connecting to MCP HTTP server '{}': {}", name, url);
+        match agent_driver_rs::tool::McpConnection::connect_http(&name, url.as_str()).await {
+            Ok(conn) => {
+                match conn.sync_tools(session.tool_registry()).await {
+                    Ok(count) => eprintln!("  Discovered {} tools from '{}'", count, name),
+                    Err(e) => eprintln!(
+                        "  Warning: failed to discover tools from '{}': {}",
+                        name, e
+                    ),
+                }
+                keepalive.connections.push(conn);
+            }
+            Err(e) => {
+                eprintln!(
+                    "  Warning: failed to connect to MCP HTTP server '{}': {}",
                     name, e
                 );
             }

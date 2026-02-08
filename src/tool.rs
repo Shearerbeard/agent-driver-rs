@@ -14,7 +14,7 @@ mod types;
 
 // Re-export main types
 pub use definition::{ToolAnnotations, ToolDefinition};
-pub use executor::{DynTool, FnTool, Tool, ToolInput, ToolResult};
+pub use executor::{DynTool, FnTool, Tool, ToolContext, ToolInput, ToolResult};
 pub use registry::ToolRegistry;
 pub use serializer::ToolFormat;
 pub use types::{McpServerName, PluginId, ToolSchema, ToolSource};

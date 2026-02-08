@@ -34,7 +34,7 @@
 //!     "Returns a greeting",
 //!     ToolSchema::empty(),
 //! );
-//! let tool: DynTool = Arc::new(FnTool::new(def, |input| {
+//! let tool: DynTool = Arc::new(FnTool::new(def, |input, _ctx| {
 //!     async { Ok(ToolResult::text("Hello!")) }.boxed()
 //! }));
 //! registry.register(tool).await;
@@ -179,6 +179,7 @@ mod tests {
         async fn execute(
             &self,
             _input: &super::super::executor::ToolInput,
+            _ctx: &super::super::executor::ToolContext,
         ) -> Result<super::super::executor::ToolResult, crate::error::ToolError> {
             Ok(super::super::executor::ToolResult::text("test"))
         }

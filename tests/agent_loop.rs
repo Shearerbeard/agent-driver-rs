@@ -74,7 +74,7 @@ fn echo_tool() -> DynTool {
         "Echoes back",
         ToolSchema::empty(),
     );
-    Arc::new(FnTool::new(definition, |_input| {
+    Arc::new(FnTool::new(definition, |_input, _ctx| {
         async { Ok(ToolResult::text("echoed!")) }.boxed()
     }))
 }
@@ -171,7 +171,7 @@ async fn tool_error_stops_loop() {
         "Always fails",
         ToolSchema::empty(),
     );
-    let fail_tool: DynTool = Arc::new(FnTool::new(fail_def, |_input| {
+    let fail_tool: DynTool = Arc::new(FnTool::new(fail_def, |_input, _ctx| {
         async { Ok(ToolResult::error("boom")) }.boxed()
     }));
 
@@ -217,7 +217,7 @@ async fn tool_error_continues_when_configured() {
         "Always fails",
         ToolSchema::empty(),
     );
-    let fail_tool: DynTool = Arc::new(FnTool::new(fail_def, |_input| {
+    let fail_tool: DynTool = Arc::new(FnTool::new(fail_def, |_input, _ctx| {
         async { Ok(ToolResult::error("boom")) }.boxed()
     }));
 

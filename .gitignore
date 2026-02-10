@@ -1,4 +1,5 @@
 /target
+/bench/target
 
 # Environment file with secrets
 .env

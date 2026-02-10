@@ -420,13 +420,10 @@ async fn execute_tools(
     let mut first_error = None;
 
     for (id, name, content, is_error) in results {
-        session
-            .add_message(Message::tool_result(id.clone(), &content, is_error))
-            .await;
-
+        // Emit observer event first (clones content for the temporary event struct)
         observer
             .on_event(&AgentEvent::ToolCallComplete {
-                id,
+                id: id.clone(),
                 name: name.clone(),
                 result: content.clone(),
                 is_error,
@@ -434,8 +431,13 @@ async fn execute_tools(
             .await;
 
         if is_error && first_error.is_none() {
-            first_error = Some((name, content));
+            first_error = Some((name, content.clone()));
         }
+
+        // Move content into message — avoids the hidden clone from &String → Into<String>
+        session
+            .add_message(Message::tool_result(id, content, is_error))
+            .await;
     }
 
     first_error

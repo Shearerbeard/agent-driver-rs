@@ -1,0 +1,39 @@
+[package]
+name = "agent-driver-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+# Our library
+agent-driver-rs = { path = "..", features = ["openai", "mcp"] }
+
+# Rig
+rig-core = { version = "0.30", features = ["rmcp"] }
+
+# MCP (rmcp 0.13 for rig compatibility — rig-core 0.30 depends on rmcp ^0.13)
+rmcp = { version = "0.13", features = ["client", "transport-child-process"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization (for tool args)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+
+# Env loading
+dotenvy = "0.15"
+
+# Heap allocation tracking
+stats_alloc = "0.1"

@@ -164,6 +164,21 @@ impl McpConnection {
         Ok(tools)
     }
 
+    /// List raw MCP tool definitions without wrapping them into `DynTool`.
+    ///
+    /// Unlike [`discover_tools`](Self::discover_tools), this returns the raw
+    /// protocol-level tool list with no schema parsing or wrapper construction.
+    /// Useful for benchmarking the MCP transport layer in isolation.
+    pub async fn list_raw_tools(&self) -> Result<Vec<rmcp::model::Tool>, McpToolError> {
+        self.service
+            .list_all_tools()
+            .await
+            .map_err(|e| McpToolError::ToolDiscoveryFailed {
+                server_name: self.name.clone(),
+                message: e.to_string(),
+            })
+    }
+
     /// Discover tools and sync them into a registry
     ///
     /// Returns the number of tools synced.
@@ -243,17 +258,16 @@ impl Tool for McpToolWrapper {
 
 /// Extract text content from MCP Content blocks
 fn extract_text_content(content: &[rmcp::model::Content]) -> String {
-    content
-        .iter()
-        .filter_map(|c| {
-            if let rmcp::model::RawContent::Text(text_content) = &c.raw {
-                Some(text_content.text.as_str())
-            } else {
-                None
+    let mut result = String::new();
+    for c in content {
+        if let rmcp::model::RawContent::Text(text_content) = &c.raw {
+            if !result.is_empty() {
+                result.push('\n');
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            result.push_str(&text_content.text);
+        }
+    }
+    result
 }
 
 /// Specification for connecting to an MCP server via stdio transport.

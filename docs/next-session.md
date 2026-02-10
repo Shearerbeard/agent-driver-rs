@@ -2,81 +2,91 @@
 
 ## Where we left off
 
-Structured error variants (ContextWindowExceeded, ContentPolicyViolation) and LoopStopReason::ContentFilter complete. Test count: 169 (141 unit + 28 integration).
+Performance quick wins from the benchmark analysis are complete. All 4 items from the previous session's Priority 1 list are done. Test count unchanged: 169 (141 unit + 28 integration). Bench harness now has `--json` output for CI regression tracking.
 
 ## Current state
 
 - All tests pass: `cargo test --all-features` (169 tests)
 - Clippy clean: `cargo clippy --all-features -- -D warnings`
-- Docs build: `cargo doc --all-features --no-deps`
+- Bench compiles and runs: `cd bench && cargo run --release -- -n 20 -w 3`
+- JSON output: `cd bench && cargo run --release -- -n 20 -w 3 --json`
 
 ## What was done this session
 
-### Structured Error Variants: ContextWindowExceeded & ContentPolicyViolation
+### Performance quick wins (Priority 1 from previous session)
 
-**New `ProviderError` variants:**
-- `ContextWindowExceeded { provider, message, context_window: Option<u32>, tokens_used: Option<u32> }` — for context window overflow errors
-- `ContentPolicyViolation { provider, message }` — for content policy/guardrail blocks
+1. **`extract_text_content()` Vec elimination** (`src/tool/mcp.rs:260-272`)
+   - Replaced `.collect::<Vec<_>>().join("\n")` with a direct `for` loop + `push_str` pattern
+   - Eliminates intermediate `Vec<&str>` allocation per MCP tool result
+   - Existing tests (`extract_text_from_content`, `extract_text_multiple_blocks`) verify correctness
 
-**New methods:**
-- `ProviderError::is_recoverable()` — true for ContextWindowExceeded, ContentPolicyViolation, RateLimited
-- `AgentLoopError::is_context_overflow()` — dual-path check (ProviderError + StreamError)
-- `AgentLoopError::is_content_policy_violation()` — dual-path check
-- `AgentLoopError::as_provider_error()` — traverse error chain
+2. **`content.clone()` reduction in `execute_tools()`** (`src/agent/driver.rs:419-441`)
+   - Reordered Phase 3 to emit observer event first (clone for temp struct), then move `content` into `Message::tool_result()`
+   - Previously `&content` was passed to `impl Into<String>` which performed a hidden clone
+   - Saves 1 allocation per tool result in the common (non-error) case
 
-**Centralized detection:**
-- `is_context_window_message()` and `is_content_policy_message()` in `error.rs` — single source of truth for pattern matching across providers
+3. **mcp_roundtrip prompt fix** (`bench/src/ours.rs`, `bench/src/rig_bench.rs`)
+   - Changed from "List the files in the current directory" to "Read the file named Cargo.toml and tell me the package name"
+   - Old prompt caused ~7% "Empty response" errors — model sometimes used both tool rounds for listing without producing final text
+   - New prompt reliably needs exactly 1 tool round (`read_file`), always producing text response within depth cap
 
-**Provider changes:**
-- OpenAI: detects `context_length_exceeded`, `maximum context length`, `content_policy_violation`, `content management policy`
-- Bedrock: uses centralized detection helpers; maps `content_filtered`/`guardrail_intervened` stop reasons to `StopReason::ContentFilter`
-- Ollama: detects context window errors
-- Anthropic: enhanced `ErrorData` to capture error `type` field, includes type in ConnectionLost message for downstream detection
+4. **`--json` output flag** (`bench/src/harness.rs`, `bench/src/main.rs`)
+   - Added `--json` CLI flag: `cd bench && cargo run --release -- -n 20 --json`
+   - JSON schema: `{ model, iterations, epoch_secs, results: [{ scenario, library, min, median, mean, stddev, max, alloc_median }] }`
+   - Durations serialized as microseconds (u64) for easy numeric comparison
+   - Added `Serialize` derive to `Stats` and `ReportRow`
 
-### LoopStopReason::ContentFilter
+**Files modified:**
+- `src/tool/mcp.rs` — `extract_text_content()` rewritten (no Vec)
+- `src/agent/driver.rs` — `execute_tools()` Phase 3 reordered (move vs clone)
+- `bench/src/ours.rs` — mcp_roundtrip prompt changed
+- `bench/src/rig_bench.rs` — mcp_roundtrip prompt changed
+- `bench/src/harness.rs` — `Serialize` on Stats/ReportRow, `print_json()`, `ser_duration_us()`
+- `bench/src/main.rs` — `--json` CLI flag
 
-- Added `LoopStopReason::ContentFilter` variant with Display returning `"content_filter"`
-- Fixed bug: `StopReason::ContentFilter` was silently mapped to `LoopStopReason::EndTurn`, now correctly maps to `LoopStopReason::ContentFilter`
+## Recommended next session priorities
 
-### Mock Provider & Tests
+### Priority 1: Documentation of architectural advantages
+- [ ] Document streaming path minimalism in ARCHITECTURE.md (ttft consistency story)
+- [ ] Document `biased` select + drain-first patterns as performance primitives
+- [ ] Re-run bench with gpt-4o and claude-sonnet-4-5 via OpenRouter — results may differ with larger models
 
-- Added `mock_content_filter_response(partial_text)` helper
-- Integration test: `content_filter_stop_reason` — verifies LoopStopReason::ContentFilter surfaces correctly
-- 10 new unit tests in error.rs (detection helpers, is_recoverable, AgentLoopError helpers)
-- 1 new mock test, 1 new integration test
+### Priority 2: Re-run benchmarks
+- [ ] Run `cd bench && cargo run --release -- -n 30 -w 3 --json > results.json` to validate prompt fix eliminates errors
+- [ ] Compare allocation numbers to see if Vec elimination + clone reduction show measurable improvement
 
-### Documentation
-
-- Updated `docs/ARCHITECTURE.md` — new "Error Classification and Recovery" section
-- Updated `docs/next-session.md` (this file)
-
-## Automated verification (already passing)
-```bash
-cargo check --all-features
-cargo test --all-features           # 169 tests
-cargo clippy --all-features -- -D warnings
-cargo doc --all-features --no-deps
-```
-
-## Deferred items
-
-### Provider-specific features (Priority 2)
+### Priority 3: Feature work (deferred from prior sessions)
 - Anthropic extended thinking (`budget_tokens` config)
 - OpenAI strict mode for tool schemas
 - Bedrock guardrails integration
-- Ollama keep-alive and context window management
+- Proper MCP cancellation notification (`send_cancellable_request()` + `notify_cancelled()`)
+- StreamHandle drop cancellation propagation
 
-### Observability & metrics (Priority 3)
-- Structured logging with provider/model/correlation_id context
-- Token usage tracking across sessions
-- Latency histograms per provider
-- Error rate tracking leveraging structured error types
+## Investigation items remaining (from docs/todo.md)
 
-### Potential follow-ups for MCP
-- Use `send_cancellable_request()` + `notify_cancelled()` for proper MCP protocol
-  cancellation notification (current impl just abandons the future)
-- Add live integration test for Streamable HTTP transport
-- Consider `ToolContext` extensions: correlation_id, timeout, etc.
+- `cold_start: 89us vs 76us` — profile SessionBuilder overhead (architectural, low priority)
+- `ttft stddev: 61ms vs 347ms` — document why (biased select + drain-first)
+- `tool_roundtrip: 384ms stddev` — investigate outlier sources
+- `mcp_roundtrip allocation: 675 KB vs 623 KB` — should improve with this session's fixes, re-measure
+- StreamHandle drop doesn't cancel
+
+## Usage
+
+```bash
+# Compile + test + lint
+cargo check --all-features
+cargo test --all-features           # 169 tests
+cargo clippy --all-features -- -D warnings
+
+# Benchmark (requires OPENAI_API_KEY)
+cd bench && cargo run --release -- -n 30 -w 3          # Full run (~15-20 min)
+cd bench && cargo run --release -- -n 5 -w 2           # Quick check (~3-5 min)
+cd bench && cargo run --release -- -n 1 -s cold_start  # Offline smoke test
+cd bench && cargo run --release -- -n 20 --json        # JSON output for CI
+
+# Offline JSON smoke test (no API key needed)
+OPENAI_API_KEY=test cargo run -- -n 1 -w 0 -s cold_start --json
+```
 
 ## Test coverage snapshot (169 tests)
 

@@ -365,6 +365,8 @@ pub struct SessionBuilder {
     max_history_messages: Option<usize>,
     request_timeout: Option<std::time::Duration>,
     tools: Vec<DynTool>,
+    #[cfg(feature = "schema-sanitize")]
+    sanitize_schemas: bool,
 }
 
 impl SessionBuilder {
@@ -379,6 +381,8 @@ impl SessionBuilder {
             max_history_messages: None,
             request_timeout: None,
             tools: Vec::new(),
+            #[cfg(feature = "schema-sanitize")]
+            sanitize_schemas: false,
         }
     }
 
@@ -455,6 +459,18 @@ impl SessionBuilder {
         self
     }
 
+    /// Enable schema sanitization for OpenAI strict function calling
+    ///
+    /// When true, tool schemas in outbound requests have all properties made
+    /// required+nullable and `additionalProperties: false` added at every
+    /// object level.
+    #[cfg(feature = "schema-sanitize")]
+    #[must_use]
+    pub fn sanitize_schemas(mut self, enabled: bool) -> Self {
+        self.sanitize_schemas = enabled;
+        self
+    }
+
     /// Build the session
     ///
     /// This is async to properly register tools.
@@ -478,7 +494,7 @@ impl SessionBuilder {
                 .or(Some(DEFAULT_MAX_HISTORY_MESSAGES)),
             request_timeout: self.request_timeout,
             #[cfg(feature = "schema-sanitize")]
-            sanitize_schemas: false,
+            sanitize_schemas: self.sanitize_schemas,
         };
 
         // Register initial tools

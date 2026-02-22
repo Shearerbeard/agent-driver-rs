@@ -480,6 +480,7 @@ impl McpManager {
     /// Extract all connections for keepalive purposes.
     ///
     /// Consumes the manager and returns the underlying connections.
+    #[must_use = "dropping the connections will disconnect from MCP servers"]
     pub fn into_connections(self) -> Vec<McpConnection> {
         self.connections
     }

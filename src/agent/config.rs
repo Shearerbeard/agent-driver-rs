@@ -61,13 +61,6 @@ pub struct AgentLoopConfig {
     /// (XML tags, fenced code blocks, bare JSON). This is a safety net for
     /// models that don't reliably use native structured tool calling.
     pub fallback_tool_parsing: bool,
-    /// Enable schema sanitization for OpenAI strict mode (default: false)
-    ///
-    /// When true, tool schemas are sanitized before being sent to the provider:
-    /// all properties are made required+nullable and `additionalProperties: false`
-    /// is added at every object level. This is needed for models that require
-    /// OpenAI-style strict function calling schemas.
-    pub sanitize_schemas: bool,
     /// Optional name for this agent loop (used in tracing spans)
     pub name: Option<String>,
 }
@@ -78,7 +71,6 @@ impl Default for AgentLoopConfig {
             max_tool_depth: MaxToolDepth::default(),
             continue_on_tool_error: true,
             fallback_tool_parsing: false,
-            sanitize_schemas: false,
             name: None,
         }
     }

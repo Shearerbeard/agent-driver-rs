@@ -66,3 +66,7 @@ agent-driver-rs = { path = ".", features = ["test-support"] }
 [[bin]]
 name = "chat"
 path = "src/bin/chat.rs"
+
+[[example]]
+name = "cluster_guardian"
+required-features = ["ollama", "mcp-http", "schema-sanitize"]

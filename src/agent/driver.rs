@@ -55,6 +55,7 @@ pub struct AgentOutcome {
 /// let config = AgentLoopConfig {
 ///     max_tool_depth: MaxToolDepth::new(10)?,
 ///     continue_on_tool_error: true,
+///     ..Default::default()
 /// };
 /// let outcome = AgentLoop::new(session)
 ///     .with_config(config)
@@ -112,6 +113,9 @@ impl<'s> AgentLoop<'s> {
     /// 3. Continue streaming with tool results in history
     /// 4. Repeat until no more tool calls, or a limit is hit
     pub async fn run(self, message: impl Into<String>) -> Result<AgentOutcome, AgentLoopError> {
+        let agent_name = self.config.name.as_deref().unwrap_or("agent_loop");
+        let _span = tracing::info_span!("agent_loop", name = agent_name).entered();
+
         let cancellation = self
             .cancellation
             .as_ref()
@@ -127,6 +131,11 @@ impl<'s> AgentLoop<'s> {
         // Step 2: Collect the first response while forwarding events
         let mut response =
             collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;
+
+        // Fallback tool parsing: scan text for embedded tool calls
+        if self.config.fallback_tool_parsing && !response.has_tool_use() {
+            response.extract_fallback_tool_calls();
+        }
 
         // Add assistant response to history
         add_assistant_to_history(self.session, &response).await;
@@ -204,6 +213,11 @@ impl<'s> AgentLoop<'s> {
             let handle = self.session.continue_streaming().await?;
 
             response = collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;
+
+            // Fallback tool parsing: scan text for embedded tool calls
+            if self.config.fallback_tool_parsing && !response.has_tool_use() {
+                response.extract_fallback_tool_calls();
+            }
 
             // Add assistant response to history
             add_assistant_to_history(self.session, &response).await;
@@ -657,6 +671,7 @@ mod tests {
         let config = AgentLoopConfig {
             max_tool_depth: super::super::config::MaxToolDepth::new(2).unwrap(),
             continue_on_tool_error: true,
+            ..Default::default()
         };
 
         let session = SessionBuilder::new()

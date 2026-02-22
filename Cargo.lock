@@ -16,6 +16,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "futures",
+ "mcp-openai-bridge",
  "ollama-rs",
  "parking_lot",
  "pin-project-lite",
@@ -101,6 +102,12 @@ dependencies = [
  "once_cell_polyfill",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.102"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "async-openai"
@@ -1676,6 +1683,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "mcp-openai-bridge"
+version = "0.1.0"
+source = "git+ssh://git@github.com/example-org/mcp-openai-bridge.git#b505bfe2da648b02b598ea2b29e466ccb27cfd83"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

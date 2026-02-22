@@ -306,6 +306,140 @@ impl CollectedResponse {
             .iter()
             .any(|b| matches!(b, ContentBlock::ToolUse { .. }))
     }
+
+    /// Scan text blocks for embedded tool calls and convert them to `ToolUse` blocks.
+    ///
+    /// This is a safety net for models that emit tool calls as text instead of using
+    /// the native structured format (common with Qwen, GLM, Ministral, etc.).
+    ///
+    /// Returns the number of tool calls extracted. Extracted calls are appended to
+    /// `self.content` and the source text is cleaned up in the original text block.
+    ///
+    /// Supported patterns (checked in order of specificity):
+    /// 1. `<tool_call>{"name": "...", "arguments": {...}}</tool_call>` — XML-tagged
+    /// 2. `` ```json\n{"name": "...", "arguments": {...}}\n``` `` — fenced code block
+    /// 3. Bare JSON object with `"name"` + `"arguments"` keys at end of text
+    pub fn extract_fallback_tool_calls(&mut self) -> usize {
+        let mut extracted = Vec::new();
+        let mut counter = 0u32;
+
+        // Process each text block, collecting tool calls and cleaned text
+        let mut new_content = Vec::new();
+        for block in self.content.drain(..) {
+            match block {
+                ContentBlock::Text { ref text } => {
+                    let (calls, remaining) = parse_embedded_tool_calls(text, &mut counter);
+                    extracted.extend(calls);
+                    if !remaining.trim().is_empty() {
+                        new_content.push(ContentBlock::Text { text: remaining });
+                    }
+                }
+                other => new_content.push(other),
+            }
+        }
+
+        let count = extracted.len();
+        self.content = new_content;
+        self.content.extend(extracted);
+
+        if count > 0 {
+            // Update stop reason to ToolUse since we found tool calls
+            self.metadata.stop_reason = Some(StopReason::ToolUse);
+        }
+
+        count
+    }
+}
+
+/// Parse embedded tool calls from a text string.
+///
+/// Returns (extracted_tool_use_blocks, remaining_text).
+fn parse_embedded_tool_calls(
+    text: &str,
+    counter: &mut u32,
+) -> (Vec<ContentBlock>, String) {
+    let mut tool_calls = Vec::new();
+    let mut remaining = text.to_string();
+
+    // Pattern 1: <tool_call>...</tool_call>
+    while let Some(start) = remaining.find("<tool_call>") {
+        if let Some(end) = remaining[start..].find("</tool_call>") {
+            let json_start = start + "<tool_call>".len();
+            let json_end = start + end;
+            let json_str = remaining[json_start..json_end].trim();
+
+            if let Some(block) = try_parse_tool_call_json(json_str, counter) {
+                tool_calls.push(block);
+                let tag_end = json_end + "</tool_call>".len();
+                remaining = format!("{}{}", &remaining[..start], &remaining[tag_end..]);
+                continue;
+            }
+        }
+        break;
+    }
+
+    // Pattern 2: ```json\n{...}\n``` (fenced code blocks)
+    while let Some(fence_start) = remaining.find("```json") {
+        let content_start = fence_start + "```json".len();
+        let fence_end = if let Some(pos) = remaining[content_start..].find("```") {
+            content_start + pos
+        } else {
+            break;
+        };
+
+        let json_str = remaining[content_start..fence_end].trim();
+        if let Some(block) = try_parse_tool_call_json(json_str, counter) {
+            tool_calls.push(block);
+            let tag_end = fence_end + "```".len();
+            remaining = format!("{}{}", &remaining[..fence_start], &remaining[tag_end..]);
+        } else {
+            break;
+        }
+    }
+
+    // Pattern 3: Bare JSON object at end of text with "name" + "arguments" keys.
+    // Scan from right to left for '{' positions, trying each as a potential
+    // tool call object start. We search right-to-left because tool calls
+    // typically appear at the end of text.
+    if tool_calls.is_empty() {
+        let trimmed = remaining.trim();
+        let bytes = trimmed.as_bytes();
+        let mut pos = bytes.len();
+        while pos > 0 {
+            pos -= 1;
+            if bytes[pos] == b'{' {
+                let candidate = &trimmed[pos..];
+                if let Some(block) = try_parse_tool_call_json(candidate, counter) {
+                    tool_calls.push(block);
+                    remaining = trimmed[..pos].to_string();
+                    break;
+                }
+            }
+        }
+    }
+
+    (tool_calls, remaining)
+}
+
+/// Try to parse a JSON string as a tool call with "name" and "arguments" fields.
+fn try_parse_tool_call_json(json_str: &str, counter: &mut u32) -> Option<ContentBlock> {
+    let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let obj = parsed.as_object()?;
+
+    let name_str = obj.get("name")?.as_str()?;
+    let arguments = obj.get("arguments")?;
+
+    // Validate name is a valid ToolName
+    let name = ToolName::new(name_str).ok()?;
+
+    let id = ToolCallId::new(format!("fallback_call_{}", counter));
+    *counter += 1;
+
+    Some(ContentBlock::ToolUse {
+        id,
+        name,
+        input: arguments.clone(),
+    })
 }
 
 /// Type alias for the stream of completion events
@@ -601,5 +735,99 @@ mod tests {
         assert_eq!(tool_uses.len(), 1);
         assert_eq!(tool_uses[0].0.as_str(), "call_123");
         assert_eq!(tool_uses[0].1.as_str(), "read_file");
+    }
+
+    // --- Fallback tool parsing tests ---
+
+    #[test]
+    fn extract_xml_tagged_tool_call() {
+        let mut response = CollectedResponse::new();
+        response.content.push(ContentBlock::Text {
+            text: "I'll read that file for you.\n<tool_call>{\"name\": \"read_file\", \"arguments\": {\"path\": \"/tmp/test.txt\"}}</tool_call>".into(),
+        });
+
+        let count = response.extract_fallback_tool_calls();
+        assert_eq!(count, 1);
+        assert!(response.has_tool_use());
+
+        let tool_uses = response.tool_uses();
+        assert_eq!(tool_uses[0].1.as_str(), "read_file");
+        assert_eq!(tool_uses[0].0.as_str(), "fallback_call_0");
+
+        // Text should be preserved without the tag
+        let text = response.text();
+        assert!(text.contains("read that file"));
+        assert!(!text.contains("<tool_call>"));
+    }
+
+    #[test]
+    fn extract_json_code_block() {
+        let mut response = CollectedResponse::new();
+        response.content.push(ContentBlock::Text {
+            text: "Let me list the directory.\n```json\n{\"name\": \"list_dir\", \"arguments\": {\"path\": \"/tmp\"}}\n```".into(),
+        });
+
+        let count = response.extract_fallback_tool_calls();
+        assert_eq!(count, 1);
+        assert!(response.has_tool_use());
+
+        let tool_uses = response.tool_uses();
+        assert_eq!(tool_uses[0].1.as_str(), "list_dir");
+    }
+
+    #[test]
+    fn extract_bare_json() {
+        let mut response = CollectedResponse::new();
+        response.content.push(ContentBlock::Text {
+            text: "I'll read the file now.\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"/a.txt\"}}".into(),
+        });
+
+        let count = response.extract_fallback_tool_calls();
+        assert_eq!(count, 1);
+        assert!(response.has_tool_use());
+    }
+
+    #[test]
+    fn extract_multiple_calls() {
+        let mut response = CollectedResponse::new();
+        response.content.push(ContentBlock::Text {
+            text: "<tool_call>{\"name\": \"read_file\", \"arguments\": {\"path\": \"/a.txt\"}}</tool_call>\n<tool_call>{\"name\": \"list_dir\", \"arguments\": {\"path\": \"/tmp\"}}</tool_call>".into(),
+        });
+
+        let count = response.extract_fallback_tool_calls();
+        assert_eq!(count, 2);
+
+        let tool_uses = response.tool_uses();
+        assert_eq!(tool_uses.len(), 2);
+        assert_eq!(tool_uses[0].1.as_str(), "read_file");
+        assert_eq!(tool_uses[1].1.as_str(), "list_dir");
+    }
+
+    #[test]
+    fn no_false_positives() {
+        let mut response = CollectedResponse::new();
+        response.content.push(ContentBlock::Text {
+            text: "Here's some normal text about JSON objects and tool calls. Nothing to extract here.".into(),
+        });
+
+        let count = response.extract_fallback_tool_calls();
+        assert_eq!(count, 0);
+        assert!(!response.has_tool_use());
+        assert!(!response.text().is_empty());
+    }
+
+    #[test]
+    fn remaining_text_preserved() {
+        let mut response = CollectedResponse::new();
+        response.content.push(ContentBlock::Text {
+            text: "Before the call.\n<tool_call>{\"name\": \"echo\", \"arguments\": {}}</tool_call>\nAfter the call.".into(),
+        });
+
+        response.extract_fallback_tool_calls();
+
+        let text = response.text();
+        assert!(text.contains("Before the call."));
+        assert!(text.contains("After the call."));
+        assert!(!text.contains("<tool_call>"));
     }
 }

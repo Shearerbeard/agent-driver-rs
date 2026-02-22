@@ -219,6 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agent_config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(args.max_tool_depth)?,
         continue_on_tool_error: true,
+        ..Default::default()
     };
 
     // ── Main chat REPL ────────────────────────────────────────────────

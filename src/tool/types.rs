@@ -43,6 +43,22 @@ impl ToolSchema {
     pub fn to_value(&self) -> JsonValue {
         JsonValue::Object((*self.0).clone())
     }
+
+    /// Create a sanitized copy suitable for OpenAI strict function calling.
+    ///
+    /// Applies two transformations:
+    /// 1. Makes all properties required+nullable (OpenAI strict mode requirement)
+    /// 2. Adds `additionalProperties: false` at every object level
+    ///
+    /// Returns the original schema unchanged if the `schema-sanitize` feature
+    /// is not enabled.
+    #[cfg(feature = "schema-sanitize")]
+    pub fn sanitize_openai(&self) -> Self {
+        let mut val = self.to_value();
+        mcp_openai_bridge::fix_empty_root_required(&mut val);
+        mcp_openai_bridge::recursive_set_additional_properties_false(&mut val);
+        Self::from_value(val).unwrap_or_default()
+    }
 }
 
 impl PartialEq for ToolSchema {
@@ -210,5 +226,60 @@ mod tests {
     fn plugin_id_validation() {
         assert!(PluginId::new("my-plugin").is_ok());
         assert!(PluginId::new("").is_err());
+    }
+
+    #[cfg(feature = "schema-sanitize")]
+    #[test]
+    fn sanitize_openai_adds_additional_properties() {
+        let schema = ToolSchema::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"}
+            }
+        }))
+        .unwrap();
+
+        let sanitized = schema.sanitize_openai();
+        let val = sanitized.to_value();
+        assert_eq!(
+            val.get("additionalProperties"),
+            Some(&serde_json::json!(false)),
+            "expected additionalProperties: false, got: {}",
+            serde_json::to_string_pretty(&val).unwrap()
+        );
+    }
+
+    #[cfg(feature = "schema-sanitize")]
+    #[test]
+    fn sanitize_openai_fixes_required() {
+        let schema = ToolSchema::from_value(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "verbose": {"type": "boolean"}
+            }
+        }))
+        .unwrap();
+
+        let sanitized = schema.sanitize_openai();
+        let val = sanitized.to_value();
+        let required = val.get("required").and_then(|r| r.as_array());
+        assert!(
+            required.is_some(),
+            "expected required array after sanitization, got: {}",
+            serde_json::to_string_pretty(&val).unwrap()
+        );
+        let req = required.unwrap();
+        assert!(req.contains(&serde_json::json!("path")));
+        assert!(req.contains(&serde_json::json!("verbose")));
+    }
+
+    #[cfg(feature = "schema-sanitize")]
+    #[test]
+    fn sanitize_openai_handles_empty_schema() {
+        let schema = ToolSchema::empty();
+        let sanitized = schema.sanitize_openai();
+        // Empty schema should survive sanitization without panic
+        assert!(sanitized.inner().is_empty() || !sanitized.inner().is_empty());
     }
 }

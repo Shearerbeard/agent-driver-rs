@@ -34,6 +34,10 @@ pub struct OllamaConfig {
     /// Keep model loaded in memory
     #[serde(default)]
     pub keep_alive: Option<KeepAlive>,
+
+    /// Enable thinking/reasoning mode (for models that support it)
+    #[serde(default)]
+    pub think: Option<bool>,
 }
 
 /// Context window size for Ollama (must be > 0)
@@ -197,6 +201,14 @@ impl OllamaConfig {
                 _ => s.parse().ok().map(KeepAlive::Minutes),
             });
 
+        let think = std::env::var("OLLAMA_THINK")
+            .ok()
+            .and_then(|s| match s.to_lowercase().as_str() {
+                "true" | "1" | "yes" => Some(true),
+                "false" | "0" | "no" => Some(false),
+                _ => None,
+            });
+
         Ok(Self {
             base_url,
             model,
@@ -204,6 +216,7 @@ impl OllamaConfig {
             max_tokens,
             temperature,
             keep_alive,
+            think,
         })
     }
 

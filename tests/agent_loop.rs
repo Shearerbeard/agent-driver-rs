@@ -123,6 +123,7 @@ async fn multi_round_tool_chain_depth_3() {
     let config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(5).unwrap(),
         continue_on_tool_error: true,
+        ..Default::default()
     };
 
     let outcome = AgentLoop::new(&session)
@@ -207,6 +208,7 @@ async fn tool_error_stops_loop() {
     let config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(5).unwrap(),
         continue_on_tool_error: false,
+        ..Default::default()
     };
 
     let outcome = AgentLoop::new(&session)
@@ -252,6 +254,7 @@ async fn tool_error_continues_when_configured() {
     let config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(5).unwrap(),
         continue_on_tool_error: true,
+        ..Default::default()
     };
 
     let outcome = AgentLoop::new(&session)
@@ -594,6 +597,7 @@ async fn parallel_tool_mixed_success_failure() {
     let config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(5).unwrap(),
         continue_on_tool_error: true,
+        ..Default::default()
     };
 
     let outcome = AgentLoop::new(&session)
@@ -676,6 +680,7 @@ async fn parallel_tool_error_stops_loop() {
     let config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(5).unwrap(),
         continue_on_tool_error: false,
+        ..Default::default()
     };
 
     let outcome = AgentLoop::new(&session)
@@ -714,6 +719,7 @@ async fn max_tool_depth_1() {
     let config = AgentLoopConfig {
         max_tool_depth: MaxToolDepth::new(1).unwrap(),
         continue_on_tool_error: true,
+        ..Default::default()
     };
 
     let outcome = AgentLoop::new(&session)

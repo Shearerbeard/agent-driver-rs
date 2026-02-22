@@ -35,6 +35,14 @@ pub struct SessionConfig {
     pub max_history_messages: Option<usize>,
     /// Timeout for provider requests
     pub request_timeout: Option<std::time::Duration>,
+    /// Sanitize tool schemas for OpenAI strict function calling (default: false)
+    ///
+    /// When true, tool schemas in outbound requests have all properties made
+    /// required+nullable and `additionalProperties: false` added at every
+    /// object level. This is needed for models/providers that require strict
+    /// JSON Schema compliance.
+    #[cfg(feature = "schema-sanitize")]
+    pub sanitize_schemas: bool,
 }
 
 /// A conversation session with an LLM.
@@ -202,7 +210,16 @@ impl Session {
     async fn build_completion_request(&self) -> CompletionRequest {
         let system = self.system_prompt.read().await.clone();
         let messages = self.messages.read().await.clone();
-        let tools = self.tools.list().await;
+        #[allow(unused_mut)]
+        let mut tools = self.tools.list().await;
+
+        // Apply schema sanitization if configured
+        #[cfg(feature = "schema-sanitize")]
+        if self.config.sanitize_schemas {
+            for tool in &mut tools {
+                tool.input_schema = tool.input_schema.sanitize_openai();
+            }
+        }
 
         CompletionRequest {
             model: self.config.model.clone(),
@@ -460,6 +477,8 @@ impl SessionBuilder {
                 .max_history_messages
                 .or(Some(DEFAULT_MAX_HISTORY_MESSAGES)),
             request_timeout: self.request_timeout,
+            #[cfg(feature = "schema-sanitize")]
+            sanitize_schemas: false,
         };
 
         // Register initial tools

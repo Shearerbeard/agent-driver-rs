@@ -1,0 +1,615 @@
+//! OpenTelemetry instrumentation helpers
+//!
+//! Provides RAII guards for automatic span lifecycle management following
+//! the project's coding principles: finite types, explicit resource management,
+//! and proper error handling.
+
+#[cfg(feature = "phoenix")]
+use crate::otel::types::{
+    AgentLoopAttributes, AgentStopReason, CompletionAttributes, CompletionStatus, LlmFinishReason,
+    ProviderKind, SpanKind, SpanName,
+};
+#[cfg(feature = "phoenix")]
+use crate::Session;
+#[cfg(feature = "phoenix")]
+use opentelemetry::trace::{Span as SpanTrait, Status, Tracer as TracerTrait};
+#[cfg(feature = "phoenix")]
+use opentelemetry::Context;
+#[cfg(feature = "phoenix")]
+use opentelemetry::Value as AttributeValue;
+#[cfg(feature = "phoenix")]
+use std::sync::Arc;
+
+#[cfg(feature = "phoenix")]
+/// Completion span RAII guard
+///
+/// Automatically creates and closes a span around an LLM completion operation.
+/// Implements `Drop` to ensure the span is always closed, even if an error occurs.
+pub struct CompletionSpan {
+    span: Option<SpanTrait>,
+    attributes: CompletionAttributes,
+}
+
+impl CompletionSpan {
+    /// Create a new completion span
+    pub fn new(
+        tracer: &TracerTrait,
+        name: &str,
+        attributes: CompletionAttributes,
+    ) -> Result<Self, String> {
+        let span_kind = SpanKind::Client.to_otlp_span_kind();
+
+        let span = tracer
+            .span_builder(name)
+            .with_span_kind(span_kind)
+            .with_attributes(create_completion_attributes(&attributes))
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            attributes,
+        })
+    }
+
+    /// Mark completion as successful
+    pub fn mark_success(&mut self) {
+        if let Some(span) = self.span.as_mut() {
+            let status = CompletionStatus::Success;
+            let status_code = match status {
+                CompletionStatus::Success => Status::Ok,
+                CompletionStatus::Partial => Status::Ok,
+                CompletionStatus::Error { .. } => Status::Error,
+            };
+
+            span.set_status(status_code);
+            span.set_attribute(
+                "llm.finish_reason",
+                LlmFinishReason::Stop.as_inference_reason(),
+            );
+        }
+    }
+
+    /// Mark completion as failed
+    pub fn mark_failure(&mut self, message: impl Into<String>) {
+        if let Some(span) = self.span.as_mut() {
+            span.set_status(Status::Error);
+            span.set_attribute("error.message", message.into());
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl CompletionSpan {
+    /// Create a new completion span
+    pub fn new(
+        tracer: &opentelemetry::trace::Tracer,
+        name: &str,
+        attributes: CompletionAttributes,
+    ) -> Result<Self, String> {
+        let span_kind = SpanKind::Client.to_otlp_span_kind();
+
+        let span = tracer
+            .span_builder(name)
+            .with_span_kind(span_kind)
+            .with_attributes(create_completion_attributes(&attributes))
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            attributes,
+        })
+    }
+
+    /// Mark completion as successful
+    pub fn mark_success(&mut self) {
+        if let Some(span) = self.span.as_mut() {
+            let status = CompletionStatus::Success;
+            let status_code = match status {
+                CompletionStatus::Success => Status::Ok,
+                CompletionStatus::Partial => Status::Ok,
+                CompletionStatus::Error { .. } => Status::Error,
+            };
+
+            span.set_status(status_code);
+            span.set_attribute(
+                "llm.finish_reason",
+                LlmFinishReason::Stop.as_inference_reason(),
+            );
+        }
+    }
+
+    /// Mark completion as failed
+    pub fn mark_failure(&mut self, message: impl Into<String>) {
+        if let Some(span) = self.span.as_mut() {
+            span.set_status(Status::Error);
+            span.set_attribute("error.message", message.into());
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for CompletionSpan {
+    fn drop(&mut self) {
+        if let Some(span) = self.span.take() {
+            let _ = span.end();
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+/// Agent loop span RAII guard
+///
+/// Wraps the entire agent loop execution with a root span and creates
+/// child spans for iterations and tool executions.
+pub struct AgentLoopSpan {
+    span: Option<SpanTrait>,
+    tracer: Arc<TracerTrait>,
+    iteration: Option<u32>,
+}
+
+impl AgentLoopSpan {
+    /// Create a new agent loop span
+    pub fn new(tracer: &TracerTrait, name: &str, agent_name: &str) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(name)
+            .with_span_kind(SpanKind::Server.to_otlp_span_kind())
+            .with_attribute("agent.name", agent_name)
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            tracer: tracer.clone(),
+            iteration: Some(0),
+        })
+    }
+
+    /// Record the outcome of the agent loop
+    pub fn record_outcome(&mut self, stop_reason: AgentStopReason, iterations: u32) {
+        if let Some(span) = self.span.as_mut() {
+            let reason_str = match stop_reason {
+                AgentStopReason::Normal => "normal",
+                AgentStopReason::ToolExecutionCompleted => "tool_execution_completed",
+                AgentStopReason::MaxToolDepthReached => "max_tool_depth_reached",
+                AgentStopReason::Cancelled => "cancelled",
+                AgentStopReason::ToolError { .. } => "tool_error",
+            };
+
+            span.set_attribute("agent.stop_reason", reason_str);
+            span.set_attribute("agent.iterations", iterations);
+
+            // Mark as successful unless cancelled
+            if !matches!(stop_reason, AgentStopReason::Cancelled) {
+                span.set_status(Status::Ok);
+            }
+        }
+    }
+
+    /// Create a child span for tool execution
+    pub fn create_tool_span(&self, tool_name: &str) -> Result<ToolSpan, String> {
+        let span = self
+            .tracer
+            .span_builder(format!("tool_execution.{}", tool_name))
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("tool.name", tool_name)
+            .start(&self.tracer);
+
+        Ok(ToolSpan {
+            span: Some(span),
+            tool_name: tool_name.to_string(),
+        })
+    }
+
+    /// Create a child span for iteration
+    pub fn create_iteration_span(&self, iteration: u32) -> Option<IterationSpan> {
+        let span = self
+            .tracer
+            .span_builder(format!("iteration.{}", iteration))
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("agent.iteration", iteration)
+            .start(&self.tracer);
+
+        Some(IterationSpan {
+            span: Some(span),
+            iteration,
+        })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl AgentLoopSpan {
+    /// Create a new agent loop span
+    pub fn new(
+        tracer: &opentelemetry::trace::Tracer,
+        name: &str,
+        agent_name: &str,
+    ) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(name)
+            .with_span_kind(SpanKind::Server.to_otlp_span_kind())
+            .with_attribute("agent.name", agent_name)
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            tracer: tracer.clone(),
+            iteration: Some(0),
+        })
+    }
+
+    /// Record the outcome of the agent loop
+    pub fn record_outcome(&mut self, stop_reason: AgentStopReason, iterations: u32) {
+        if let Some(span) = self.span.as_mut() {
+            let reason_str = match stop_reason {
+                AgentStopReason::Normal => "normal",
+                AgentStopReason::ToolExecutionCompleted => "tool_execution_completed",
+                AgentStopReason::MaxToolDepthReached => "max_tool_depth_reached",
+                AgentStopReason::Cancelled => "cancelled",
+                AgentStopReason::ToolError { .. } => "tool_error",
+            };
+
+            span.set_attribute("agent.stop_reason", reason_str);
+            span.set_attribute("agent.iterations", iterations);
+
+            // Mark as successful unless cancelled
+            if !matches!(stop_reason, AgentStopReason::Cancelled) {
+                span.set_status(opentelemetry::trace::Status::Ok);
+            }
+        }
+    }
+
+    /// Create a child span for tool execution
+    pub fn create_tool_span(&self, tool_name: &str) -> Result<ToolSpan, String> {
+        let span = self
+            .tracer
+            .span_builder(format!("tool_execution.{}", tool_name))
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("tool.name", tool_name)
+            .start(&self.tracer);
+
+        Ok(ToolSpan {
+            span: Some(span),
+            tool_name: tool_name.to_string(),
+        })
+    }
+
+    /// Create a child span for iteration
+    pub fn create_iteration_span(&self, iteration: u32) -> Option<IterationSpan> {
+        let span = self
+            .tracer
+            .span_builder(format!("iteration.{}", iteration))
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("agent.iteration", iteration)
+            .start(&self.tracer);
+
+        Some(IterationSpan {
+            span: Some(span),
+            iteration,
+        })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for AgentLoopSpan {
+    fn drop(&mut self) {
+        if let Some(span) = self.span.take() {
+            let _ = span.end();
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+/// Tool execution span RAII guard
+pub struct ToolSpan {
+    span: Option<SpanTrait>,
+    tool_name: String,
+}
+
+impl ToolSpan {
+    /// Create a new tool span
+    pub fn new(tracer: &TracerTrait, name: &str) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(name)
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("tool.name", name)
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            tool_name: name.to_string(),
+        })
+    }
+
+    /// Mark tool execution as successful
+    pub fn mark_success(&mut self) {
+        if let Some(span) = self.span.as_mut() {
+            span.set_status(Status::Ok);
+        }
+    }
+
+    /// Mark tool execution as failed
+    pub fn mark_failure(&mut self, message: impl Into<String>) {
+        if let Some(span) = self.span.as_mut() {
+            span.set_status(Status::Error);
+            span.set_attribute("error.message", message.into());
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl ToolSpan {
+    /// Create a new tool span
+    pub fn new(tracer: &opentelemetry::trace::Tracer, name: &str) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(name)
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("tool.name", name)
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            tool_name: name.to_string(),
+        })
+    }
+
+    /// Mark tool execution as successful
+    pub fn mark_success(&mut self) {
+        if let Some(span) = self.span.as_mut() {
+            span.set_status(opentelemetry::trace::Status::Ok);
+        }
+    }
+
+    /// Mark tool execution as failed
+    pub fn mark_failure(&mut self, message: impl Into<String>) {
+        if let Some(span) = self.span.as_mut() {
+            span.set_status(opentelemetry::trace::Status::Error);
+            span.set_attribute("error.message", message.into());
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for ToolSpan {
+    fn drop(&mut self) {
+        if let Some(span) = self.span.take() {
+            let _ = span.end();
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+/// Iteration span RAII guard
+pub struct IterationSpan {
+    span: Option<SpanTrait>,
+    iteration: u32,
+}
+
+impl IterationSpan {
+    /// Create a new iteration span
+    pub fn new(tracer: &TracerTrait, iteration: u32) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(format!("iteration.{}", iteration))
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("agent.iteration", iteration)
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            iteration,
+        })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl IterationSpan {
+    /// Create a new iteration span
+    pub fn new(tracer: &opentelemetry::trace::Tracer, iteration: u32) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(format!("iteration.{}", iteration))
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .with_attribute("agent.iteration", iteration)
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            iteration,
+        })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for IterationSpan {
+    fn drop(&mut self) {
+        if let Some(span) = self.span.take() {
+            let _ = span.end();
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+/// Session operation span RAII guard
+pub struct SessionOperationSpan {
+    span: Option<SpanTrait>,
+    operation: String,
+}
+
+impl SessionOperationSpan {
+    /// Create a new session operation span
+    pub fn new(tracer: &TracerTrait, operation: &str) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(operation)
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            operation: operation.to_string(),
+        })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl SessionOperationSpan {
+    /// Create a new session operation span
+    pub fn new(tracer: &opentelemetry::trace::Tracer, operation: &str) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(operation)
+            .with_span_kind(SpanKind::Internal.to_otlp_span_kind())
+            .start(&tracer);
+
+        Ok(Self {
+            span: Some(span),
+            operation: operation.to_string(),
+        })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for SessionOperationSpan {
+    fn drop(&mut self) {
+        if let Some(span) = self.span.take() {
+            let _ = span.end();
+        }
+    }
+}
+
+#[cfg(feature = "phoenix")]
+// ── Helper Functions ───────────────────────────────────────────────────────
+
+/// Create completion span attributes from a request and response
+pub fn create_completion_attributes(
+    attributes: &CompletionAttributes,
+) -> Vec<(&str, AttributeValue)> {
+    let mut attrs = vec![
+        ("llm.model", attributes.model.as_str().into()),
+        ("llm.provider", attributes.provider.as_str().into()),
+        (
+            "llm.completion_status",
+            format!("{:?}", attributes.completion_status)
+                .as_str()
+                .into(),
+        ),
+    ];
+
+    if let Some(tokens) = attributes.prompt_tokens {
+        attrs.push(("llm.prompt_tokens", tokens.into()));
+    }
+
+    if let Some(tokens) = attributes.completion_tokens {
+        attrs.push(("llm.completion_tokens", tokens.into()));
+    }
+
+    if let Some(tokens) = attributes.total_tokens {
+        attrs.push(("llm.total_tokens", tokens.into()));
+    }
+
+    if let Some(temp) = attributes.temperature {
+        attrs.push(("llm.temperature", temp.into()));
+    }
+
+    attrs
+}
+
+/// Create agent loop span attributes
+pub fn create_agent_loop_attributes(
+    attributes: &AgentLoopAttributes,
+) -> Vec<(&str, AttributeValue)> {
+    let mut attrs = vec![("agent.name", attributes.name.as_str().into())];
+
+    if let Some(iteration) = attributes.iteration {
+        attrs.push(("agent.iteration", iteration.into()));
+    }
+
+    if let Some(reason) = attributes.stop_reason.as_ref() {
+        let reason_str = match reason {
+            AgentStopReason::Normal => "normal",
+            AgentStopReason::ToolExecutionCompleted => "tool_execution_completed",
+            AgentStopReason::MaxToolDepthReached => "max_tool_depth_reached",
+            AgentStopReason::Cancelled => "cancelled",
+            AgentStopReason::ToolError { .. } => "tool_error",
+        };
+        attrs.push(("agent.stop_reason", reason_str.into()));
+    }
+
+    if let Some(count) = attributes.tool_count {
+        attrs.push(("agent.tool_count", count.into()));
+    }
+
+    if let Some(text) = &attributes.response_text {
+        attrs.push(("agent.response", text.as_str().into()));
+    }
+
+    attrs
+}
+
+/// Create tool execution span attributes
+pub fn create_tool_attributes(attributes: &ToolExecutionAttributes) -> Vec<(&str, AttributeValue)> {
+    let mut attrs = vec![("tool.name", attributes.tool_name.as_str().into())];
+
+    if let Some(tokens) = attributes.input_tokens {
+        attrs.push(("tool.input_tokens", tokens.into()));
+    }
+
+    if let Some(tokens) = attributes.output_tokens {
+        attrs.push(("tool.output_tokens", tokens.into()));
+    }
+
+    attrs.push(("tool.success", attributes.success.into()));
+
+    if let Some(msg) = &attributes.error_message {
+        attrs.push(("error.message", msg.as_str().into()));
+    }
+
+    attrs
+}
+
+#[cfg(feature = "phoenix")]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry::sdk::trace::TracerProvider;
+
+    #[test]
+    fn test_completion_span_creation() {
+        let provider = TracerProvider::default();
+        let tracer = provider.tracer("test");
+
+        let attrs = CompletionAttributes {
+            model: "test-model".to_string(),
+            provider: "openai".to_string(),
+            completion_status: CompletionStatus::Success,
+            prompt_tokens: Some(10),
+            completion_tokens: Some(50),
+            total_tokens: Some(60),
+            temperature: Some(0.7),
+        };
+
+        let span = CompletionSpan::new(&tracer, "test", attrs).unwrap();
+        span.mark_success();
+    }
+
+    #[test]
+    fn test_agent_loop_span_creation() {
+        let provider = TracerProvider::default();
+        let tracer = provider.tracer("test");
+
+        let span = AgentLoopSpan::new(&tracer, "test-loop", "test-agent").unwrap();
+        span.record_outcome(AgentStopReason::Normal, 1);
+    }
+
+    #[test]
+    fn test_tool_span_creation() {
+        let provider = TracerProvider::default();
+        let tracer = provider.tracer("test");
+
+        let span = ToolSpan::new(&tracer, "test_tool").unwrap();
+        span.mark_success();
+    }
+
+    #[test]
+    fn test_session_span_creation() {
+        let provider = TracerProvider::default();
+        let tracer = provider.tracer("test");
+
+        let span = SessionOperationSpan::new(&tracer, "test_operation").unwrap();
+    }
+}

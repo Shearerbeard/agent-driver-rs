@@ -21,6 +21,9 @@ use crate::types::{
     ToolName,
 };
 
+#[cfg(feature = "phoenix")]
+use opentelemetry_sdk::trace::Tracer;
+
 /// Default max history to prevent unbounded memory growth
 pub const DEFAULT_MAX_HISTORY_MESSAGES: usize = 1000;
 
@@ -43,6 +46,8 @@ pub struct SessionConfig {
     /// JSON Schema compliance.
     #[cfg(feature = "schema-sanitize")]
     pub sanitize_schemas: bool,
+    #[cfg(feature = "phoenix")]
+    pub otel_tracer: Option<std::sync::Arc<Tracer>>,
 }
 
 /// A conversation session with an LLM.
@@ -94,6 +99,8 @@ pub struct Session {
     cancellation: CancellationToken,
     task_tracker: TaskTracker,
     session_id: CorrelationId,
+    #[cfg(feature = "phoenix")]
+    otel_tracer: Option<std::sync::Arc<Tracer>>,
 }
 
 impl Session {
@@ -105,6 +112,12 @@ impl Session {
     /// Get the model ID
     pub fn model(&self) -> &ModelId {
         &self.config.model
+    }
+
+    /// Get the OTEL tracer if Phoenix tracing is enabled
+    #[cfg(feature = "phoenix")]
+    pub fn otel_tracer(&self) -> Option<std::sync::Arc<Tracer>> {
+        self.otel_tracer.clone()
     }
 
     // System prompt management
@@ -184,6 +197,21 @@ impl Session {
         &self,
         msg: impl Into<String>,
     ) -> Result<StreamHandle, SessionError> {
+        #[cfg(feature = "phoenix")]
+        let _span = if let Some(tracer) = &self.config.otel_tracer {
+            let _ = crate::otel::create_agent_loop_attributes(&crate::otel::AgentLoopAttributes {
+                name: "session.send".to_string(),
+                iteration: None,
+                stop_reason: crate::otel::AgentStopReason::Normal,
+                tool_count: None,
+                response_text: None,
+            });
+            crate::otel::SessionOperationSpan::new(tracer, "session.send")
+                .ok()
+        } else {
+            None
+        };
+
         let user_msg = Message::user(msg);
         self.add_message(user_msg).await;
 
@@ -198,6 +226,14 @@ impl Session {
     /// the tool result messages are already in history, so we just need to send
     /// the current history back to the provider for the next turn.
     pub async fn continue_streaming(&self) -> Result<StreamHandle, SessionError> {
+        #[cfg(feature = "phoenix")]
+        let _span = if let Some(tracer) = &self.config.otel_tracer {
+            crate::otel::SessionOperationSpan::new(tracer, "session.continue")
+                .ok()
+        } else {
+            None
+        };
+
         let request = self.build_completion_request().await;
         let ctx = self.new_provider_context();
         Ok(self.provider.complete_stream(request, ctx).await?)
@@ -241,6 +277,14 @@ impl Session {
 
     /// Send a message and collect the full response
     pub async fn send(&self, msg: impl Into<String>) -> Result<CollectedResponse, SessionError> {
+        #[cfg(feature = "phoenix")]
+        let _span = if let Some(tracer) = &self.config.otel_tracer {
+            crate::otel::SessionOperationSpan::new(tracer, "session.send")
+                .ok()
+        } else {
+            None
+        };
+
         let handle = self.send_streaming(msg).await?;
         let response = handle.collect().await?;
 
@@ -367,6 +411,8 @@ pub struct SessionBuilder {
     tools: Vec<DynTool>,
     #[cfg(feature = "schema-sanitize")]
     sanitize_schemas: bool,
+    #[cfg(feature = "phoenix")]
+    otel_tracer: Option<std::sync::Arc<Tracer>>,
 }
 
 impl SessionBuilder {
@@ -383,6 +429,8 @@ impl SessionBuilder {
             tools: Vec::new(),
             #[cfg(feature = "schema-sanitize")]
             sanitize_schemas: false,
+            #[cfg(feature = "phoenix")]
+            otel_tracer: None,
         }
     }
 
@@ -471,6 +519,14 @@ impl SessionBuilder {
         self
     }
 
+    /// Set the Phoenix tracer for tracing
+    #[cfg(feature = "phoenix")]
+    #[must_use]
+    pub fn otel_tracer(mut self, tracer: std::sync::Arc<Tracer>) -> Self {
+        self.otel_tracer = Some(tracer);
+        self
+    }
+
     /// Build the session
     ///
     /// This is async to properly register tools.
@@ -495,6 +551,8 @@ impl SessionBuilder {
             request_timeout: self.request_timeout,
             #[cfg(feature = "schema-sanitize")]
             sanitize_schemas: self.sanitize_schemas,
+            #[cfg(feature = "phoenix")]
+            otel_tracer: self.otel_tracer.clone(),
         };
 
         // Register initial tools
@@ -511,6 +569,8 @@ impl SessionBuilder {
             cancellation: CancellationToken::new(),
             task_tracker: TaskTracker::new(),
             session_id: CorrelationId::generate(),
+            #[cfg(feature = "phoenix")]
+            otel_tracer: self.otel_tracer,
         };
 
         Ok(session)

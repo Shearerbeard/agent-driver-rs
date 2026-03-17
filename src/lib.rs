@@ -24,6 +24,7 @@
 pub mod agent;
 pub mod config;
 pub mod error;
+pub mod otel;
 pub mod provider;
 pub mod session;
 pub mod streaming;
@@ -59,7 +60,15 @@ pub use task::{TaskHandle, TaskPool, TrackedSpawn};
 
 pub use provider::{
     BoxedProvider, CompletionConfig, CompletionRequest, Provider, ProviderCapabilities,
-    ProviderContext, ProviderInfo, ProviderKind, SharedProvider,
+    ProviderContext, ProviderInfo, SharedProvider,
+};
+
+#[cfg(feature = "phoenix")]
+pub use otel::{
+    AgentLoopAttributes, AgentStopReason, CompletionAttributes, CompletionStatus,
+    OtelEndpoint, OtlpExporterConfig, SessionAttributes, SpanKind as OtelSpanKind,
+    SpanName, ToolExecutionAttributes, ToolExecutionResult, enable_session_tracing, get_tracer,
+    init_tracer_provider,
 };
 
 #[cfg(any(test, feature = "test-support"))]

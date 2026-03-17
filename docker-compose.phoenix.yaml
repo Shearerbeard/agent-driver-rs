@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  otel-collector:
+    image: otel/otelcol-contrib:latest
+    container_name: phoenix-otel-collector
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "13133:13133" # health check
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    command: --config=/etc/otelcol-contrib/config.yaml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:13133/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Optional: Phoenix server (for full UI)
+  # Uncomment if you want the full Phoenix experience
+  #
+  # phoenix:
+  #   image: arizephoenix/phoenix:latest
+  #   container_name: phoenix-server
+  #   ports:
+  #     - "6006:6006"
+  #   environment:
+  #     - PHOENIX_PORT=6006
+  #   depends_on:
+  #     otel-collector:
+  #       condition: service_healthy

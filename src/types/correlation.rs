@@ -31,6 +31,13 @@ impl std::fmt::Display for CorrelationId {
     }
 }
 
+impl CorrelationId {
+    /// Get the correlation ID as a string
+    pub fn as_str(&self) -> String {
+        self.0.to_string()
+    }
+}
+
 /// Context for correlating operations within a request scope
 #[derive(Debug, Clone)]
 pub struct CorrelationContext {

@@ -15,6 +15,9 @@ use crate::types::{ContentBlock, Message, Role, ToolName};
 use super::config::AgentLoopConfig;
 use super::observer::{AgentEvent, AgentObserver, LoopStopReason, NoOpObserver};
 
+#[cfg(feature = "phoenix")]
+use crate::otel::instrumentation::AgentLoopSpan;
+
 /// Outcome of running the agent loop
 #[derive(Debug, Clone)]
 pub struct AgentOutcome {
@@ -113,9 +116,25 @@ impl<'s> AgentLoop<'s> {
     /// 3. Continue streaming with tool results in history
     /// 4. Repeat until no more tool calls, or a limit is hit
     pub async fn run(self, message: impl Into<String>) -> Result<AgentOutcome, AgentLoopError> {
+        #[cfg(feature = "phoenix")]
         let agent_name = self.config.name.as_deref().unwrap_or("agent_loop");
-        let _span = tracing::info_span!("agent_loop", name = agent_name).entered();
+        #[cfg(feature = "phoenix")]
+        let tracer = self.session.otel_tracer();
 
+        #[cfg(feature = "phoenix")]
+        let mut agent_span = if let Some(tracer) = &tracer {
+            AgentLoopSpan::new(tracer, "agent_loop", agent_name).ok()
+        } else {
+            None
+        };
+
+        #[cfg(feature = "phoenix")]
+        let cancellation = self
+            .cancellation
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| self.session.child_token());
+        #[cfg(not(feature = "phoenix"))]
         let cancellation = self
             .cancellation
             .as_ref()
@@ -144,6 +163,13 @@ impl<'s> AgentLoop<'s> {
         loop {
             // Check cancellation
             if cancellation.is_cancelled() {
+                #[cfg(feature = "phoenix")]
+                if let Some(span) = &mut agent_span {
+                    span.record_outcome(
+                        crate::otel::AgentStopReason::Cancelled,
+                        tool_depth,
+                    );
+                }
                 return self
                     .complete_loop(
                         response,
@@ -157,6 +183,10 @@ impl<'s> AgentLoop<'s> {
             // If no tool use, we're done
             if !response.has_tool_use() {
                 let reason = stop_reason_from_metadata(&response.metadata);
+                #[cfg(feature = "phoenix")]
+                if let Some(span) = &mut agent_span {
+                    span.record_outcome(loop_stop_reason_to_agent(&reason), tool_depth);
+                }
                 return self
                     .complete_loop(response, &mut responses, reason, tool_depth)
                     .await;
@@ -164,6 +194,13 @@ impl<'s> AgentLoop<'s> {
 
             // Check tool depth limit
             if tool_depth >= self.config.max_tool_depth.get() {
+                #[cfg(feature = "phoenix")]
+                if let Some(span) = &mut agent_span {
+                    span.record_outcome(
+                        crate::otel::AgentStopReason::MaxToolDepthReached,
+                        tool_depth,
+                    );
+                }
                 return self
                     .complete_loop(
                         response,
@@ -182,7 +219,17 @@ impl<'s> AgentLoop<'s> {
                 })
                 .await;
 
+            #[cfg(feature = "phoenix")]
+            let _iteration_span = agent_span.as_ref().and_then(|span| {
+                span.create_iteration_span(tool_depth)
+            });
+
             // Execute tool calls
+            #[cfg(feature = "phoenix")]
+            let _tool_span = agent_span.as_ref().and_then(|span| {
+                span.create_tool_span("tool")
+            });
+
             let tool_error = execute_tools(self.session, self.observer.as_ref(), &response).await;
 
             responses.push(response);
@@ -190,6 +237,16 @@ impl<'s> AgentLoop<'s> {
             // Handle tool errors when continue_on_tool_error is false
             if let Some((failed_tool, err_msg)) = tool_error {
                 if !self.config.continue_on_tool_error {
+                #[cfg(feature = "phoenix")]
+                if let Some(span) = &mut agent_span {
+                    span.record_outcome(
+                        crate::otel::AgentStopReason::ToolError {
+                            tool_name: failed_tool.to_string(),
+                            message: err_msg.to_string(),
+                        },
+                        tool_depth,
+                    );
+                }
                     let reason = LoopStopReason::ToolError {
                         tool_name: failed_tool,
                         message: err_msg,
@@ -207,6 +264,11 @@ impl<'s> AgentLoop<'s> {
                         iterations: tool_depth,
                     });
                 }
+            }
+
+            #[cfg(feature = "phoenix")]
+            if let Some(span) = &mut agent_span {
+                span.record_outcome(crate::otel::AgentStopReason::ToolExecutionCompleted, tool_depth);
             }
 
             // Continue streaming (tool results are already in history)
@@ -477,6 +539,26 @@ fn stop_reason_from_metadata(metadata: &CompletionMetadata) -> LoopStopReason {
         Some(StopReason::StopSequence) => LoopStopReason::StopSequence,
         Some(StopReason::ContentFilter) => LoopStopReason::ContentFilter,
         None => LoopStopReason::EndTurn,
+    }
+}
+
+/// Convert LoopStopReason to AgentStopReason for Phoenix tracing
+#[cfg(feature = "phoenix")]
+fn loop_stop_reason_to_agent(reason: &LoopStopReason) -> crate::otel::AgentStopReason {
+    match reason {
+        LoopStopReason::EndTurn => crate::otel::AgentStopReason::Normal,
+        LoopStopReason::MaxToolDepthReached => crate::otel::AgentStopReason::MaxToolDepthReached,
+        LoopStopReason::Cancelled => crate::otel::AgentStopReason::Cancelled,
+        LoopStopReason::ToolError {
+            tool_name,
+            message,
+        } => crate::otel::AgentStopReason::ToolError {
+            tool_name: tool_name.to_string(),
+            message: message.to_string(),
+        },
+        LoopStopReason::MaxTokens => crate::otel::AgentStopReason::Normal,
+        LoopStopReason::StopSequence => crate::otel::AgentStopReason::Normal,
+        LoopStopReason::ContentFilter => crate::otel::AgentStopReason::Normal,
     }
 }
 

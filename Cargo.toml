@@ -13,6 +13,7 @@ ollama = ["dep:ollama-rs"]
 mcp = ["dep:rmcp"]
 mcp-http = ["mcp", "rmcp/transport-streamable-http-client-reqwest"]
 schema-sanitize = ["dep:mcp-openai-bridge"]
+phoenix = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions"]
 test-support = []
 
 [dependencies]
@@ -60,6 +61,12 @@ ollama-rs = { version = "0.3", features = ["stream"], optional = true }
 rmcp = { version = "0.14", features = ["client", "transport-child-process"], optional = true }
 mcp-openai-bridge = { git = "ssh://git@github.com/example-org/mcp-openai-bridge.git", default-features = false, optional = true }
 
+# OpenTelemetry for Phoenix (optional)
+opentelemetry = { version = "0.27", features = ["trace"], optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"], optional = true }
+opentelemetry-otlp = { version = "0.15", optional = true }
+opentelemetry-semantic-conventions = { version = "0.15", optional = true }
+
 [dev-dependencies]
 agent-driver-rs = { path = ".", features = ["test-support"] }
 
@@ -70,3 +77,7 @@ path = "src/bin/chat.rs"
 [[example]]
 name = "cluster_guardian"
 required-features = ["ollama", "mcp-http", "schema-sanitize"]
+
+[[example]]
+name = "phoenix_integration_mock"
+required-features = ["phoenix"]

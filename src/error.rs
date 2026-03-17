@@ -361,6 +361,18 @@ impl AgentLoopError {
     }
 }
 
+/// OpenTelemetry errors
+#[cfg(feature = "phoenix")]
+#[derive(Debug, Error)]
+pub enum OtelError {
+    #[error("Failed to initialize OTEL tracer: {0}")]
+    TracerInit(String),
+    #[error("Failed to create span: {0}")]
+    SpanCreation(String),
+    #[error("Failed to export span: {0}")]
+    Export(String),
+}
+
 // ── Centralized error message detection ──────────────────────────────────
 
 /// Returns `true` if the message indicates a context window overflow.

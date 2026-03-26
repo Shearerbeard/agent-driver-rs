@@ -56,9 +56,17 @@ impl AgentObserver for LoggingObserver {
                 ..
             } => {
                 if *is_error {
-                    eprintln!("\x1b[31m[tool:error] {}: {}\x1b[0m", name, truncate(result, 200));
+                    eprintln!(
+                        "\x1b[31m[tool:error] {}: {}\x1b[0m",
+                        name,
+                        truncate(result, 200)
+                    );
                 } else {
-                    eprintln!("\x1b[32m[tool:done]  {}: {}\x1b[0m", name, truncate(result, 200));
+                    eprintln!(
+                        "\x1b[32m[tool:done]  {}: {}\x1b[0m",
+                        name,
+                        truncate(result, 200)
+                    );
                 }
             }
             AgentEvent::IterationStart { iteration } => {
@@ -175,7 +183,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
 
     for (name, err) in &errors {
-        eprintln!("Warning: failed to connect to MCP server '{}': {}", name, err);
+        eprintln!(
+            "Warning: failed to connect to MCP server '{}': {}",
+            name, err
+        );
     }
 
     // Sync tools from all connected servers

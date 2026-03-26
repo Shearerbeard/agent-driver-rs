@@ -79,5 +79,17 @@ name = "cluster_guardian"
 required-features = ["ollama", "mcp-http", "schema-sanitize"]
 
 [[example]]
+name = "phoenix_demo"
+required-features = ["phoenix"]
+
+[[example]]
+name = "phoenix_integration_bedrock"
+required-features = ["phoenix", "bedrock"]
+
+[[example]]
 name = "phoenix_integration_mock"
 required-features = ["phoenix"]
+
+[[example]]
+name = "phoenix_integration_ollama"
+required-features = ["phoenix", "ollama"]

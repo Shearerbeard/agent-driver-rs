@@ -104,6 +104,31 @@ Copy this into your PR or commit notes:
 - [ ] `cargo clippy --features bedrock -- -D warnings`
 - [ ] Live: basic chat smoke test
 - [ ] Live: tool calling smoke test (if agent/tool/provider changed)
+- [ ] Phoenix: mock provider tracing test (if tracing changes)
+```
+
+## Phoenix Integration Testing
+
+Test OpenTelemetry/Phoenix tracing integration:
+
+```bash
+# Run mock tests (no external dependencies)
+cargo run --example phoenix_integration_mock --features phoenix
+
+# Run Bedrock tests (requires AWS credentials)
+cargo run --example phoenix_integration_bedrock --features "phoenix bedrock"
+
+# Run Ollama tests (requires Ollama running)
+cargo run --example phoenix_integration_ollama --features "phoenix ollama"
+
+# Run all tests with OTel collector
+./scripts/test-phoenix-integration.sh all
+
+# Start OTel Collector
+docker compose -f docker-compose.phoenix.yaml up -d
+
+# View OTel Collector logs
+docker compose -f docker-compose.phoenix.yaml logs -f otel-collector
 ```
 
 ## Known Gotchas

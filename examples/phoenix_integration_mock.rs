@@ -8,13 +8,12 @@
 //!
 //! Check spans: docker compose -f docker-compose.phoenix.yaml logs otel-collector | grep -E "span|attributes"
 
-use std::sync::Arc;
 use futures::FutureExt;
+use std::sync::Arc;
 
 use agent_driver_rs::provider::mock::{
-    mock_content_filter_response, mock_mixed_text_tool_response,
-    mock_multi_tool_response, mock_text_response, mock_thinking_response, mock_tool_call_response,
-    MockProvider,
+    mock_content_filter_response, mock_mixed_text_tool_response, mock_multi_tool_response,
+    mock_text_response, mock_thinking_response, mock_tool_call_response, MockProvider,
 };
 use agent_driver_rs::session::SessionBuilder;
 use agent_driver_rs::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
@@ -27,9 +26,12 @@ fn echo_tool() -> agent_driver_rs::tool::DynTool {
         "Echos the input back",
         ToolSchema::empty(),
     );
-    Arc::new(FnTool::new(def, |_input: &ToolInput, _ctx: &agent_driver_rs::tool::ToolContext| {
-        async move { Ok(ToolResult::text("echoed!")) }.boxed()
-    }))
+    Arc::new(FnTool::new(
+        def,
+        |_input: &ToolInput, _ctx: &agent_driver_rs::tool::ToolContext| {
+            async move { Ok(ToolResult::text("echoed!")) }.boxed()
+        },
+    ))
 }
 
 fn add_tool() -> agent_driver_rs::tool::DynTool {
@@ -37,21 +39,27 @@ fn add_tool() -> agent_driver_rs::tool::DynTool {
         agent_driver_rs::types::ToolName::new("add").unwrap(),
         "Adds two numbers",
         ToolSchema::new(
-            serde_json::from_str(r#"{
+            serde_json::from_str(
+                r#"{
                 "type": "object",
                 "properties": {
                     "a": { "type": "number" },
                     "b": { "type": "number" }
                 },
                 "required": ["a", "b"]
-            }"#).unwrap()
+            }"#,
+            )
+            .unwrap(),
         ),
     );
-    Arc::new(FnTool::new(def, |input: &ToolInput, _ctx: &agent_driver_rs::tool::ToolContext| {
-        let a: f64 = input.get("a").unwrap().as_f64().unwrap();
-        let b: f64 = input.get("b").unwrap().as_f64().unwrap();
-        async move { Ok(ToolResult::text(&(a + b).to_string())) }.boxed()
-    }))
+    Arc::new(FnTool::new(
+        def,
+        |input: &ToolInput, _ctx: &agent_driver_rs::tool::ToolContext| {
+            let a: f64 = input.get("a").unwrap().as_f64().unwrap();
+            let b: f64 = input.get("b").unwrap().as_f64().unwrap();
+            async move { Ok(ToolResult::text(&(a + b).to_string())) }.boxed()
+        },
+    ))
 }
 
 fn init_tracer() -> Arc<opentelemetry_sdk::trace::Tracer> {
@@ -77,50 +85,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 1: Basic text call
     println!("🧪 Test 1: Basic text call");
     match test_basic_text(tracer.clone()).await {
-        Ok(_) => { println!("   ✅ Passed\n"); passed += 1; }
-        Err(e) => { println!("   ❌ Failed: {}\n", e); failed += 1; }
+        Ok(_) => {
+            println!("   ✅ Passed\n");
+            passed += 1;
+        }
+        Err(e) => {
+            println!("   ❌ Failed: {}\n", e);
+            failed += 1;
+        }
     }
 
     // Test 2: Single tool call
     println!("🧪 Test 2: Single tool call");
     match test_single_tool_call(tracer.clone()).await {
-        Ok(_) => { println!("   ✅ Passed\n"); passed += 1; }
-        Err(e) => { println!("   ❌ Failed: {}\n", e); failed += 1; }
+        Ok(_) => {
+            println!("   ✅ Passed\n");
+            passed += 1;
+        }
+        Err(e) => {
+            println!("   ❌ Failed: {}\n", e);
+            failed += 1;
+        }
     }
 
     // Test 3: Multi-tool call
     println!("🧪 Test 3: Multi-tool call (parallel)");
     match test_multi_tool_call(tracer.clone()).await {
-        Ok(_) => { println!("   ✅ Passed\n"); passed += 1; }
-        Err(e) => { println!("   ❌ Failed: {}\n", e); failed += 1; }
+        Ok(_) => {
+            println!("   ✅ Passed\n");
+            passed += 1;
+        }
+        Err(e) => {
+            println!("   ❌ Failed: {}\n", e);
+            failed += 1;
+        }
     }
 
     // Test 4: Tool depth (2 iterations)
     println!("🧪 Test 4: Tool depth (2 iterations)");
     match test_tool_depth(tracer.clone()).await {
-        Ok(_) => { println!("   ✅ Passed\n"); passed += 1; }
-        Err(e) => { println!("   ❌ Failed: {}\n", e); failed += 1; }
+        Ok(_) => {
+            println!("   ✅ Passed\n");
+            passed += 1;
+        }
+        Err(e) => {
+            println!("   ❌ Failed: {}\n", e);
+            failed += 1;
+        }
     }
 
     // Test 5: Thinking/reasoning
     println!("🧪 Test 5: Reasoning/thinking");
     match test_thinking(tracer.clone()).await {
-        Ok(_) => { println!("   ✅ Passed\n"); passed += 1; }
-        Err(e) => { println!("   ❌ Failed: {}\n", e); failed += 1; }
+        Ok(_) => {
+            println!("   ✅ Passed\n");
+            passed += 1;
+        }
+        Err(e) => {
+            println!("   ❌ Failed: {}\n", e);
+            failed += 1;
+        }
     }
 
     // Test 6: Mixed text + tool
     println!("🧪 Test 6: Mixed text + tool");
     match test_mixed_text_tool(tracer.clone()).await {
-        Ok(_) => { println!("   ✅ Passed\n"); passed += 1; }
-        Err(e) => { println!("   ❌ Failed: {}\n", e); failed += 1; }
+        Ok(_) => {
+            println!("   ✅ Passed\n");
+            passed += 1;
+        }
+        Err(e) => {
+            println!("   ❌ Failed: {}\n", e);
+            failed += 1;
+        }
     }
 
     // Test 7: Content filter
     println!("🧪 Test 7: Content filter");
     match test_content_filter(tracer.clone()).await {
-        Ok(_) => { println!("   ✅ Passed\n"); passed += 1; }
-        Err(e) => { println!("   ❌ Failed: {}\n", e); failed += 1; }
+        Ok(_) => {
+            println!("   ✅ Passed\n");
+            passed += 1;
+        }
+        Err(e) => {
+            println!("   ❌ Failed: {}\n", e);
+            failed += 1;
+        }
     }
 
     println!("═══════════════════════════════════════════════");
@@ -134,7 +184,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn test_basic_text(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_basic_text(
+    tracer: Arc<opentelemetry_sdk::trace::Tracer>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![mock_text_response("Hello, world!")]);
     let session = SessionBuilder::new()
         .with_provider(provider)
@@ -148,7 +200,9 @@ async fn test_basic_text(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Resul
     Ok(())
 }
 
-async fn test_single_tool_call(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_single_tool_call(
+    tracer: Arc<opentelemetry_sdk::trace::Tracer>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![
         mock_tool_call_response("call_1", "echo", "{}"),
         mock_text_response("Tool executed!"),
@@ -166,7 +220,9 @@ async fn test_single_tool_call(tracer: Arc<opentelemetry_sdk::trace::Tracer>) ->
     Ok(())
 }
 
-async fn test_multi_tool_call(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_multi_tool_call(
+    tracer: Arc<opentelemetry_sdk::trace::Tracer>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![
         mock_multi_tool_response(&[
             ("call_1", "add", "{\"a\": 1, \"b\": 2}"),
@@ -187,7 +243,9 @@ async fn test_multi_tool_call(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> 
     Ok(())
 }
 
-async fn test_tool_depth(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_tool_depth(
+    tracer: Arc<opentelemetry_sdk::trace::Tracer>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![
         mock_tool_call_response("call_1", "echo", "{}"),
         mock_tool_call_response("call_2", "echo", "{}"),
@@ -206,7 +264,9 @@ async fn test_tool_depth(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Resul
     Ok(())
 }
 
-async fn test_thinking(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_thinking(
+    tracer: Arc<opentelemetry_sdk::trace::Tracer>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![mock_thinking_response(
         "Let me think about this carefully...",
         "The answer is 42.",
@@ -223,7 +283,9 @@ async fn test_thinking(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<
     Ok(())
 }
 
-async fn test_mixed_text_tool(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_mixed_text_tool(
+    tracer: Arc<opentelemetry_sdk::trace::Tracer>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![
         mock_mixed_text_tool_response("I'll use a tool:", "call_1", "echo", "{}"),
         mock_text_response("Tool result received!"),
@@ -241,7 +303,9 @@ async fn test_mixed_text_tool(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> 
     Ok(())
 }
 
-async fn test_content_filter(tracer: Arc<opentelemetry_sdk::trace::Tracer>) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_content_filter(
+    tracer: Arc<opentelemetry_sdk::trace::Tracer>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let provider = MockProvider::new(vec![mock_content_filter_response("Partial output...")]);
     let session = SessionBuilder::new()
         .with_provider(provider)

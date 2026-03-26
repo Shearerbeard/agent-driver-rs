@@ -65,10 +65,9 @@ pub use provider::{
 
 #[cfg(feature = "phoenix")]
 pub use otel::{
-    AgentLoopAttributes, AgentStopReason, CompletionAttributes, CompletionStatus,
-    OtelEndpoint, OtlpExporterConfig, SessionAttributes, SpanKind as OtelSpanKind,
-    SpanName, ToolExecutionAttributes, ToolExecutionResult, enable_session_tracing, get_tracer,
-    init_tracer_provider,
+    enable_session_tracing, get_tracer, init_tracer_provider, AgentLoopAttributes, AgentStopReason,
+    CompletionAttributes, CompletionStatus, OtelEndpoint, OtlpExporterConfig, SessionAttributes,
+    SpanKind as OtelSpanKind, SpanName, ToolExecutionAttributes, ToolExecutionResult,
 };
 
 #[cfg(any(test, feature = "test-support"))]

@@ -201,13 +201,14 @@ impl OllamaConfig {
                 _ => s.parse().ok().map(KeepAlive::Minutes),
             });
 
-        let think = std::env::var("OLLAMA_THINK")
-            .ok()
-            .and_then(|s| match s.to_lowercase().as_str() {
-                "true" | "1" | "yes" => Some(true),
-                "false" | "0" | "no" => Some(false),
-                _ => None,
-            });
+        let think =
+            std::env::var("OLLAMA_THINK")
+                .ok()
+                .and_then(|s| match s.to_lowercase().as_str() {
+                    "true" | "1" | "yes" => Some(true),
+                    "false" | "0" | "no" => Some(false),
+                    _ => None,
+                });
 
         Ok(Self {
             base_url,

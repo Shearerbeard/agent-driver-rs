@@ -21,7 +21,9 @@ use std::pin::Pin;
 
 use ollama_rs::generation::chat::request::ChatMessageRequest;
 use ollama_rs::generation::chat::{ChatMessage, ChatMessageResponseStream, MessageRole};
-use ollama_rs::generation::tools::{ToolCall, ToolCallFunction, ToolFunctionInfo, ToolInfo, ToolType};
+use ollama_rs::generation::tools::{
+    ToolCall, ToolCallFunction, ToolFunctionInfo, ToolInfo, ToolType,
+};
 use ollama_rs::models::ModelOptions;
 use ollama_rs::Ollama;
 
@@ -474,8 +476,8 @@ fn parse_ollama_response(
             let name = ToolName::new(&tc.function.name)
                 .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid"));
 
-            let input_json = serde_json::to_string(&tc.function.arguments)
-                .unwrap_or_else(|_| "{}".to_string());
+            let input_json =
+                serde_json::to_string(&tc.function.arguments).unwrap_or_else(|_| "{}".to_string());
 
             events.push(Ok(StreamEvent::ContentBlockStart {
                 index: state.block_index,
@@ -648,10 +650,15 @@ mod tests {
         let events = parse_ollama_response(chunk, &mut state);
 
         // Should have: Started, ContentBlockStart(ToolUse), ToolUseStart, ToolInputDelta, ContentBlockStop
-        assert!(events.iter().any(|e| matches!(e, Ok(StreamEvent::Started { .. }))));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Ok(StreamEvent::Started { .. }))));
         assert!(events.iter().any(|e| matches!(
             e,
-            Ok(StreamEvent::ContentBlockStart { block_type: ContentBlockType::ToolUse, .. })
+            Ok(StreamEvent::ContentBlockStart {
+                block_type: ContentBlockType::ToolUse,
+                ..
+            })
         )));
         assert!(events.iter().any(|e| matches!(
             e,
@@ -790,11 +797,7 @@ mod tests {
     fn convert_messages_tool_role() {
         let provider = make_test_provider();
 
-        let msg = Message::tool_result(
-            ToolCallId::new("call_1"),
-            "file contents here",
-            false,
-        );
+        let msg = Message::tool_result(ToolCallId::new("call_1"), "file contents here", false);
 
         let converted = provider.convert_messages(&[msg]);
         assert_eq!(converted.len(), 1);
@@ -814,7 +817,10 @@ mod tests {
         // Should have thinking block events
         assert!(events.iter().any(|e| matches!(
             e,
-            Ok(StreamEvent::ContentBlockStart { block_type: ContentBlockType::Thinking, .. })
+            Ok(StreamEvent::ContentBlockStart {
+                block_type: ContentBlockType::Thinking,
+                ..
+            })
         )));
         assert!(events.iter().any(|e| matches!(
             e,

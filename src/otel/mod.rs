@@ -146,7 +146,7 @@ pub fn enable_session_tracing(_session: &Session) -> Option<SessionOperationSpan
         .and_then(|tracer| SessionOperationSpan::new(&tracer, "session.operation").ok())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "phoenix"))]
 mod tests {
     use super::*;
 

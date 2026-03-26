@@ -31,7 +31,7 @@ TEST_TYPE="${1:-all}"
 # Function to start OTel Collector
 start_otel_collector() {
     echo -e "${YELLOW}📦 Starting OTel Collector...${NC}"
-    docker compose -f docker-compose.phoenix.yaml up -d otel-collector
+    docker compose -f "$PROJECT_ROOT/docker-compose.phoenix.yaml" up -d otel-collector
     
     echo -e "${YELLOW}⏳ Waiting for OTel Collector to be ready...${NC}"
     for i in {1..30}; do
@@ -48,7 +48,7 @@ start_otel_collector() {
 # Function to stop OTel Collector
 stop_otel_collector() {
     echo -e "${YELLOW}🛑 Stopping OTel Collector...${NC}"
-    docker compose -f docker-compose.phoenix.yaml down
+    docker compose -f "$PROJECT_ROOT/docker-compose.phoenix.yaml" down
 }
 
 # Function to show OTel Collector logs
@@ -56,7 +56,7 @@ show_logs() {
     echo ""
     echo -e "${YELLOW}📜 OTel Collector logs (last 50 lines):${NC}"
     echo "──────────────────────────────────────────────────────"
-    docker compose -f docker-compose.phoenix.yaml logs otel-collector | tail -50
+    docker compose -f "$PROJECT_ROOT/docker-compose.phoenix.yaml" logs otel-collector | tail -50
     echo "──────────────────────────────────────────────────────"
 }
 
@@ -91,8 +91,16 @@ run_bedrock_tests() {
     
     echo -e "${GREEN}✅ AWS credentials found${NC}"
     
-    # TODO: Add Bedrock-specific test when examples are ready
-    echo -e "${YELLOW}⚠️  Bedrock integration tests coming soon${NC}"
+    # Run Bedrock test example
+    echo -e "${YELLOW}Running Bedrock integration test...${NC}"
+    cargo run --example phoenix_integration_bedrock --features "phoenix bedrock" 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ Bedrock tests passed${NC}"
+    else
+        echo -e "${RED}❌ Bedrock tests failed${NC}"
+        return 1
+    fi
 }
 
 # Run Ollama tests
@@ -110,13 +118,24 @@ run_ollama_tests() {
     
     echo -e "${GREEN}✅ Ollama is running${NC}"
     
-    # TODO: Add Ollama-specific test when examples are ready
-    echo -e "${YELLOW}⚠️  Ollama integration tests coming soon${NC}"
+    # Run Ollama test example
+    echo -e "${YELLOW}Running Ollama integration test...${NC}"
+    cargo run --example phoenix_integration_ollama --features "phoenix ollama" 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ Ollama tests passed${NC}"
+    else
+        echo -e "${RED}❌ Ollama tests failed${NC}"
+        return 1
+    fi
 }
 
-# Cleanup on exit
+# Cleanup on exit (only if collector was started)
 cleanup() {
-    stop_otel_collector
+    if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "bedrock" ] || [ "$TEST_TYPE" = "ollama" ]; then
+        PROJECT_ROOT="${PROJECT_ROOT:-$SCRIPT_DIR}"
+        stop_otel_collector
+    fi
 }
 trap cleanup EXIT
 
@@ -142,14 +161,14 @@ case "$TEST_TYPE" in
         echo "  - gRPC: localhost:4317"
         echo "  - HTTP:  localhost:4318"
         echo ""
-        echo "View logs: docker compose -f docker-compose.phoenix.yaml logs -f otel-collector"
+        echo "View logs: docker compose -f $PROJECT_ROOT/docker-compose.phoenix.yaml logs -f otel-collector"
         ;;
     stop)
         stop_otel_collector
         echo -e "${GREEN}✅ OTel Collector stopped${NC}"
         ;;
     logs)
-        docker compose -f docker-compose.phoenix.yaml logs -f otel-collector
+        docker compose -f "$PROJECT_ROOT/docker-compose.phoenix.yaml" logs -f otel-collector
         ;;
     *)
         echo "Usage: $0 [mock|bedrock|ollama|all|start|stop|logs]"

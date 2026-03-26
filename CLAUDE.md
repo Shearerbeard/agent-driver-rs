@@ -219,6 +219,12 @@ Design decisions are documented in `docs/adr/`. Read these before making archite
 
 When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on *context and consequences*, not implementation details.
 
+## Task Tracking
+
+- **TODO.md**: Active development tasks and milestones
+- **docs/PHOENIX_TODO.md**: Phoenix integration specific tasks
+- **IMPLEMENTATION_PLAN.md**: Current implementation roadmap
+
 ## Gotchas
 
 1. **Bedrock models need inference profiles** - Modern Claude models require `BEDROCK_INFERENCE_PROFILE` env var

@@ -42,7 +42,12 @@ fn kubectl_tool() -> DynTool {
         ToolSchema::empty(),
     );
     Arc::new(FnTool::new(definition, |_input, _ctx| {
-        async { Ok(ToolResult::text("NAME   READY   STATUS    RESTARTS   AGE\nnginx  1/1     Running   0          5d")) }.boxed()
+        async {
+            Ok(ToolResult::text(
+                "NAME   READY   STATUS    RESTARTS   AGE\nnginx  1/1     Running   0          5d",
+            ))
+        }
+        .boxed()
     }))
 }
 
@@ -178,7 +183,10 @@ async fn cluster_guardian_fallback_tool_parsing() {
         .unwrap();
 
     // Fallback parsing should have extracted the tool call and executed it
-    assert_eq!(outcome.iterations, 1, "expected 1 tool iteration from fallback parsing");
+    assert_eq!(
+        outcome.iterations, 1,
+        "expected 1 tool iteration from fallback parsing"
+    );
     assert_eq!(outcome.final_response.text(), "Pods are healthy.");
     assert!(matches!(outcome.stop_reason, LoopStopReason::EndTurn));
 }

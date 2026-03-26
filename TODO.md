@@ -49,10 +49,20 @@ OpenRouter uses OpenAI-compatible format — separate concern.
 
 ## Milestone 4: Integration Tests
 
-- [ ] **End-to-end test with mock provider** — exercises the full agent loop without
-  requiring live API keys (mock HTTP responses or in-process mock provider)
-- [ ] **Mock MCP server test** — in-process tool that validates the MCP ↔ agent loop wiring
-- [ ] Add integration tests with mocked HTTP responses for individual providers
+- [x] Phoenix integration examples with Mock provider (phoenix_integration_mock.rs)
+- [x] Phoenix integration examples with Bedrock provider (phoenix_integration_bedrock.rs)
+- [x] Phoenix integration examples with Ollama provider (phoenix_integration_ollama.rs)
+- [x] OTel Collector docker-compose setup (docker-compose.phoenix.yaml)
+- [x] Test runner script (scripts/test-phoenix-integration.sh)
+- [x] Documentation updates (PHOENIX_TODO.md, manual-testing.md)
+- [ ] **Next Session: Full OTel Integration**
+  - [ ] Add `init_tracer()` to Bedrock and Ollama examples
+  - [ ] Pass tracer via `.otel_tracer(tracer)` to SessionBuilder
+  - [ ] Add assertions to verify reasoning output quality
+  - [ ] End-to-end test with mock provider — exercises the full agent loop without
+    requiring live API keys (mock HTTP responses or in-process mock provider)
+  - [ ] Mock MCP server test — in-process tool that validates the MCP ↔ agent loop wiring
+  - [ ] Add integration tests with mocked HTTP responses for individual providers
 
 ## Someday
 
@@ -110,6 +120,11 @@ OpenRouter uses OpenAI-compatible format — separate concern.
 - [x] Provider event buffering — VecDeque in all 5 providers
 - [x] Parsing fixes — PosInt/NegInt, safe casts, ContentFilter, parallel tool calls
 - [x] Threading fixes — O(n²) drain, TaskPool TOCTOU, cancellation docs
+- [x] Phoenix integration examples with Bedrock provider (phoenix_integration_bedrock.rs)
+- [x] Phoenix integration examples with Ollama provider (phoenix_integration_ollama.rs)
+- [x] OTel Collector docker-compose setup (docker-compose.phoenix.yaml)
+- [x] Test runner script (scripts/test-phoenix-integration.sh)
+- [x] Documentation updates (PHOENIX_TODO.md, manual-testing.md)
 
 ## Notes
 

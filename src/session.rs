@@ -206,8 +206,7 @@ impl Session {
                 tool_count: None,
                 response_text: None,
             });
-            crate::otel::SessionOperationSpan::new(tracer, "session.send")
-                .ok()
+            crate::otel::SessionOperationSpan::new(tracer, "session.send").ok()
         } else {
             None
         };
@@ -228,8 +227,7 @@ impl Session {
     pub async fn continue_streaming(&self) -> Result<StreamHandle, SessionError> {
         #[cfg(feature = "phoenix")]
         let _span = if let Some(tracer) = &self.config.otel_tracer {
-            crate::otel::SessionOperationSpan::new(tracer, "session.continue")
-                .ok()
+            crate::otel::SessionOperationSpan::new(tracer, "session.continue").ok()
         } else {
             None
         };
@@ -279,8 +277,7 @@ impl Session {
     pub async fn send(&self, msg: impl Into<String>) -> Result<CollectedResponse, SessionError> {
         #[cfg(feature = "phoenix")]
         let _span = if let Some(tracer) = &self.config.otel_tracer {
-            crate::otel::SessionOperationSpan::new(tracer, "session.send")
-                .ok()
+            crate::otel::SessionOperationSpan::new(tracer, "session.send").ok()
         } else {
             None
         };

@@ -354,10 +354,7 @@ impl CollectedResponse {
 /// Parse embedded tool calls from a text string.
 ///
 /// Returns (extracted_tool_use_blocks, remaining_text).
-fn parse_embedded_tool_calls(
-    text: &str,
-    counter: &mut u32,
-) -> (Vec<ContentBlock>, String) {
+fn parse_embedded_tool_calls(text: &str, counter: &mut u32) -> (Vec<ContentBlock>, String) {
     let mut tool_calls = Vec::new();
     let mut remaining = text.to_string();
 

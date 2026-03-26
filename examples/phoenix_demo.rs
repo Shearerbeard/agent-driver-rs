@@ -58,21 +58,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Phoenix tracer provider initialized");
 
     // Create a mock provider (replace with real provider in production)
-    let provider = agent_driver_rs::provider::MockProvider::new(vec![
-        vec![agent_driver_rs::streaming::StreamEvent::Delta(
+    let provider = agent_driver_rs::provider::MockProvider::new(vec![vec![
+        agent_driver_rs::streaming::StreamEvent::Delta(
             agent_driver_rs::streaming::StreamDelta::TextDelta {
-                text: "I can help you find weather information. What city are you interested in?".into(),
+                text: "I can help you find weather information. What city are you interested in?"
+                    .into(),
             },
-        )],
-    ]);
+        ),
+    ]]);
 
     // Build session with Phoenix tracing enabled
     let session = SessionBuilder::new()
         .with_provider(provider)
         .model(agent_driver_rs::types::ModelId::new("gpt-4").unwrap())
-        .otel_tracer(
-            Arc::new(agent_driver_rs::otel::get_tracer("agent-driver-rs").unwrap()),
-        )
+        .otel_tracer(Arc::new(
+            agent_driver_rs::otel::get_tracer("agent-driver-rs").unwrap(),
+        ))
         .build()
         .await
         .map_err(|e| format!("Failed to build session: {}", e))?;

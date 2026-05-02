@@ -1,146 +1,306 @@
 //! OpenTelemetry instrumentation helpers
 //!
 //! Provides RAII guards for automatic span lifecycle management.
+//! Each span struct holds an `opentelemetry::Context` that owns the span
+//! via interior mutability. Spans are automatically ended on Drop.
 
 #[cfg(feature = "phoenix")]
-use crate::otel::types::{
-    AgentLoopAttributes, AgentStopReason, CompletionAttributes, ToolExecutionAttributes,
-};
-
+use crate::otel::types::{AgentStopReason, CompletionAttributes, ToolExecutionAttributes};
 #[cfg(feature = "phoenix")]
-#[allow(dead_code)]
-pub struct CompletionSpan {
-    attributes: CompletionAttributes,
-}
-
+use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer};
 #[cfg(feature = "phoenix")]
-impl CompletionSpan {
-    pub fn new(
-        _tracer: &opentelemetry_sdk::trace::Tracer,
-        name: &str,
-        attributes: CompletionAttributes,
-    ) -> Result<Self, String> {
-        let _ = name;
-        Ok(Self { attributes })
-    }
-
-    pub fn mark_success(&mut self) {}
-    pub fn mark_failure(&mut self, _message: impl Into<String>) {}
-}
+use opentelemetry::{Context, KeyValue};
 
 #[cfg(feature = "phoenix")]
 pub struct AgentLoopSpan {
-    _name: String,
+    context: Context,
+    tracer: opentelemetry_sdk::trace::Tracer,
 }
 
 #[cfg(feature = "phoenix")]
 impl AgentLoopSpan {
     pub fn new(
-        _tracer: &opentelemetry_sdk::trace::Tracer,
+        tracer: &opentelemetry_sdk::trace::Tracer,
         name: &str,
         agent_name: &str,
     ) -> Result<Self, String> {
-        let _ = (name, agent_name);
+        let span = tracer
+            .span_builder(name.to_string())
+            .with_kind(SpanKind::Server)
+            .with_attributes(vec![KeyValue::new(
+                "agent.name",
+                agent_name.to_string(),
+            )])
+            .start(tracer);
+        let context = Context::current_with_span(span);
         Ok(Self {
-            _name: name.to_string(),
+            context,
+            tracer: tracer.clone(),
         })
     }
 
-    pub fn record_outcome(&mut self, _stop_reason: AgentStopReason, _iterations: u32) {}
-
-    pub fn create_tool_span(&self, _tool_name: &str) -> Option<ToolSpan> {
-        None
+    pub fn record_outcome(&self, stop_reason: AgentStopReason, iterations: u32) {
+        let span = self.context.span();
+        span.set_attribute(KeyValue::new("agent.iterations", iterations as i64));
+        let reason_str = match &stop_reason {
+            AgentStopReason::Normal => "normal",
+            AgentStopReason::ToolExecutionCompleted => "tool_execution_completed",
+            AgentStopReason::MaxToolDepthReached => "max_tool_depth_reached",
+            AgentStopReason::Cancelled => "cancelled",
+            AgentStopReason::ToolError { .. } => "tool_error",
+        };
+        span.set_attribute(KeyValue::new("agent.stop_reason", reason_str));
+        if let AgentStopReason::ToolError {
+            tool_name, message, ..
+        } = &stop_reason
+        {
+            span.set_attribute(KeyValue::new("agent.error.tool", tool_name.clone()));
+            span.set_status(opentelemetry::trace::Status::error(message.clone()));
+        } else {
+            span.set_status(opentelemetry::trace::Status::Ok);
+        }
     }
 
-    pub fn create_iteration_span(&self, _iteration: u32) -> Option<IterationSpan> {
-        None
+    pub fn create_tool_span(&self, tool_name: &str) -> Option<ToolSpan> {
+        let span = self
+            .tracer
+            .span_builder(format!("tool.{}", tool_name))
+            .with_kind(SpanKind::Internal)
+            .with_attributes(vec![KeyValue::new("tool.name", tool_name.to_string())])
+            .start_with_context(&self.tracer, &self.context);
+        let context = self.context.with_span(span);
+        Some(ToolSpan { context })
+    }
+
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    pub fn create_session_span(
+        &self,
+        tracer: &opentelemetry_sdk::trace::Tracer,
+        operation: &str,
+    ) -> Option<SessionOperationSpan> {
+        SessionOperationSpan::with_parent(tracer, operation, &self.context).ok()
+    }
+
+    pub fn create_iteration_span(&self, iteration: u32) -> Option<IterationSpan> {
+        let span = self
+            .tracer
+            .span_builder(format!("iteration.{}", iteration))
+            .with_kind(SpanKind::Internal)
+            .with_attributes(vec![KeyValue::new("agent.iteration", iteration as i64)])
+            .start_with_context(&self.tracer, &self.context);
+        let context = self.context.with_span(span);
+        Some(IterationSpan { context })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for AgentLoopSpan {
+    fn drop(&mut self) {
+        self.context.span().end();
     }
 }
 
 #[cfg(feature = "phoenix")]
 pub struct ToolSpan {
-    _name: String,
+    context: Context,
 }
 
 #[cfg(feature = "phoenix")]
 impl ToolSpan {
-    pub fn new(_tracer: &opentelemetry_sdk::trace::Tracer, name: &str) -> Result<Self, String> {
-        Ok(Self {
-            _name: name.to_string(),
-        })
+    pub fn new(tracer: &opentelemetry_sdk::trace::Tracer, name: &str) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(name.to_string())
+            .with_kind(SpanKind::Internal)
+            .with_attributes(vec![KeyValue::new("tool.name", name.to_string())])
+            .start(tracer);
+        let context = Context::current_with_span(span);
+        Ok(Self { context })
     }
 
-    pub fn mark_success(&mut self) {}
-    pub fn mark_failure(&mut self, _message: impl Into<String>) {}
+    pub fn mark_success(&self) {
+        self.context
+            .span()
+            .set_status(opentelemetry::trace::Status::Ok);
+    }
+
+    pub fn mark_failure(&self, message: impl Into<String>) {
+        self.context
+            .span()
+            .set_status(opentelemetry::trace::Status::error(message.into()));
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for ToolSpan {
+    fn drop(&mut self) {
+        self.context.span().end();
+    }
 }
 
 #[cfg(feature = "phoenix")]
 pub struct IterationSpan {
-    _iteration: u32,
+    context: Context,
 }
 
 #[cfg(feature = "phoenix")]
 impl IterationSpan {
-    pub fn new(_tracer: &opentelemetry_sdk::trace::Tracer, iteration: u32) -> Result<Self, String> {
-        Ok(Self {
-            _iteration: iteration,
-        })
+    pub fn new(tracer: &opentelemetry_sdk::trace::Tracer, iteration: u32) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(format!("iteration.{}", iteration))
+            .with_kind(SpanKind::Internal)
+            .with_attributes(vec![KeyValue::new("agent.iteration", iteration as i64)])
+            .start(tracer);
+        let context = Context::current_with_span(span);
+        Ok(Self { context })
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for IterationSpan {
+    fn drop(&mut self) {
+        self.context.span().end();
+    }
+}
+
+#[cfg(feature = "phoenix")]
+pub struct CompletionSpan {
+    context: Context,
+}
+
+#[cfg(feature = "phoenix")]
+impl CompletionSpan {
+    pub fn new(
+        tracer: &opentelemetry_sdk::trace::Tracer,
+        name: &str,
+        attributes: CompletionAttributes,
+    ) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(name.to_string())
+            .with_kind(SpanKind::Client)
+            .with_attributes(create_completion_attributes(&attributes))
+            .start(tracer);
+        let context = Context::current_with_span(span);
+        Ok(Self { context })
+    }
+
+    pub fn mark_success(&self) {
+        self.context
+            .span()
+            .set_status(opentelemetry::trace::Status::Ok);
+    }
+
+    pub fn mark_failure(&self, message: impl Into<String>) {
+        self.context
+            .span()
+            .set_status(opentelemetry::trace::Status::error(message.into()));
+    }
+}
+
+#[cfg(feature = "phoenix")]
+impl Drop for CompletionSpan {
+    fn drop(&mut self) {
+        self.context.span().end();
     }
 }
 
 #[cfg(feature = "phoenix")]
 pub struct SessionOperationSpan {
-    _operation: String,
+    context: Context,
 }
 
 #[cfg(feature = "phoenix")]
 impl SessionOperationSpan {
     pub fn new(
-        _tracer: &opentelemetry_sdk::trace::Tracer,
+        tracer: &opentelemetry_sdk::trace::Tracer,
         operation: &str,
     ) -> Result<Self, String> {
-        Ok(Self {
-            _operation: operation.to_string(),
-        })
+        let span = tracer
+            .span_builder(operation.to_string())
+            .with_kind(SpanKind::Internal)
+            .with_attributes(vec![KeyValue::new(
+                "session.operation",
+                operation.to_string(),
+            )])
+            .start(tracer);
+        let context = Context::current_with_span(span);
+        Ok(Self { context })
+    }
+
+    pub fn with_parent(
+        tracer: &opentelemetry_sdk::trace::Tracer,
+        operation: &str,
+        parent: &Context,
+    ) -> Result<Self, String> {
+        let span = tracer
+            .span_builder(operation.to_string())
+            .with_kind(SpanKind::Internal)
+            .with_attributes(vec![KeyValue::new(
+                "session.operation",
+                operation.to_string(),
+            )])
+            .start_with_context(tracer, parent);
+        let context = parent.with_span(span);
+        Ok(Self { context })
     }
 
     pub fn inner(&self) -> Option<&()> {
-        None
+        Some(&())
     }
 }
 
 #[cfg(feature = "phoenix")]
-pub fn create_completion_attributes(
-    attributes: &CompletionAttributes,
-) -> Vec<(String, opentelemetry::Value)> {
-    vec![
-        (
-            "llm.model".to_string(),
-            attributes.model.as_str().to_string().into(),
-        ),
-        (
-            "llm.provider".to_string(),
-            attributes.provider.as_str().to_string().into(),
-        ),
-    ]
+impl Drop for SessionOperationSpan {
+    fn drop(&mut self) {
+        self.context.span().end();
+    }
+}
+
+#[cfg(feature = "phoenix")]
+pub fn create_completion_attributes(attributes: &CompletionAttributes) -> Vec<KeyValue> {
+    let mut attrs = vec![
+        KeyValue::new("llm.model", attributes.model.clone()),
+        KeyValue::new("llm.provider", attributes.provider.clone()),
+    ];
+    if let Some(t) = attributes.prompt_tokens {
+        attrs.push(KeyValue::new("llm.prompt_tokens", t as i64));
+    }
+    if let Some(t) = attributes.completion_tokens {
+        attrs.push(KeyValue::new("llm.completion_tokens", t as i64));
+    }
+    if let Some(t) = attributes.total_tokens {
+        attrs.push(KeyValue::new("llm.total_tokens", t as i64));
+    }
+    if let Some(t) = attributes.temperature {
+        attrs.push(KeyValue::new("llm.temperature", t as f64));
+    }
+    attrs
 }
 
 #[cfg(feature = "phoenix")]
 pub fn create_agent_loop_attributes(
-    attributes: &AgentLoopAttributes,
-) -> Vec<(String, opentelemetry::Value)> {
-    vec![(
-        "agent.name".to_string(),
-        attributes.name.as_str().to_string().into(),
-    )]
+    attributes: &crate::otel::types::AgentLoopAttributes,
+) -> Vec<KeyValue> {
+    let mut attrs = vec![KeyValue::new("agent.name", attributes.name.clone())];
+    if let Some(iteration) = attributes.iteration {
+        attrs.push(KeyValue::new("agent.iteration", iteration as i64));
+    }
+    if let Some(tool_count) = attributes.tool_count {
+        attrs.push(KeyValue::new("agent.tool_count", tool_count as i64));
+    }
+    attrs
 }
 
 #[cfg(feature = "phoenix")]
-pub fn create_tool_attributes(
-    attributes: &ToolExecutionAttributes,
-) -> Vec<(String, opentelemetry::Value)> {
-    vec![(
-        "tool.name".to_string(),
-        attributes.tool_name.as_str().to_string().into(),
-    )]
+pub fn create_tool_attributes(attributes: &ToolExecutionAttributes) -> Vec<KeyValue> {
+    let mut attrs = vec![
+        KeyValue::new("tool.name", attributes.tool_name.clone()),
+        KeyValue::new("tool.success", attributes.success),
+    ];
+    if let Some(msg) = &attributes.error_message {
+        attrs.push(KeyValue::new("tool.error", msg.clone()));
+    }
+    attrs
 }

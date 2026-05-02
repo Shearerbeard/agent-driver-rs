@@ -55,14 +55,16 @@ OpenRouter uses OpenAI-compatible format — separate concern.
 - [x] OTel Collector docker-compose setup (docker-compose.phoenix.yaml)
 - [x] Test runner script (scripts/test-phoenix-integration.sh)
 - [x] Documentation updates (PHOENIX_TODO.md, manual-testing.md)
-- [ ] **Next Session: Full OTel Integration**
-  - [ ] Add `init_tracer()` to Bedrock and Ollama examples
-  - [ ] Pass tracer via `.otel_tracer(tracer)` to SessionBuilder
-  - [ ] Add assertions to verify reasoning output quality
-  - [ ] End-to-end test with mock provider — exercises the full agent loop without
-    requiring live API keys (mock HTTP responses or in-process mock provider)
-  - [ ] Mock MCP server test — in-process tool that validates the MCP ↔ agent loop wiring
+- [x] **OTel Integration — Real RAII Spans**
+  - [x] Fix opentelemetry-otlp dependency version mismatch (0.15 → 0.27)
+  - [x] Implement real span guards in `src/otel/instrumentation.rs` (AgentLoopSpan, ToolSpan, etc.)
+  - [x] Add `init_phoenix()` / `shutdown_phoenix()` convenience functions
+  - [x] Wire OTLP gRPC exporter to all 4 phoenix examples
+  - [x] Update docker-compose.phoenix.yaml for direct-to-Phoenix export
+- [ ] **Remaining OTel Work**
   - [ ] Add integration tests with mocked HTTP responses for individual providers
+  - [ ] Mock MCP server test — in-process tool that validates the MCP ↔ agent loop wiring
+  - [ ] Add reasoning output quality assertions
 
 ## Someday
 

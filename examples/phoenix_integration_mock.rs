@@ -63,21 +63,30 @@ fn add_tool() -> agent_driver_rs::tool::DynTool {
 }
 
 fn init_tracer() -> Arc<opentelemetry_sdk::trace::Tracer> {
-    let provider = opentelemetry_sdk::trace::TracerProvider::default();
-    otel::init_tracer_provider(Arc::new(provider));
-    Arc::new(otel::get_tracer("phoenix-integration").unwrap())
+    match otel::init_phoenix() {
+        Ok(tracer) => {
+            println!(
+                "   Connected to Phoenix at {}",
+                std::env::var("PHOENIX_ENDPOINT").unwrap_or_else(|_| "localhost:4317".into())
+            );
+            tracer
+        }
+        Err(_) => {
+            eprintln!("   Warning: Could not connect to Phoenix, using no-op tracer");
+            let provider = opentelemetry_sdk::trace::TracerProvider::default();
+            otel::init_tracer_provider(Arc::new(provider));
+            Arc::new(otel::get_tracer("phoenix-integration").unwrap())
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 Phoenix Integration Tests - Mock Provider");
-    println!("═══════════════════════════════════════════════\n");
-
-    println!("📡 Using default OTEL tracer (stdout logging)\n");
+    println!("Phoenix Integration Tests - Mock Provider");
+    println!("==========================================\n");
 
     let tracer = init_tracer();
-
-    println!("✅ OTel tracer initialized\n");
+    println!("   OTel tracer initialized\n");
 
     let mut passed = 0;
     let mut failed = 0;
@@ -173,9 +182,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("═══════════════════════════════════════════════");
-    println!("📊 Results: {} passed, {} failed", passed, failed);
-    println!("═══════════════════════════════════════════════\n");
+    println!("==========================================");
+    println!("Results: {} passed, {} failed", passed, failed);
+    println!("==========================================\n");
+
+    otel::shutdown_phoenix();
 
     if failed > 0 {
         std::process::exit(1);

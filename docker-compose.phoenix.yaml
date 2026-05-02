@@ -1,33 +1,23 @@
-version: "3.8"
+# Phoenix/OTel infrastructure for agent-driver-rs tracing
+#
+# Remote Phoenix instance: your-phoenix-host
+#   export PHOENIX_ENDPOINT=http://your-phoenix-host:4317
+#
+# This compose file is for local development when the remote instance is unavailable.
+# Phoenix has a built-in OTLP receiver, so no separate collector is needed.
 
 services:
-  otel-collector:
-    image: otel/otelcol-contrib:latest
-    container_name: phoenix-otel-collector
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix-server
     ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
-      - "13133:13133" # health check
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
-    command: --config=/etc/otelcol-contrib/config.yaml
+      - "6006:6006"   # Phoenix UI
+      - "4317:4317"   # OTLP gRPC receiver
+    environment:
+      - PHOENIX_PORT=6006
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:13133/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:6006/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
-
-  # Optional: Phoenix server (for full UI)
-  # Uncomment if you want the full Phoenix experience
-  #
-  # phoenix:
-  #   image: arizephoenix/phoenix:latest
-  #   container_name: phoenix-server
-  #   ports:
-  #     - "6006:6006"
-  #   environment:
-  #     - PHOENIX_PORT=6006
-  #   depends_on:
-  #     otel-collector:
-  #       condition: service_healthy

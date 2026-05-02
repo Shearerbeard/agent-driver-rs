@@ -145,6 +145,12 @@ impl<'s> AgentLoop<'s> {
         let mut tool_depth: u32 = 0;
 
         // Step 1: Send the initial user message
+        #[cfg(feature = "phoenix")]
+        let _send_span = agent_span.as_ref().and_then(|span| {
+            tracer
+                .as_ref()
+                .and_then(|t| span.create_session_span(t, "session.send"))
+        });
         let handle = self.session.send_streaming(message).await?;
 
         // Step 2: Collect the first response while forwarding events
@@ -225,7 +231,7 @@ impl<'s> AgentLoop<'s> {
             #[cfg(feature = "phoenix")]
             let _tool_span = agent_span
                 .as_ref()
-                .and_then(|span| span.create_tool_span("tool"));
+                .and_then(|span| span.create_tool_span("execute"));
 
             let tool_error = execute_tools(self.session, self.observer.as_ref(), &response).await;
 
@@ -272,6 +278,12 @@ impl<'s> AgentLoop<'s> {
             }
 
             // Continue streaming (tool results are already in history)
+            #[cfg(feature = "phoenix")]
+            let _continue_span = agent_span.as_ref().and_then(|span| {
+                tracer
+                    .as_ref()
+                    .and_then(|t| span.create_session_span(t, "session.continue"))
+            });
             let handle = self.session.continue_streaming().await?;
 
             response = collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;

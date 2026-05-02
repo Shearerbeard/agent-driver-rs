@@ -19,25 +19,17 @@
 //! Then initialize Phoenix in your application:
 //!
 //! ```ignore
-//! use agent_driver_rs::SessionBuilder;
-//! use opentelemetry_sdk::trace::TracerProvider;
-//! use opentelemetry_otlp::SpanExporter;
+//! use agent_driver_rs::{SessionBuilder, otel};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Initialize Phoenix exporter (HTTP on port 4318)
-//!     let exporter = SpanExporter::builder()
-//!         .with_http()
-//!         .with_endpoint("http://phoenix-collector:4318")
-//!         .build()?;
-//!
-//!     let tracer_provider = TracerProvider::builder()
-//!         .with_batch_exporter(exporter)
-//!         .build();
+//!     // Initialize Phoenix (reads PHOENIX_ENDPOINT env var, defaults to localhost:4317)
+//!     let tracer = otel::init_phoenix()?;
 //!
 //!     // Build session with Phoenix tracing enabled
 //!     let session = SessionBuilder::new()
 //!         .with_provider(my_provider)
+//!         .otel_tracer(tracer)
 //!         .build()
 //!         .await?;
 //!
@@ -46,6 +38,8 @@
 //!         .run("Search current weather")
 //!         .await?;
 //!
+//!     // Flush remaining spans before exit
+//!     otel::shutdown_phoenix();
 //!     Ok(())
 //! }
 //! ```
@@ -134,6 +128,47 @@ pub fn get_tracer(name: &str) -> Result<opentelemetry_sdk::trace::Tracer, String
         .ok_or_else(|| "Phoenix tracer provider not initialized".to_string())?;
 
     Ok(provider.tracer(name.to_string()))
+}
+
+/// Initialize Phoenix tracing with OTLP gRPC exporter.
+///
+/// Reads `PHOENIX_ENDPOINT` env var (defaults to `http://localhost:4317`).
+/// Must be called from within a Tokio runtime (the batch exporter uses Tokio).
+///
+/// Returns the tracer for use with `SessionBuilder::otel_tracer()`.
+#[cfg(feature = "phoenix")]
+pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>, String> {
+    use opentelemetry_otlp::WithExportConfig;
+
+    let endpoint = std::env::var("PHOENIX_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()
+        .map_err(|e| format!("Failed to build OTLP exporter: {}", e))?;
+
+    let provider = SdkTracerProvider::builder()
+        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .build();
+
+    let tracer = provider.tracer("agent-driver-rs");
+    let tracer_arc = std::sync::Arc::new(tracer);
+
+    init_tracer_provider(std::sync::Arc::new(provider));
+
+    Ok(tracer_arc)
+}
+
+/// Shut down the global Phoenix tracer provider, flushing remaining spans.
+///
+/// Call this before process exit to ensure all spans are exported.
+#[cfg(feature = "phoenix")]
+pub fn shutdown_phoenix() {
+    if let Some(provider) = get_tracer_provider() {
+        let _ = provider.shutdown();
+    }
 }
 
 /// Enable Phoenix tracing for a session

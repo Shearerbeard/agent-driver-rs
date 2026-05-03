@@ -13,7 +13,7 @@ ollama = ["dep:ollama-rs"]
 mcp = ["dep:rmcp"]
 mcp-http = ["mcp", "rmcp/transport-streamable-http-client-reqwest"]
 schema-sanitize = ["dep:mcp-openai-bridge"]
-phoenix = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions"]
+phoenix = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 test-support = []
 
 [dependencies]
@@ -65,10 +65,10 @@ mcp-openai-bridge = { git = "ssh://git@github.com/example-org/mcp-openai-bridge.
 opentelemetry = { version = "0.27", features = ["trace"], optional = true }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"], optional = true }
 opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"], optional = true }
-opentelemetry-semantic-conventions = { version = "0.27", optional = true }
 
 [dev-dependencies]
 agent-driver-rs = { path = ".", features = ["test-support"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "testing"] }
 
 [[bin]]
 name = "chat"
@@ -93,3 +93,7 @@ required-features = ["phoenix"]
 [[example]]
 name = "phoenix_integration_ollama"
 required-features = ["phoenix", "ollama"]
+
+[[test]]
+name = "phoenix_openinference"
+required-features = ["phoenix", "test-support"]

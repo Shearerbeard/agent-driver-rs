@@ -197,20 +197,6 @@ impl Session {
         &self,
         msg: impl Into<String>,
     ) -> Result<StreamHandle, SessionError> {
-        #[cfg(feature = "phoenix")]
-        let _span = if let Some(tracer) = &self.config.otel_tracer {
-            let _ = crate::otel::create_agent_loop_attributes(&crate::otel::AgentLoopAttributes {
-                name: "session.send".to_string(),
-                iteration: None,
-                stop_reason: crate::otel::AgentStopReason::Normal,
-                tool_count: None,
-                response_text: None,
-            });
-            crate::otel::SessionOperationSpan::new(tracer, "session.send").ok()
-        } else {
-            None
-        };
-
         let user_msg = Message::user(msg);
         self.add_message(user_msg).await;
 
@@ -225,13 +211,6 @@ impl Session {
     /// the tool result messages are already in history, so we just need to send
     /// the current history back to the provider for the next turn.
     pub async fn continue_streaming(&self) -> Result<StreamHandle, SessionError> {
-        #[cfg(feature = "phoenix")]
-        let _span = if let Some(tracer) = &self.config.otel_tracer {
-            crate::otel::SessionOperationSpan::new(tracer, "session.continue").ok()
-        } else {
-            None
-        };
-
         let request = self.build_completion_request().await;
         let ctx = self.new_provider_context();
         Ok(self.provider.complete_stream(request, ctx).await?)
@@ -275,13 +254,6 @@ impl Session {
 
     /// Send a message and collect the full response
     pub async fn send(&self, msg: impl Into<String>) -> Result<CollectedResponse, SessionError> {
-        #[cfg(feature = "phoenix")]
-        let _span = if let Some(tracer) = &self.config.otel_tracer {
-            crate::otel::SessionOperationSpan::new(tracer, "session.send").ok()
-        } else {
-            None
-        };
-
         let handle = self.send_streaming(msg).await?;
         let response = handle.collect().await?;
 

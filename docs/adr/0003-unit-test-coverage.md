@@ -18,7 +18,7 @@ A test audit (May 2026) revealed uneven unit test coverage across provider imple
 | Bedrock | `parse_bedrock_event` | **0** | `convert_messages` | 4 | N/A (SDK) | — |
 | OpenAI | `parse_openai_chunk` | **4** | `convert_messages` | 0 | N/A (SDK) | — |
 | Ollama | `parse_ollama_response` | **10** | `convert_messages` | 2 | N/A (SDK) | — |
-| OpenRouter | `parse_openrouter_event` | **3** | `serialize_message` | 0 | `build_request_body` | 0 |
+| OpenRouter | `parse_openrouter_event` | **6** | `serialize_message` | 0 | `build_request_body` | 0 |
 
 | Shared | Function | Tests |
 |--------|----------|-------|
@@ -73,7 +73,7 @@ fn parse_message_start() {
 }
 ```
 
-Bedrock tests require constructing AWS SDK types (`ConverseStreamOutput` variants) rather than JSON, following the pattern in existing `convert_messages` tests.
+Bedrock tests require constructing AWS SDK types (`ConverseStreamOutput` variants) rather than JSON, following the pattern in existing `convert_messages` tests. Since AWS SDK types are verbose to construct, add fixture factory functions (e.g., `make_text_delta(text)`, `make_tool_use_start(name)`) in the test module to minimize boilerplate.
 
 ### 4. Test Count Targets
 

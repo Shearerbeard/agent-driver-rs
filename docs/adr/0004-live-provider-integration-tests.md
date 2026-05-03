@@ -58,8 +58,9 @@ Tests are gated by environment variables. If the variable is not set, the test i
 LIVE_TEST_PROVIDERS=ollama,bedrock,anthropic
 
 # Per-provider config (existing from_env patterns)
-OLLAMA_HOST=http://localhost:11434
+OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:8b
+OLLAMA_NUM_CTX=4096
 
 BEDROCK_INFERENCE_PROFILE=us.anthropic.claude-sonnet-4-5-20250929-v1:0
 # (uses AWS default credential chain)
@@ -171,7 +172,32 @@ required-features = ["test-support", "ollama", "bedrock", "anthropic", "openai",
 - **Local dev:** Run with `LIVE_TEST_PROVIDERS=ollama` (free, fast)
 - **PR checks:** Skip live tests (no env vars set = all tests skipped, zero failures)
 - **Nightly/manual:** Run with all providers configured via CI secrets
-- **Cost control:** Prompts designed to produce short responses ("Answer in one sentence")
+- **Cost control:** Prompts designed to produce short responses ("Answer in one sentence"), plus `max_tokens(256)` on SessionBuilder as a hard safety cap
+
+### 8. Flakiness and Retry
+
+LLM providers return transient errors (503, 429, network timeouts) that would cause false test failures. Mitigations:
+
+- The library's built-in `RetryConfig` handles transient provider errors — live tests benefit from this automatically
+- Tests assert on semantic outcomes ("response contains '4'"), not exact strings — model non-determinism is expected
+- If a provider consistently fails a category, skip that cell in the matrix rather than adding test-specific retry logic — the test should surface the failure, not mask it
+
+### 9. Concurrency Control
+
+Running multiple live tests against a single provider (especially local Ollama) can cause resource exhaustion or timeouts. Live tests should run serially within each provider to avoid overlapping API calls. Use `#[serial]` from `serial_test` crate or structure tests so each provider's tests run sequentially within the `for` loop.
+
+### 10. Canonical Test Tool
+
+All tool-calling tests use a single standardized tool to ensure portability across providers:
+
+```rust
+fn sum_tool() -> DynTool {
+    // name: "sum", description: "Add two numbers", params: {a: number, b: number}
+    // Returns: text with the numeric result
+}
+```
+
+This tool has a deterministic correct answer (the model should call `sum(2, 3)` and get `5`), making assertions reliable regardless of provider. The tool is simple enough that all models can use it correctly.
 
 ---
 

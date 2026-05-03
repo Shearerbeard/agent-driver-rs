@@ -40,3 +40,6 @@ What becomes easier or harder as a result?
 | ADR | Title | Status | Tags |
 |-----|-------|--------|------|
 | [0001](0001-tool-system-and-mcp-integration.md) | Tool System & MCP Integration | Accepted | tool-system, mcp |
+| [0002](0002-thinking-reasoning-support.md) | Thinking & Reasoning Support Across Providers | Proposed | thinking, reasoning, provider, streaming |
+| [0003](0003-unit-test-coverage.md) | Unit Test Coverage Across Provider Branches | Proposed | testing, provider, streaming |
+| [0004](0004-live-provider-integration-tests.md) | Live Provider Integration Tests | Proposed | testing, provider, integration, ci |

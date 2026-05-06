@@ -223,7 +223,11 @@ See `docs/manual-testing.md` for the full checklist, multi-tool testing, per-pro
 
 Design decisions are documented in `docs/adr/`. Read these before making architectural changes.
 
-- **ADR-0001:** Tool System & MCP Integration — how tools flow through prompts, MCP negotiation
+- **ADR-0001:** Tool System & MCP Integration — how tools flow through prompts, MCP negotiation (Accepted)
+- **ADR-0002:** Thinking & Reasoning Support Across Providers (Proposed)
+- **ADR-0003:** Unit Test Coverage Across Provider Branches (Proposed)
+- **ADR-0004:** Live Provider Integration Tests (Proposed)
+- **ADR-0005:** Prompt Caching Support Across Providers (Proposed)
 - See `docs/adr/README.md` for the full index and ADR format
 
 When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on *context and consequences*, not implementation details.
@@ -233,12 +237,16 @@ When proposing a significant architectural change (new subsystem, protocol integ
 - **TODO.md**: Active development tasks and milestones
 - **docs/internal/agent-driver-roadmap.md**: Strategic roadmap (Phases 0-6)
 
-**Current Status:** OTel/Phoenix integration complete.
-- Real RAII span guards in `src/otel/instrumentation.rs` (AgentLoopSpan, ToolSpan, etc.)
-- OTLP gRPC export to Phoenix via `otel::init_phoenix()`
-- Phoenix instance: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
+**Current Priorities (in order):**
+1. ADR-0003: Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
+2. ADR-0004: Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
+3. ADR-0002: Fix thinking/reasoning bugs — signature loss, Ollama thinking streaming, OpenAI dead config
+4. ADR-0005: Prompt caching support
+
+**Completed:**
+- OTel/Phoenix integration — OpenInference-compliant spans (AGENT/CHAIN/TOOL), 7 conformance tests
+- Phoenix: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`
-- 4 examples: phoenix_demo, phoenix_integration_{mock,bedrock,ollama}
 
 ## Gotchas
 

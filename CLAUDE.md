@@ -228,25 +228,30 @@ Design decisions are documented in `docs/adr/`. Read these before making archite
 - **ADR-0003:** Unit Test Coverage Across Provider Branches (Proposed)
 - **ADR-0004:** Live Provider Integration Tests (Proposed)
 - **ADR-0005:** Prompt Caching Support Across Providers (Proposed)
+- **ADR-0006:** Multi-Agent Trace Composition with OpenInference (Proposed)
 - See `docs/adr/README.md` for the full index and ADR format
 
 When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on *context and consequences*, not implementation details.
 
 ## Task Tracking
 
-- **TODO.md**: Active development tasks and milestones
-- **docs/internal/agent-driver-roadmap.md**: Strategic roadmap (Phases 0-6)
+- **TODO.md**: Active development tasks and milestones (ADR-driven waves)
+- **docs/internal/agent-driver-roadmap.md**: Strategic roadmap (Phases 0-9)
+- **docs/adr/README.md**: ADR index with implementation order
 
 **Current Priorities (in order):**
-1. ADR-0003: Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
-2. ADR-0004: Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
-3. ADR-0002: Fix thinking/reasoning bugs — signature loss, Ollama thinking streaming, OpenAI dead config
-4. ADR-0005: Prompt caching support
+1. **ADR-0002** (Wave 1): Fix thinking/reasoning — signature loss (multi-turn broken), Bedrock thinking, Anthropic adaptive mode, OpenAI dead config
+2. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
+3. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
+4. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
+5. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
 
 **Completed:**
 - OTel/Phoenix integration — OpenInference-compliant spans (AGENT/CHAIN/TOOL), 7 conformance tests
 - Phoenix: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`
+- ADR-0001: Tool System & MCP Integration (Accepted)
+- ADR-0002 through ADR-0006: All written and reviewed
 
 ## Gotchas
 

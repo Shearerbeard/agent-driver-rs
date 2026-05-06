@@ -445,7 +445,7 @@ Before implementing MCP integration, this ADR establishes the mental model:
 - MCP server lifecycle management (startup, crash recovery, reconnection) adds complexity
 - Tool set changes between turns could surprise models mid-conversation
 
-### Open Questions for Future ADRs
-- **ADR-0002:** Tool namespacing strategy for multiple MCP servers
-- **ADR-0003:** MCP server lifecycle management (spawn, monitor, reconnect)
-- **ADR-0004:** Agentic loop implementation (auto tool execution, max iterations, guardrails)
+### Open Questions
+- **Tool namespacing strategy for multiple MCP servers** — when two servers expose the same tool name, how should the host resolve the collision (namespacing, preference, rejection)?
+- **MCP server lifecycle management** — spawn, health monitoring, crash recovery, reconnection for MCP child processes
+- **Agentic loop guardrails** — maximum tool execution depth, tool-use budget enforcement, and circuit-breaking for runaway loops (tracked in `MaxToolDepth` in `src/agent/config.rs`)

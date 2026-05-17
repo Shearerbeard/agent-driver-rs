@@ -100,6 +100,12 @@ mixed_read_write_in_expression = { level = "deny", priority = 127 }
 cfg_not_test = { level = "deny", priority = 127 }
 ```
 
+## Future Work
+
+- [ ] **Feature-flag lint compliance**: Code behind feature flags (`phoenix`, `mcp`, `mcp-http`, `schema-sanitize`, `bedrock`, `ollama`) is only checked when those features are enabled. When merging branches that add feature-gated code (e.g. the phoenix/OTel branch), run `cargo clippy --all-features` to ensure new code satisfies the deny-level lints — especially `wildcard_enum_match_arm`, `str_to_string`, `unused_trait_names`, and `allow_attributes_without_reason`.
+- [ ] **Vet functionality**: Agent review that wildcard match expansions and `.to_string()` → `.to_owned()` changes didn't alter behavior
+- [ ] **Pedantic triage**: Revisit the 6 silenced-but-valuable lints noted in Cargo.toml (`cast_lossless`, `map_unwrap_or`, `single_match_else`, `unnested_or_patterns`, `needless_pass_by_value`, `redundant_closure_for_method_calls`)
+
 ## Instructions for the loop
 
 1. Read this file to find the next unchecked wave

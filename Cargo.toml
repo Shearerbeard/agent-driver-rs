@@ -99,3 +99,13 @@ needless_borrowed_reference = { level = "allow", priority = 127 }
 redundant_else = { level = "allow", priority = 127 }
 uninlined_format_args = { level = "allow", priority = 127 }
 module_name_repetitions = { level = "allow", priority = 127 }
+
+# --- Wave 2: Agent-critical safety (deny) ---
+dbg_macro = { level = "deny", priority = 127 }
+todo = { level = "deny", priority = 127 }
+unimplemented = { level = "deny", priority = 127 }
+panic_in_result_fn = { level = "deny", priority = 127 }
+unused_result_ok = { level = "deny", priority = 127 }
+exit = { level = "deny", priority = 127 }
+missing_assert_message = { level = "deny", priority = 127 }
+tests_outside_test_module = { level = "deny", priority = 127 }

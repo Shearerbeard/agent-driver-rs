@@ -6,7 +6,7 @@ The loop should process ONE wave per iteration, commit, then proceed to the next
 ## Status
 
 - [x] Wave 1: Broad groups at `warn` (all, correctness, suspicious, complexity, perf, style, pedantic)
-- [ ] Wave 2: Agent-critical safety (no panics, no debug leftovers)
+- [x] Wave 2: Agent-critical safety (no panics, no debug leftovers)
 - [ ] Wave 3: Ownership clarity (Arc clones, string handling)
 - [ ] Wave 4: Exhaustiveness & correctness
 - [ ] Wave 5: Code hygiene & style enforcement

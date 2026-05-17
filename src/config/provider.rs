@@ -31,7 +31,7 @@ impl ProviderConfig {
     /// Uses PROVIDER env var as discriminator, then loads provider-specific vars.
     pub fn from_env() -> Result<Self, ConfigError> {
         // Load .env if present
-        dotenvy::dotenv().ok();
+        let _env_loaded = dotenvy::dotenv();
 
         let provider_str = std::env::var("PROVIDER")
             .map_err(|_| ConfigError::MissingField { field: "PROVIDER" })?;

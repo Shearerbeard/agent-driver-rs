@@ -575,7 +575,7 @@ mod tests {
             started: true,
             ..Default::default()
         };
-        let _ = parse_openrouter_event(data, &mut state);
+        drop(parse_openrouter_event(data, &mut state));
 
         // Should update stop_reason in state
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
@@ -628,7 +628,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = parse_openrouter_event(data, &mut state);
+        drop(parse_openrouter_event(data, &mut state));
 
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
         let usage = state.usage.unwrap();

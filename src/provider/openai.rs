@@ -635,7 +635,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = parse_openai_chunk(finish_chunk("stop"), &mut state);
+        drop(parse_openai_chunk(finish_chunk("stop"), &mut state));
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
     }
 
@@ -646,7 +646,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = parse_openai_chunk(finish_chunk("tool_calls"), &mut state);
+        drop(parse_openai_chunk(finish_chunk("tool_calls"), &mut state));
         assert_eq!(state.stop_reason, Some(StopReason::ToolUse));
     }
 

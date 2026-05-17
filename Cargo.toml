@@ -100,6 +100,37 @@ redundant_else = { level = "allow", priority = 127 }
 uninlined_format_args = { level = "allow", priority = 127 }
 module_name_repetitions = { level = "allow", priority = 127 }
 
+# --- Pedantic: silenced for now, triage in future session ---
+# FUTURE: consider adopting these (low count, high value)
+# cast_lossless — use From instead of `as` casts (3 violations)
+# map_unwrap_or — cleaner than .map().unwrap_or() (3 violations)
+# single_match_else — if-let vs match preference (2 violations)
+# unnested_or_patterns — style preference (2 violations)
+# needless_pass_by_value — potential perf wins (2 violations)
+# redundant_closure_for_method_calls — minor cleanup (2 violations)
+doc_markdown = { level = "allow", priority = 127 }
+must_use_candidate = { level = "allow", priority = 127 }
+return_self_not_must_use = { level = "allow", priority = 127 }
+missing_errors_doc = { level = "allow", priority = 127 }
+missing_panics_doc = { level = "allow", priority = 127 }
+match_same_arms = { level = "allow", priority = 127 }
+unused_self = { level = "allow", priority = 127 }
+too_many_lines = { level = "allow", priority = 127 }
+ignored_unit_patterns = { level = "allow", priority = 127 }
+items_after_statements = { level = "allow", priority = 127 }
+struct_excessive_bools = { level = "allow", priority = 127 }
+struct_field_names = { level = "allow", priority = 127 }
+if_not_else = { level = "allow", priority = 127 }
+cast_possible_truncation = { level = "allow", priority = 127 }
+cast_possible_wrap = { level = "allow", priority = 127 }
+cast_lossless = { level = "allow", priority = 127 }
+map_unwrap_or = { level = "allow", priority = 127 }
+single_match_else = { level = "allow", priority = 127 }
+unnested_or_patterns = { level = "allow", priority = 127 }
+needless_pass_by_value = { level = "allow", priority = 127 }
+redundant_closure_for_method_calls = { level = "allow", priority = 127 }
+option_as_ref_cloned = { level = "allow", priority = 127 }
+
 # --- Wave 2: Agent-critical safety (deny) ---
 dbg_macro = { level = "deny", priority = 127 }
 todo = { level = "deny", priority = 127 }

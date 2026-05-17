@@ -146,3 +146,13 @@ unnecessary_safety_comment = { level = "deny", priority = 127 }
 unnecessary_safety_doc = { level = "deny", priority = 127 }
 let_underscore_must_use = { level = "deny", priority = 127 }
 infinite_loop = { level = "deny", priority = 127 }
+
+# --- Wave 7: Final restriction lints (deny) ---
+# impl_trait_in_params: skipped — idiomatic Rust uses `impl Into<String>` extensively
+# mod_module_files: skipped — this codebase uses mod.rs convention
+# partial_pub_fields: skipped — mixed pub/private fields are intentional (CollectedResponse)
+# field_scoped_visibility_modifiers: skipped — pub(crate) is idiomatic for encapsulation
+renamed_function_params = { level = "deny", priority = 127 }
+allow_attributes_without_reason = { level = "deny", priority = 127 }
+mixed_read_write_in_expression = { level = "deny", priority = 127 }
+cfg_not_test = { level = "deny", priority = 127 }

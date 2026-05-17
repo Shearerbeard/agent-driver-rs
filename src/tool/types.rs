@@ -34,7 +34,7 @@ impl ToolSchema {
     /// Create from a JSON value (must be an object)
     pub fn from_value(value: JsonValue) -> Option<Self> {
         // serde_json::Value is from an external crate
-        #[allow(clippy::wildcard_enum_match_arm)]
+        #[allow(clippy::wildcard_enum_match_arm, reason = "serde_json::Value is an external enum that may add variants")]
         match value {
             JsonValue::Object(map) => Some(Self::new(map)),
             _ => None,

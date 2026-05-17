@@ -113,13 +113,13 @@ impl AgentObserver for ChatObserver {
             }
             AgentEvent::IterationComplete { .. } => {}
             // AgentEvent is #[non_exhaustive] — wildcard needed for forward compatibility
-            #[allow(clippy::wildcard_enum_match_arm)]
+            #[allow(clippy::wildcard_enum_match_arm, reason = "AgentEvent is #[non_exhaustive]")]
             _ => {}
         }
     }
 }
 
-#[allow(clippy::string_slice)] // boundary is validated by is_char_boundary loop above
+#[allow(clippy::string_slice, reason = "boundary is validated by is_char_boundary loop above")]
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_owned()
@@ -151,7 +151,7 @@ struct McpServerEntry {
 
 /// Keepalive container for MCP connections so child processes don't get dropped
 #[cfg(feature = "mcp")]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "held to keep MCP child processes alive via Drop")]
 struct McpKeepAlive {
     connections: Vec<agent_driver_rs::tool::McpConnection>,
 }
@@ -369,7 +369,7 @@ async fn create_provider(
             let provider = agent_driver_rs::provider::OllamaProvider::new(cfg)?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
-        #[allow(unreachable_patterns)]
+        #[allow(unreachable_patterns, reason = "reachable only when some provider features are disabled")]
         _ => Err("Provider not enabled in features".into()),
     }
 }

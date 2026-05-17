@@ -363,7 +363,7 @@ impl CollectedResponse {
 /// Parse embedded tool calls from a text string.
 ///
 /// Returns (extracted_tool_use_blocks, remaining_text).
-#[allow(clippy::string_slice)] // offsets from .find() on ASCII delimiters are always valid
+#[allow(clippy::string_slice, reason = "offsets from .find() on ASCII delimiters are valid char boundaries")]
 fn parse_embedded_tool_calls(
     text: &str,
     counter: &mut u32,

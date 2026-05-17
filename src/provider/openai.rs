@@ -482,7 +482,7 @@ fn parse_openai_chunk(
     for choice in &response.choices {
         // Check finish reason
         if let Some(ref reason) = choice.finish_reason {
-            #[allow(unreachable_patterns)] // forward-compat: async-openai may add variants
+            #[allow(unreachable_patterns, reason = "async-openai FinishReason may add variants")]
             let reason = match reason {
                 async_openai::types::FinishReason::Stop => StopReason::EndTurn,
                 async_openai::types::FinishReason::Length => StopReason::MaxTokens,

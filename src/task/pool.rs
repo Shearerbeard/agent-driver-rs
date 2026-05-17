@@ -16,10 +16,10 @@ use super::handle::TaskHandle;
 
 /// Internal task registration info
 struct RegisteredTask {
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "retained for future abort-on-shutdown support")]
     abort_handle: tokio::task::AbortHandle,
     cancellation: CancellationToken,
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "retained for diagnostic logging of registered tasks")]
     name: &'static str,
 }
 

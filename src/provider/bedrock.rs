@@ -449,7 +449,7 @@ impl Provider for BedrockProvider {
 #[derive(Default)]
 struct StreamState {
     current_tool_use_id: Option<String>,
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "tracked for diagnostic context during stream parsing")]
     current_tool_name: Option<String>,
     /// Stored from MessageStop, emitted with Metadata for a single Completed event
     stop_reason: Option<StopReason>,
@@ -484,7 +484,7 @@ fn parse_bedrock_event(
     use aws_sdk_bedrockruntime::types::ConverseStreamOutput;
 
     // ConverseStreamOutput is #[non_exhaustive] in the AWS SDK
-    #[allow(clippy::wildcard_enum_match_arm)]
+    #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
     match event {
         ConverseStreamOutput::MessageStart(_msg) => {
             vec![Ok(StreamEvent::Started {
@@ -500,7 +500,7 @@ fn parse_bedrock_event(
 
             if let Some(start) = block.start() {
                 // ContentBlockStart is #[non_exhaustive] in the AWS SDK
-                #[allow(clippy::wildcard_enum_match_arm)]
+                #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
                 match start {
                     aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(tool) => {
                         state.current_tool_use_id = Some(tool.tool_use_id().to_owned());
@@ -535,7 +535,7 @@ fn parse_bedrock_event(
         ConverseStreamOutput::ContentBlockDelta(delta) => {
             if let Some(d) = delta.delta() {
                 // ContentBlockDelta is #[non_exhaustive] in the AWS SDK
-                #[allow(clippy::wildcard_enum_match_arm)]
+                #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
                 match d {
                     aws_sdk_bedrockruntime::types::ContentBlockDelta::Text(text) => {
                         vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
@@ -565,7 +565,7 @@ fn parse_bedrock_event(
             // Store stop_reason in state; emit Completed only from Metadata
             // to avoid duplicate Completed events.
             // Bedrock StopReason is #[non_exhaustive] in the AWS SDK
-            #[allow(clippy::wildcard_enum_match_arm)]
+            #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
             let reason = match stop.stop_reason() {
                 aws_sdk_bedrockruntime::types::StopReason::EndTurn => Some(StopReason::EndTurn),
                 aws_sdk_bedrockruntime::types::StopReason::MaxTokens => Some(StopReason::MaxTokens),

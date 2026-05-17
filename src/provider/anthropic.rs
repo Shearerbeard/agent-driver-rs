@@ -238,7 +238,7 @@ impl Provider for AnthropicProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + hyphens)
+            // All model IDs below are hardcoded valid strings
             Ok(vec![
                 ModelInfo {
                     id: ModelId::new("claude-opus-4-20250514").expect("hardcoded valid model ID"),

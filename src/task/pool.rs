@@ -104,7 +104,7 @@ impl TaskPool {
         // Spawn via TaskTracker - task waits for gate before running
         let handle = self.tracker.spawn(async move {
             // Wait for registration to complete (ignore error if sender dropped)
-            let _ = start_rx.await;
+            drop(start_rx.await);
             let result = future.await;
             // Cleanup on completion
             pool.tasks.write().remove(&cid);
@@ -130,7 +130,7 @@ impl TaskPool {
         }
 
         // Release the gate - task can now execute
-        let _ = start_tx.send(());
+        let _sent = start_tx.send(());
 
         Ok(TaskHandle {
             inner: handle,

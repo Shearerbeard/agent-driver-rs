@@ -10,7 +10,7 @@ The loop should process ONE wave per iteration, commit, then proceed to the next
 - [x] Wave 3: Ownership clarity (Arc clones, string handling)
 - [x] Wave 4: Exhaustiveness & correctness
 - [x] Wave 5: Code hygiene & style enforcement
-- [ ] Wave 6: Concurrency & unsafe discipline
+- [x] Wave 6: Concurrency & unsafe discipline
 - [ ] Wave 7: Final restriction lints
 
 ## Wave 2: Agent-critical safety

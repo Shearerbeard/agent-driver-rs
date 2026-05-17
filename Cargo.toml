@@ -135,3 +135,14 @@ deref_by_slicing = { level = "deny", priority = 127 }
 lossy_float_literal = { level = "deny", priority = 127 }
 verbose_file_reads = { level = "deny", priority = 127 }
 unused_trait_names = { level = "deny", priority = 127 }
+
+# --- Wave 6: Concurrency & unsafe discipline (deny) ---
+mutex_atomic = { level = "deny", priority = 127 }
+mutex_integer = { level = "deny", priority = 127 }
+mem_forget = { level = "deny", priority = 127 }
+multiple_unsafe_ops_per_block = { level = "deny", priority = 127 }
+undocumented_unsafe_blocks = { level = "deny", priority = 127 }
+unnecessary_safety_comment = { level = "deny", priority = 127 }
+unnecessary_safety_doc = { level = "deny", priority = 127 }
+let_underscore_must_use = { level = "deny", priority = 127 }
+infinite_loop = { level = "deny", priority = 127 }

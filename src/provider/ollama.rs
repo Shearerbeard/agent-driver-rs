@@ -344,7 +344,7 @@ impl Provider for OllamaProvider {
                 Err(e) => {
                     // Fall back to common models if we can't query
                     tracing::warn!("Failed to list Ollama models: {}", e);
-                    // Safety: all model IDs below are hardcoded valid strings
+                    // All model IDs below are hardcoded valid strings
                     Ok(vec![
                         ModelInfo {
                             id: ModelId::new("llama3.2").expect("hardcoded valid model ID"),

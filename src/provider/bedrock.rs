@@ -347,7 +347,7 @@ impl Provider for BedrockProvider {
             // Bedrock stream event (e.g. ContentBlockStart + ToolUseStart), so we
             // drain the buffer before fetching the next raw event.
             //
-            // Buffer bound safety: parse_bedrock_event returns at most 2
+            // Buffer bound: parse_bedrock_event returns at most 2
             // events per Bedrock stream event (the worst case is
             // ContentBlockStart for a tool_use, which emits
             // ContentBlockStart + ToolUseStart). All other event types produce
@@ -414,7 +414,7 @@ impl Provider for BedrockProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + dots/hyphens/colons)
+            // All model IDs below are hardcoded valid strings
             Ok(vec![
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-opus-4-5-20251101-v1:0")

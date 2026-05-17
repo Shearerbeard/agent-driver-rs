@@ -38,7 +38,6 @@ impl std::fmt::Display for MaxToolDepth {
 
 impl Default for MaxToolDepth {
     fn default() -> Self {
-        // SAFETY: 25 is non-zero
         Self(NonZeroU32::new(25).unwrap())
     }
 }

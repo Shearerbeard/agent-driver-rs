@@ -125,3 +125,13 @@ assertions_on_result_states = { level = "deny", priority = 127 }
 try_err = { level = "deny", priority = 127 }
 error_impl_error = { level = "deny", priority = 127 }
 return_and_then = { level = "deny", priority = 127 }
+
+# --- Wave 5: Code hygiene & style (deny) ---
+needless_raw_strings = { level = "deny", priority = 127 }
+redundant_test_prefix = { level = "deny", priority = 127 }
+semicolon_inside_block = { level = "deny", priority = 127 }
+multiple_inherent_impl = { level = "deny", priority = 127 }
+deref_by_slicing = { level = "deny", priority = 127 }
+lossy_float_literal = { level = "deny", priority = 127 }
+verbose_file_reads = { level = "deny", priority = 127 }
+unused_trait_names = { level = "deny", priority = 127 }

@@ -10,7 +10,7 @@
 
 use std::collections::VecDeque;
 
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt as _};
 use reqwest_eventsource::{Event, EventSource};
 use tokio_util::sync::CancellationToken;
 

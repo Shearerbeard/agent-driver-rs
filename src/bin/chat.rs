@@ -20,7 +20,7 @@
 //!     --mcp-config servers.json
 //! ```
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead as _, Write as _};
 use std::sync::Arc;
 
 use clap::Parser;

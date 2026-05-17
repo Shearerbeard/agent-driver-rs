@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use backoff::{backoff::Backoff, ExponentialBackoff};
+use backoff::{backoff::Backoff as _, ExponentialBackoff};
 
 use crate::error::ProviderError;
 

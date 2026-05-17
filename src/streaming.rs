@@ -565,7 +565,7 @@ impl StreamHandle {
     /// ContentBlockStart/ContentBlockStop pairs (across different indices)
     /// are finalized with the correct type.
     pub async fn collect(self) -> Result<CollectedResponse, StreamError> {
-        use futures::StreamExt;
+        use futures::StreamExt as _;
 
         // Destructure self to avoid partial move issues
         let Self {

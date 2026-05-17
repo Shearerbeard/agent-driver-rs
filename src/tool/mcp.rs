@@ -70,7 +70,7 @@ impl McpConnection {
             }
         })?;
 
-        use rmcp::ServiceExt;
+        use rmcp::ServiceExt as _;
         let service =
             ().serve(transport)
                 .await
@@ -93,7 +93,7 @@ impl McpConnection {
         let name = name.into();
         let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(uri);
 
-        use rmcp::ServiceExt;
+        use rmcp::ServiceExt as _;
         let service =
             ().serve(transport)
                 .await

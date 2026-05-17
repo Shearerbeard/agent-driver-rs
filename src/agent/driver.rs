@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use futures::StreamExt;
+use futures::StreamExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::AgentLoopError;

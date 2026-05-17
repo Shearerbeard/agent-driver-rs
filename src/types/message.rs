@@ -232,7 +232,7 @@ impl ContentBlock {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text { text } => Some(text),
-            _ => None,
+            Self::Thinking { .. } | Self::ToolUse { .. } | Self::ToolResult { .. } => None,
         }
     }
 
@@ -241,7 +241,7 @@ impl ContentBlock {
     pub fn as_tool_use(&self) -> Option<(&ToolCallId, &ToolName, &JsonValue)> {
         match self {
             Self::ToolUse { id, name, input } => Some((id, name, input)),
-            _ => None,
+            Self::Text { .. } | Self::Thinking { .. } | Self::ToolResult { .. } => None,
         }
     }
 }

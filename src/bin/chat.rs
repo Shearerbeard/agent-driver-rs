@@ -111,6 +111,9 @@ impl AgentObserver for ChatObserver {
                     );
                 }
             }
+            AgentEvent::IterationComplete { .. } => {}
+            // AgentEvent is #[non_exhaustive] — wildcard needed for forward compatibility
+            #[allow(clippy::wildcard_enum_match_arm)]
             _ => {}
         }
     }

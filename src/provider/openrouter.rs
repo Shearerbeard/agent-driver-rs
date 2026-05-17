@@ -193,7 +193,7 @@ impl OpenRouterProvider {
                 .filter_map(|b| match b {
                     ContentBlock::Text { text } => Some(text.as_str()),
                     ContentBlock::Thinking { text } => Some(text.as_str()),
-                    _ => None,
+                    ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
                 })
                 .collect::<Vec<_>>()
                 .join("");
@@ -210,7 +210,9 @@ impl OpenRouterProvider {
                             "arguments": serde_json::to_string(input).unwrap_or_default()
                         }
                     })),
-                    _ => None,
+                    ContentBlock::Text { .. }
+                    | ContentBlock::Thinking { .. }
+                    | ContentBlock::ToolResult { .. } => None,
                 })
                 .collect();
 
@@ -230,7 +232,9 @@ impl OpenRouterProvider {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
+                ContentBlock::Thinking { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("");

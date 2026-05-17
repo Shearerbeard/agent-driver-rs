@@ -159,7 +159,7 @@ fn extract_text(content: &[ContentBlock]) -> String {
                 }
                 result.push_str(text);
             }
-            _ => {}
+            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => {}
         }
     }
     result

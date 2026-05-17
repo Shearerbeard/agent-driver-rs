@@ -174,7 +174,15 @@ impl ProviderError {
             Self::HttpError {
                 status: Some(s), ..
             } => *s >= 500,
-            _ => false,
+            Self::Auth { .. }
+            | Self::ModelNotFound { .. }
+            | Self::Cancelled
+            | Self::Stream(_)
+            | Self::HttpError { status: None, .. }
+            | Self::StreamingNotSupported { .. }
+            | Self::InvalidRequest { .. }
+            | Self::ContextWindowExceeded { .. }
+            | Self::ContentPolicyViolation { .. } => false,
         }
     }
 
@@ -197,7 +205,16 @@ impl ProviderError {
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             Self::RateLimited { retry_after, .. } => *retry_after,
-            _ => None,
+            Self::Auth { .. }
+            | Self::ModelNotFound { .. }
+            | Self::Cancelled
+            | Self::Timeout(_)
+            | Self::Stream(_)
+            | Self::HttpError { .. }
+            | Self::StreamingNotSupported { .. }
+            | Self::InvalidRequest { .. }
+            | Self::ContextWindowExceeded { .. }
+            | Self::ContentPolicyViolation { .. } => None,
         }
     }
 
@@ -332,7 +349,7 @@ impl AgentLoopError {
             Self::Session(SessionError::Stream(StreamError::ConnectionLost {
                 message, ..
             })) => is_context_window_message(message),
-            _ => false,
+            Self::Session(_) | Self::InvalidConfig(_) | Self::Cancelled | Self::MaxToolDepthReached(_) => false,
         }
     }
 
@@ -348,7 +365,7 @@ impl AgentLoopError {
             Self::Session(SessionError::Stream(StreamError::ConnectionLost {
                 message, ..
             })) => is_content_policy_message(message),
-            _ => false,
+            Self::Session(_) | Self::InvalidConfig(_) | Self::Cancelled | Self::MaxToolDepthReached(_) => false,
         }
     }
 
@@ -356,7 +373,7 @@ impl AgentLoopError {
     pub fn as_provider_error(&self) -> Option<&ProviderError> {
         match self {
             Self::Session(SessionError::Provider(e)) => Some(e),
-            _ => None,
+            Self::Session(_) | Self::InvalidConfig(_) | Self::Cancelled | Self::MaxToolDepthReached(_) => None,
         }
     }
 }

@@ -228,7 +228,8 @@ impl CollectedResponse {
                     });
                 }
             }
-            _ => {}
+            // Guard-failed fallthrough: empty pending text/thinking
+            ContentBlockType::Text | ContentBlockType::Thinking => {}
         }
     }
 
@@ -268,7 +269,9 @@ impl CollectedResponse {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
+                ContentBlock::Thinking { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("")
@@ -281,7 +284,9 @@ impl CollectedResponse {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::Thinking { text } => Some(text.as_str()),
-                _ => None,
+                ContentBlock::Text { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("")
@@ -294,7 +299,9 @@ impl CollectedResponse {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::ToolUse { id, name, input } => Some((id, name, input)),
-                _ => None,
+                ContentBlock::Text { .. }
+                | ContentBlock::Thinking { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect()
     }
@@ -334,7 +341,9 @@ impl CollectedResponse {
                         new_content.push(ContentBlock::Text { text: remaining });
                     }
                 }
-                other => new_content.push(other),
+                ContentBlock::Thinking { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => new_content.push(block),
             }
         }
 

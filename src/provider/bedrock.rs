@@ -483,6 +483,8 @@ fn parse_bedrock_event(
 ) -> Vec<Result<StreamEvent, StreamError>> {
     use aws_sdk_bedrockruntime::types::ConverseStreamOutput;
 
+    // ConverseStreamOutput is #[non_exhaustive] in the AWS SDK
+    #[allow(clippy::wildcard_enum_match_arm)]
     match event {
         ConverseStreamOutput::MessageStart(_msg) => {
             vec![Ok(StreamEvent::Started {
@@ -497,6 +499,8 @@ fn parse_bedrock_event(
             let index = usize::try_from(block.content_block_index()).unwrap_or(0);
 
             if let Some(start) = block.start() {
+                // ContentBlockStart is #[non_exhaustive] in the AWS SDK
+                #[allow(clippy::wildcard_enum_match_arm)]
                 match start {
                     aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(tool) => {
                         state.current_tool_use_id = Some(tool.tool_use_id().to_owned());
@@ -530,6 +534,8 @@ fn parse_bedrock_event(
         }
         ConverseStreamOutput::ContentBlockDelta(delta) => {
             if let Some(d) = delta.delta() {
+                // ContentBlockDelta is #[non_exhaustive] in the AWS SDK
+                #[allow(clippy::wildcard_enum_match_arm)]
                 match d {
                     aws_sdk_bedrockruntime::types::ContentBlockDelta::Text(text) => {
                         vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
@@ -558,7 +564,9 @@ fn parse_bedrock_event(
         ConverseStreamOutput::MessageStop(stop) => {
             // Store stop_reason in state; emit Completed only from Metadata
             // to avoid duplicate Completed events.
-            state.stop_reason = match stop.stop_reason() {
+            // Bedrock StopReason is #[non_exhaustive] in the AWS SDK
+            #[allow(clippy::wildcard_enum_match_arm)]
+            let reason = match stop.stop_reason() {
                 aws_sdk_bedrockruntime::types::StopReason::EndTurn => Some(StopReason::EndTurn),
                 aws_sdk_bedrockruntime::types::StopReason::MaxTokens => Some(StopReason::MaxTokens),
                 aws_sdk_bedrockruntime::types::StopReason::ToolUse => Some(StopReason::ToolUse),
@@ -566,8 +574,8 @@ fn parse_bedrock_event(
                     Some(StopReason::StopSequence)
                 }
                 other => {
-                    // Bedrock uses non_exhaustive StopReason; match string representation
-                    // for ContentFiltered and GuardrailIntervened variants.
+                    // Match string representation for ContentFiltered and
+                    // GuardrailIntervened variants.
                     let s = other.as_str();
                     if s == "content_filtered" || s == "guardrail_intervened" {
                         Some(StopReason::ContentFilter)
@@ -576,6 +584,7 @@ fn parse_bedrock_event(
                     }
                 }
             };
+            state.stop_reason = reason;
             vec![]
         }
         ConverseStreamOutput::Metadata(meta) => {

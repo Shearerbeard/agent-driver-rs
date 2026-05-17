@@ -297,7 +297,15 @@ async fn collect_with_observer(
                                     })
                                     .await;
                             }
-                            _ => {}
+                            StreamEvent::Started { .. }
+                            | StreamEvent::ContentBlockStart { .. }
+                            | StreamEvent::ContentBlockStop { .. }
+                            | StreamEvent::BlockComplete { .. }
+                            | StreamEvent::Completed { .. }
+                            | StreamEvent::Error { .. }
+                            | StreamEvent::Delta(StreamDelta::SignatureDelta { .. })
+                            | StreamEvent::Delta(StreamDelta::ToolUseStart { .. })
+                            | StreamEvent::Delta(StreamDelta::ToolInputDelta { .. }) => {}
                         }
 
                         // Apply to response accumulator
@@ -323,7 +331,8 @@ async fn collect_with_observer(
                                     crate::error::SessionError::Stream(error),
                                 ));
                             }
-                            _ => {}
+                            StreamEvent::Started { .. }
+                            | StreamEvent::BlockComplete { .. } => {}
                         }
                     }
                     Some(Err(e)) => {

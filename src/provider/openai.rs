@@ -83,7 +83,9 @@ impl OpenAiProvider {
                         .iter()
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
+                            ContentBlock::Thinking { .. }
+                            | ContentBlock::ToolUse { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -107,7 +109,9 @@ impl OpenAiProvider {
                         .iter()
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
+                            ContentBlock::Thinking { .. }
+                            | ContentBlock::ToolUse { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -132,7 +136,7 @@ impl OpenAiProvider {
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
                             ContentBlock::Thinking { text } => Some(text.as_str()),
-                            _ => None,
+                            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -145,7 +149,9 @@ impl OpenAiProvider {
                             ContentBlock::ToolUse { id, name, input } => {
                                 Some((id.clone(), name.clone(), input.clone()))
                             }
-                            _ => None,
+                            ContentBlock::Text { .. }
+                            | ContentBlock::Thinking { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect();
 

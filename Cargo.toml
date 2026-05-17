@@ -117,3 +117,11 @@ string_add = { level = "deny", priority = 127 }
 string_slice = { level = "deny", priority = 127 }
 rc_buffer = { level = "deny", priority = 127 }
 rc_mutex = { level = "deny", priority = 127 }
+
+# --- Wave 4: Exhaustiveness & correctness (deny) ---
+wildcard_enum_match_arm = { level = "deny", priority = 127 }
+rest_pat_in_fully_bound_structs = { level = "deny", priority = 127 }
+assertions_on_result_states = { level = "deny", priority = 127 }
+try_err = { level = "deny", priority = 127 }
+error_impl_error = { level = "deny", priority = 127 }
+return_and_then = { level = "deny", priority = 127 }

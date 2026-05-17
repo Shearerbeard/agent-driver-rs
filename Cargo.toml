@@ -70,3 +70,32 @@ path = "src/bin/chat.rs"
 [[example]]
 name = "cluster_guardian"
 required-features = ["ollama", "mcp-http", "schema-sanitize"]
+
+# =============================================================================
+# Lints — progressive adoption from rust-seed baseline
+# Wave 1 (broad groups at warn) is always active.
+# Subsequent waves promote individual restriction lints to deny.
+# =============================================================================
+
+[lints.rust]
+let_underscore_drop = { level = "deny", priority = 127 }
+non_ascii_idents = { level = "deny", priority = 127 }
+
+[lints.clippy]
+# --- Wave 1: Broad groups at warn (compile never breaks, just signals) ---
+all = "warn"
+correctness = "warn"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
+style = "warn"
+pedantic = "warn"
+
+# --- Pedantic overrides (known conflicts / false positives) ---
+collapsible_if = { level = "allow", priority = 127 }
+let_and_return = { level = "allow", priority = 127 }
+needless_continue = { level = "allow", priority = 127 }
+needless_borrowed_reference = { level = "allow", priority = 127 }
+redundant_else = { level = "allow", priority = 127 }
+uninlined_format_args = { level = "allow", priority = 127 }
+module_name_repetitions = { level = "allow", priority = 127 }

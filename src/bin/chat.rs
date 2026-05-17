@@ -67,12 +67,12 @@ impl AgentObserver for ChatObserver {
         match event {
             AgentEvent::TextDelta { text } => {
                 print!("{}", text);
-                let _ = stdout.flush();
+                drop(stdout.flush());
             }
             AgentEvent::ThinkingDelta { thinking } => {
                 // Show thinking in dim style
                 print!("\x1b[2m{}\x1b[0m", thinking);
-                let _ = stdout.flush();
+                drop(stdout.flush());
             }
             AgentEvent::ToolCallStart { name, .. } => {
                 eprintln!("\x1b[33m[calling tool: {}]\x1b[0m", name);

@@ -197,10 +197,11 @@ impl McpConnection {
     /// Disconnect from the MCP server
     pub async fn disconnect(mut self) {
         tracing::info!(server = %self.name, "Disconnecting from MCP server");
-        let _ = self
-            .service
-            .close_with_timeout(std::time::Duration::from_secs(5))
-            .await;
+        drop(
+            self.service
+                .close_with_timeout(std::time::Duration::from_secs(5))
+                .await,
+        );
     }
 }
 

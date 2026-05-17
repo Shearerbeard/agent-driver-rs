@@ -1,7 +1,7 @@
 //! CLI chat client with agentic tool loop and optional MCP server support
 //!
 //! This chat client demonstrates the agent-driver-rs library with:
-//! - Streaming responses via the AgentLoop
+//! - Streaming responses via the `AgentLoop`
 //! - Dynamic tool calling (agent loop handles tool execution automatically)
 //! - Optional MCP server connections for additional tools
 //!
@@ -41,7 +41,7 @@ struct Args {
     #[arg(long = "mcp", value_name = "COMMAND")]
     mcp_servers: Vec<String>,
 
-    /// MCP HTTP server URLs (e.g., "http://localhost:8000/mcp")
+    /// MCP HTTP server URLs (e.g., "<http://localhost:8000/mcp>")
     /// Can be specified multiple times for multiple servers
     #[cfg(feature = "mcp-http")]
     #[arg(long = "mcp-http", value_name = "URL")]
@@ -116,9 +116,10 @@ impl AgentObserver for ChatObserver {
     }
 }
 
+#[allow(clippy::string_slice)] // boundary is validated by is_char_boundary loop above
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
+        s.to_owned()
     } else {
         // Find a char boundary at or before `max` to avoid panicking on multi-byte UTF-8
         let mut boundary = max;
@@ -396,8 +397,8 @@ async fn setup_mcp_connections(
         eprintln!("Connecting to MCP server '{}': {}", name, server_cmd);
         stdio_specs.push(McpServerSpec {
             name,
-            command: parts[0].to_string(),
-            args: parts[1..].iter().map(|s| s.to_string()).collect(),
+            command: parts[0].to_owned(),
+            args: parts[1..].iter().map(std::string::ToString::to_string).collect(),
         });
     }
 

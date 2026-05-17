@@ -150,9 +150,9 @@ impl KeepAlive {
     /// Convert to the API value
     pub fn as_api_value(&self) -> String {
         match self {
-            Self::Indefinite => "-1".to_string(),
+            Self::Indefinite => "-1".to_owned(),
             Self::Minutes(m) => format!("{}m", m),
-            Self::Unload => "0".to_string(),
+            Self::Unload => "0".to_owned(),
         }
     }
 }

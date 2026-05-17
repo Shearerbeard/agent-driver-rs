@@ -106,7 +106,7 @@ pub fn mock_text_response(text: &str) -> Vec<StreamEvent> {
             block_type: ContentBlockType::Text,
         },
         StreamEvent::Delta(StreamDelta::TextDelta {
-            text: text.to_string(),
+            text: text.to_owned(),
         }),
         StreamEvent::ContentBlockStop { index: 0 },
         StreamEvent::Completed {
@@ -142,7 +142,7 @@ pub fn mock_tool_call_response(id: &str, name: &str, input_json: &str) -> Vec<St
         }),
         StreamEvent::Delta(StreamDelta::ToolInputDelta {
             id: ToolCallId::new(id),
-            partial_json: input_json.to_string(),
+            partial_json: input_json.to_owned(),
         }),
         StreamEvent::ContentBlockStop { index: 0 },
         StreamEvent::Completed {
@@ -229,7 +229,7 @@ pub fn mock_thinking_response(thinking: &str, text: &str) -> Vec<StreamEvent> {
             block_type: ContentBlockType::Thinking,
         },
         StreamEvent::Delta(StreamDelta::ThinkingDelta {
-            thinking: thinking.to_string(),
+            thinking: thinking.to_owned(),
         }),
         StreamEvent::ContentBlockStop { index: 0 },
         StreamEvent::ContentBlockStart {
@@ -237,7 +237,7 @@ pub fn mock_thinking_response(thinking: &str, text: &str) -> Vec<StreamEvent> {
             block_type: ContentBlockType::Text,
         },
         StreamEvent::Delta(StreamDelta::TextDelta {
-            text: text.to_string(),
+            text: text.to_owned(),
         }),
         StreamEvent::ContentBlockStop { index: 1 },
         StreamEvent::Completed {
@@ -268,7 +268,7 @@ pub fn mock_content_filter_response(partial_text: &str) -> Vec<StreamEvent> {
             block_type: ContentBlockType::Text,
         },
         StreamEvent::Delta(StreamDelta::TextDelta {
-            text: partial_text.to_string(),
+            text: partial_text.to_owned(),
         }),
         StreamEvent::ContentBlockStop { index: 0 },
         StreamEvent::Completed {
@@ -305,7 +305,7 @@ pub fn mock_mixed_text_tool_response(
             block_type: ContentBlockType::Text,
         },
         StreamEvent::Delta(StreamDelta::TextDelta {
-            text: text.to_string(),
+            text: text.to_owned(),
         }),
         StreamEvent::ContentBlockStop { index: 0 },
         StreamEvent::ContentBlockStart {
@@ -318,7 +318,7 @@ pub fn mock_mixed_text_tool_response(
         }),
         StreamEvent::Delta(StreamDelta::ToolInputDelta {
             id: ToolCallId::new(tool_id),
-            partial_json: tool_input.to_string(),
+            partial_json: tool_input.to_owned(),
         }),
         StreamEvent::ContentBlockStop { index: 1 },
         StreamEvent::Completed {

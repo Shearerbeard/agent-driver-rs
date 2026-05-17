@@ -138,7 +138,7 @@ impl McpConnection {
 
             let definition = ToolDefinition::new(
                 tool_name,
-                mcp_tool.description.as_deref().unwrap_or("").to_string(),
+                mcp_tool.description.as_deref().unwrap_or("").to_owned(),
                 schema,
             )
             .with_source(ToolSource::Mcp {
@@ -235,7 +235,7 @@ impl Tool for McpToolWrapper {
             _ = ctx.cancellation.cancelled() => {
                 return Err(ToolError::ExecutionFailed {
                     tool_name: self.definition.name.clone(),
-                    message: "Tool execution cancelled".to_string(),
+                    message: "Tool execution cancelled".to_owned(),
                 });
             }
             result = self.peer.call_tool(params) => {

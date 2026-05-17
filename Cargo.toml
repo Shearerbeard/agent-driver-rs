@@ -109,3 +109,11 @@ unused_result_ok = { level = "deny", priority = 127 }
 exit = { level = "deny", priority = 127 }
 missing_assert_message = { level = "deny", priority = 127 }
 tests_outside_test_module = { level = "deny", priority = 127 }
+
+# --- Wave 3: Ownership clarity (deny) ---
+clone_on_ref_ptr = { level = "deny", priority = 127 }
+str_to_string = { level = "deny", priority = 127 }
+string_add = { level = "deny", priority = 127 }
+string_slice = { level = "deny", priority = 127 }
+rc_buffer = { level = "deny", priority = 127 }
+rc_mutex = { level = "deny", priority = 127 }

@@ -184,7 +184,7 @@ impl From<String> for ToolResultContent {
 
 impl From<&str> for ToolResultContent {
     fn from(s: &str) -> Self {
-        Self::Text(s.to_string())
+        Self::Text(s.to_owned())
     }
 }
 

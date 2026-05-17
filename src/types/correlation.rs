@@ -26,8 +26,10 @@ impl CorrelationId {
 
 impl std::fmt::Display for CorrelationId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Short form (first 8 chars) for logs
-        write!(f, "{}", &self.0.to_string()[..8])
+        // Short form (first 8 chars of UUID hex) for logs
+        let full = self.0.to_string();
+        let short = full.get(..8).unwrap_or(&full);
+        write!(f, "{short}")
     }
 }
 

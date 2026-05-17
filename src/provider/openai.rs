@@ -160,10 +160,10 @@ impl OpenAiProvider {
                             .into_iter()
                             .map(|(id, name, input)| {
                                 async_openai::types::ChatCompletionMessageToolCall {
-                                    id: id.as_str().to_string(),
+                                    id: id.as_str().to_owned(),
                                     r#type: ChatCompletionToolType::Function,
                                     function: async_openai::types::FunctionCall {
-                                        name: name.as_str().to_string(),
+                                        name: name.as_str().to_owned(),
                                         arguments: serde_json::to_string(&input)
                                             .unwrap_or_default(),
                                     },
@@ -261,7 +261,7 @@ impl Provider for OpenAiProvider {
             if !self.config.model.supports_streaming() {
                 return Err(ProviderError::StreamingNotSupported {
                     provider: super::ProviderKind::OpenAi,
-                    model: self.config.model.as_str().to_string(),
+                    model: self.config.model.as_str().to_owned(),
                 });
             }
 
@@ -345,7 +345,7 @@ impl Provider for OpenAiProvider {
                     } else if msg.contains("model") && msg.contains("not found") {
                         ProviderError::ModelNotFound {
                             provider: super::ProviderKind::OpenAi,
-                            model: model.to_string(),
+                            model: model.to_owned(),
                         }
                     } else if is_context_window_message(&msg) {
                         ProviderError::ContextWindowExceeded {
@@ -410,22 +410,22 @@ impl Provider for OpenAiProvider {
             Ok(vec![
                 ModelInfo {
                     id: ModelId::new("gpt-4o").expect("hardcoded valid model ID"),
-                    name: "GPT-4o".to_string(),
+                    name: "GPT-4o".to_owned(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
                     id: ModelId::new("gpt-4o-mini").expect("hardcoded valid model ID"),
-                    name: "GPT-4o Mini".to_string(),
+                    name: "GPT-4o Mini".to_owned(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
                     id: ModelId::new("o1").expect("hardcoded valid model ID"),
-                    name: "o1".to_string(),
+                    name: "o1".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("o1-mini").expect("hardcoded valid model ID"),
-                    name: "o1 Mini".to_string(),
+                    name: "o1 Mini".to_owned(),
                     context_window: Some(128_000),
                 },
             ])

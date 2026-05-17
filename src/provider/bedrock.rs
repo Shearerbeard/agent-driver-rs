@@ -49,7 +49,7 @@ impl BedrockProvider {
     pub async fn new(config: BedrockConfig) -> Result<Self, ProviderError> {
         // Load AWS config from environment
         let aws_config = aws_config::defaults(BehaviorVersion::latest())
-            .region(aws_config::Region::new(config.region.as_str().to_string()))
+            .region(aws_config::Region::new(config.region.as_str().to_owned()))
             .load()
             .await;
 
@@ -280,7 +280,7 @@ impl Provider for BedrockProvider {
                 .config
                 .inference_profile
                 .clone()
-                .unwrap_or_else(|| self.config.model.model_id().to_string());
+                .unwrap_or_else(|| self.config.model.model_id().to_owned());
 
             // ── Build the Bedrock converse_stream request ────────────────
             let messages = self.convert_messages(&request.messages)?;
@@ -306,7 +306,7 @@ impl Provider for BedrockProvider {
             // Add system prompt
             if let Some(ref system) = request.system {
                 if !system.is_empty() {
-                    req = req.system(SystemContentBlock::Text(system.as_str().to_string()));
+                    req = req.system(SystemContentBlock::Text(system.as_str().to_owned()));
                 }
             }
 
@@ -419,25 +419,25 @@ impl Provider for BedrockProvider {
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-opus-4-5-20251101-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Opus 4.5 (Bedrock)".to_string(),
+                    name: "Claude Opus 4.5 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-sonnet-4-5-20250929-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Sonnet 4.5 (Bedrock)".to_string(),
+                    name: "Claude Sonnet 4.5 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-haiku-4-5-20251001-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Haiku 4.5 (Bedrock)".to_string(),
+                    name: "Claude Haiku 4.5 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-sonnet-4-20250514-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Sonnet 4 (Bedrock)".to_string(),
+                    name: "Claude Sonnet 4 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
             ])
@@ -499,8 +499,8 @@ fn parse_bedrock_event(
             if let Some(start) = block.start() {
                 match start {
                     aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(tool) => {
-                        state.current_tool_use_id = Some(tool.tool_use_id().to_string());
-                        state.current_tool_name = Some(tool.name().to_string());
+                        state.current_tool_use_id = Some(tool.tool_use_id().to_owned());
+                        state.current_tool_name = Some(tool.name().to_owned());
 
                         vec![
                             Ok(StreamEvent::ContentBlockStart {
@@ -541,7 +541,7 @@ fn parse_bedrock_event(
                             id: ToolCallId::new(
                                 state.current_tool_use_id.clone().unwrap_or_default(),
                             ),
-                            partial_json: tool.input().to_string(),
+                            partial_json: tool.input().to_owned(),
                         }))]
                     }
                     _ => vec![],

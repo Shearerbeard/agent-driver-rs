@@ -72,7 +72,7 @@ impl AnthropicProvider {
         // Add system prompt
         if let Some(ref system) = request.system {
             if !system.is_empty() {
-                body["system"] = JsonValue::String(system.as_str().to_string());
+                body["system"] = JsonValue::String(system.as_str().to_owned());
             }
         }
 
@@ -184,7 +184,7 @@ impl AnthropicProvider {
                 ProviderError::Auth {
                     provider: super::ProviderKind::Anthropic,
                     kind: AuthErrorKind::InvalidApiKey,
-                    message: "ANTHROPIC_API_KEY contains invalid header characters".to_string(),
+                    message: "ANTHROPIC_API_KEY contains invalid header characters".to_owned(),
                 }
             })?,
         );
@@ -242,18 +242,18 @@ impl Provider for AnthropicProvider {
             Ok(vec![
                 ModelInfo {
                     id: ModelId::new("claude-opus-4-20250514").expect("hardcoded valid model ID"),
-                    name: "Claude Opus 4".to_string(),
+                    name: "Claude Opus 4".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("claude-sonnet-4-20250514").expect("hardcoded valid model ID"),
-                    name: "Claude Sonnet 4".to_string(),
+                    name: "Claude Sonnet 4".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("claude-3-5-haiku-20241022")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude 3.5 Haiku".to_string(),
+                    name: "Claude 3.5 Haiku".to_owned(),
                     context_window: Some(200_000),
                 },
             ])

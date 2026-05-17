@@ -255,7 +255,7 @@ impl OpenRouterProvider {
             HeaderValue::from_str(&auth_value).map_err(|_| ProviderError::Auth {
                 provider: super::ProviderKind::OpenRouter,
                 kind: AuthErrorKind::InvalidApiKey,
-                message: "OPENROUTER_API_KEY contains invalid header characters".to_string(),
+                message: "OPENROUTER_API_KEY contains invalid header characters".to_owned(),
             })?,
         );
 
@@ -317,27 +317,27 @@ impl Provider for OpenRouterProvider {
                 ModelInfo {
                     id: ModelId::new("anthropic/claude-sonnet-4")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Sonnet 4".to_string(),
+                    name: "Claude Sonnet 4".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic/claude-opus-4").expect("hardcoded valid model ID"),
-                    name: "Claude Opus 4".to_string(),
+                    name: "Claude Opus 4".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("openai/gpt-4o").expect("hardcoded valid model ID"),
-                    name: "GPT-4o".to_string(),
+                    name: "GPT-4o".to_owned(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
                     id: ModelId::new("google/gemini-2.0-flash").expect("hardcoded valid model ID"),
-                    name: "Gemini 2.0 Flash".to_string(),
+                    name: "Gemini 2.0 Flash".to_owned(),
                     context_window: Some(1_000_000),
                 },
                 ModelInfo {
                     id: ModelId::new("meta-llama/llama-3.3-70b").expect("hardcoded valid model ID"),
-                    name: "Llama 3.3 70B".to_string(),
+                    name: "Llama 3.3 70B".to_owned(),
                     context_window: Some(128_000),
                 },
             ])

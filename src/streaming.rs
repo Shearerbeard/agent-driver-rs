@@ -354,12 +354,13 @@ impl CollectedResponse {
 /// Parse embedded tool calls from a text string.
 ///
 /// Returns (extracted_tool_use_blocks, remaining_text).
+#[allow(clippy::string_slice)] // offsets from .find() on ASCII delimiters are always valid
 fn parse_embedded_tool_calls(
     text: &str,
     counter: &mut u32,
 ) -> (Vec<ContentBlock>, String) {
     let mut tool_calls = Vec::new();
-    let mut remaining = text.to_string();
+    let mut remaining = text.to_owned();
 
     // Pattern 1: <tool_call>...</tool_call>
     while let Some(start) = remaining.find("<tool_call>") {

@@ -88,7 +88,7 @@ impl BedrockConfig {
             "claude-opus-4.5" => BedrockModel::ClaudeOpus4_5,
             "claude-haiku-4.5" => BedrockModel::ClaudeHaiku4_5,
             "claude-haiku-3.5" | "claude-3.5-haiku" => BedrockModel::ClaudeHaiku3_5,
-            other => BedrockModel::Custom(other.to_string()),
+            other => BedrockModel::Custom(other.to_owned()),
         };
 
         let max_tokens = std::env::var("BEDROCK_MAX_TOKENS")

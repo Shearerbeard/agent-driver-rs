@@ -411,7 +411,7 @@ async fn execute_tools(
                     Some(tool) => match tool.execute(&tool_input, &ctx).await {
                         Ok(result) => {
                             let is_error = result.is_error();
-                            let content = result.content().to_string();
+                            let content = result.content().to_owned();
                             (id, name, content, is_error)
                         }
                         Err(e) => {

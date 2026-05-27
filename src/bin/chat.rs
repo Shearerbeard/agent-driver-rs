@@ -1,7 +1,7 @@
 //! CLI chat client with agentic tool loop and optional MCP server support
 //!
 //! This chat client demonstrates the agent-driver-rs library with:
-//! - Streaming responses via the AgentLoop
+//! - Streaming responses via the `AgentLoop`
 //! - Dynamic tool calling (agent loop handles tool execution automatically)
 //! - Optional MCP server connections for additional tools
 //!
@@ -20,7 +20,7 @@
 //!     --mcp-config servers.json
 //! ```
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead as _, Write as _};
 use std::sync::Arc;
 
 use clap::Parser;
@@ -41,7 +41,7 @@ struct Args {
     #[arg(long = "mcp", value_name = "COMMAND")]
     mcp_servers: Vec<String>,
 
-    /// MCP HTTP server URLs (e.g., "http://localhost:8000/mcp")
+    /// MCP HTTP server URLs (e.g., "<http://localhost:8000/mcp>")
     /// Can be specified multiple times for multiple servers
     #[cfg(feature = "mcp-http")]
     #[arg(long = "mcp-http", value_name = "URL")]
@@ -67,12 +67,12 @@ impl AgentObserver for ChatObserver {
         match event {
             AgentEvent::TextDelta { text } => {
                 print!("{}", text);
-                let _ = stdout.flush();
+                drop(stdout.flush());
             }
             AgentEvent::ThinkingDelta { thinking } => {
                 // Show thinking in dim style
                 print!("\x1b[2m{}\x1b[0m", thinking);
-                let _ = stdout.flush();
+                drop(stdout.flush());
             }
             AgentEvent::ToolCallStart { name, .. } => {
                 eprintln!("\x1b[33m[calling tool: {}]\x1b[0m", name);
@@ -111,14 +111,18 @@ impl AgentObserver for ChatObserver {
                     );
                 }
             }
+            AgentEvent::IterationComplete { .. } => {}
+            // AgentEvent is #[non_exhaustive] — wildcard needed for forward compatibility
+            #[allow(clippy::wildcard_enum_match_arm, reason = "AgentEvent is #[non_exhaustive]")]
             _ => {}
         }
     }
 }
 
+#[allow(clippy::string_slice, reason = "boundary is validated by is_char_boundary loop above")]
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
+        s.to_owned()
     } else {
         // Find a char boundary at or before `max` to avoid panicking on multi-byte UTF-8
         let mut boundary = max;
@@ -147,7 +151,7 @@ struct McpServerEntry {
 
 /// Keepalive container for MCP connections so child processes don't get dropped
 #[cfg(feature = "mcp")]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "held to keep MCP child processes alive via Drop")]
 struct McpKeepAlive {
     connections: Vec<agent_driver_rs::tool::McpConnection>,
 }
@@ -365,7 +369,7 @@ async fn create_provider(
             let provider = agent_driver_rs::provider::OllamaProvider::new(cfg)?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
-        #[allow(unreachable_patterns)]
+        #[allow(unreachable_patterns, reason = "reachable only when some provider features are disabled")]
         _ => Err("Provider not enabled in features".into()),
     }
 }
@@ -396,8 +400,8 @@ async fn setup_mcp_connections(
         eprintln!("Connecting to MCP server '{}': {}", name, server_cmd);
         stdio_specs.push(McpServerSpec {
             name,
-            command: parts[0].to_string(),
-            args: parts[1..].iter().map(|s| s.to_string()).collect(),
+            command: parts[0].to_owned(),
+            args: parts[1..].iter().map(std::string::ToString::to_string).collect(),
         });
     }
 

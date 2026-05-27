@@ -38,7 +38,7 @@ use crate::agent::LoopStopReason;
 #[cfg(feature = "phoenix")]
 use crate::types::ToolName;
 #[cfg(feature = "phoenix")]
-use opentelemetry::trace::{SpanKind as OtelSpanKind, TraceContextExt, Tracer};
+use opentelemetry::trace::{SpanKind as OtelSpanKind, TraceContextExt as _, Tracer as _};
 #[cfg(feature = "phoenix")]
 use opentelemetry::{Context, KeyValue};
 
@@ -80,11 +80,11 @@ impl AgentLoopSpan {
         agent_name: &str,
     ) -> Result<Self, String> {
         let span = tracer
-            .span_builder(name.to_string())
+            .span_builder(name.to_owned())
             .with_kind(OtelSpanKind::Server)
             .with_attributes(vec![
                 KeyValue::new(attr::SPAN_KIND, SpanKind::Agent.as_str()),
-                KeyValue::new(attr::AGENT_NAME, agent_name.to_string()),
+                KeyValue::new(attr::AGENT_NAME, agent_name.to_owned()),
             ])
             .start(tracer);
         let context = Context::current_with_span(span);
@@ -117,7 +117,7 @@ impl AgentLoopSpan {
             .with_kind(OtelSpanKind::Internal)
             .with_attributes(vec![
                 KeyValue::new(attr::SPAN_KIND, SpanKind::Tool.as_str()),
-                KeyValue::new(attr::TOOL_NAME, tool_name.as_str().to_string()),
+                KeyValue::new(attr::TOOL_NAME, tool_name.as_str().to_owned()),
             ])
             .start_with_context(&self.tracer, &self.context);
         let context = self.context.with_span(span);
@@ -185,7 +185,7 @@ impl SessionOperationSpan {
         operation: &str,
     ) -> Result<Self, String> {
         let span = tracer
-            .span_builder(operation.to_string())
+            .span_builder(operation.to_owned())
             .with_kind(OtelSpanKind::Internal)
             .with_attributes(vec![KeyValue::new(
                 attr::SPAN_KIND,
@@ -202,7 +202,7 @@ impl SessionOperationSpan {
         parent: &Context,
     ) -> Result<Self, String> {
         let span = tracer
-            .span_builder(operation.to_string())
+            .span_builder(operation.to_owned())
             .with_kind(OtelSpanKind::Internal)
             .with_attributes(vec![KeyValue::new(
                 attr::SPAN_KIND,

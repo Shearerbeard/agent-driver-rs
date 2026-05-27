@@ -55,7 +55,7 @@ impl OllamaProvider {
             .base_url
             .host_str()
             .unwrap_or("localhost")
-            .to_string();
+            .to_owned();
         let port = config.base_url.port().unwrap_or(11434);
 
         let client = Ollama::new(format!("http://{}", host), port);
@@ -108,7 +108,7 @@ impl OllamaProvider {
                             if let ContentBlock::ToolUse { name, input, .. } = b {
                                 Some(ToolCall {
                                     function: ToolCallFunction {
-                                        name: name.as_str().to_string(),
+                                        name: name.as_str().to_owned(),
                                         arguments: input.clone(),
                                     },
                                 })
@@ -161,7 +161,7 @@ fn extract_text(content: &[ContentBlock]) -> String {
                 }
                 result.push_str(text);
             }
-            _ => {}
+            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => {}
         }
     }
     result
@@ -200,7 +200,7 @@ fn convert_tools(tools: &[ToolDefinition]) -> Vec<ToolInfo> {
             ToolInfo {
                 tool_type: ToolType::Function,
                 function: ToolFunctionInfo {
-                    name: t.name.as_str().to_string(),
+                    name: t.name.as_str().to_owned(),
                     description: t.description.clone(),
                     parameters,
                 },
@@ -220,7 +220,7 @@ impl Provider for OllamaProvider {
         ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<StreamHandle, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            let model = self.config.model.as_str().to_string();
+            let model = self.config.model.as_str().to_owned();
 
             // Convert messages
             let mut messages = Vec::new();
@@ -230,7 +230,7 @@ impl Provider for OllamaProvider {
                 if !system.as_str().is_empty() {
                     messages.push(ChatMessage::new(
                         MessageRole::System,
-                        system.as_str().to_string(),
+                        system.as_str().to_owned(),
                     ));
                 }
             }
@@ -295,7 +295,7 @@ impl Provider for OllamaProvider {
                     Ok(response) => parse_ollama_response(response, state),
                     Err(()) => vec![Err(StreamError::ConnectionLost {
                         kind: StreamErrorKind::TransportError,
-                        message: "Stream error".to_string(),
+                        message: "Stream error".to_owned(),
                     })],
                 },
                 |state| {
@@ -346,21 +346,21 @@ impl Provider for OllamaProvider {
                 Err(e) => {
                     // Fall back to common models if we can't query
                     tracing::warn!("Failed to list Ollama models: {}", e);
-                    // Safety: all model IDs below are hardcoded valid strings
+                    // All model IDs below are hardcoded valid strings
                     Ok(vec![
                         ModelInfo {
                             id: ModelId::new("llama3.2").expect("hardcoded valid model ID"),
-                            name: "Llama 3.2".to_string(),
+                            name: "Llama 3.2".to_owned(),
                             context_window: Some(8192),
                         },
                         ModelInfo {
                             id: ModelId::new("qwen3:14b").expect("hardcoded valid model ID"),
-                            name: "Qwen3 14B".to_string(),
+                            name: "Qwen3 14B".to_owned(),
                             context_window: Some(32768),
                         },
                         ModelInfo {
                             id: ModelId::new("mistral").expect("hardcoded valid model ID"),
-                            name: "Mistral".to_string(),
+                            name: "Mistral".to_owned(),
                             context_window: Some(8192),
                         },
                     ])
@@ -476,8 +476,8 @@ fn parse_ollama_response(
             let name = ToolName::new(&tc.function.name)
                 .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid"));
 
-            let input_json =
-                serde_json::to_string(&tc.function.arguments).unwrap_or_else(|_| "{}".to_string());
+            let input_json = serde_json::to_string(&tc.function.arguments)
+                .unwrap_or_else(|_| "{}".to_owned());
 
             events.push(Ok(StreamEvent::ContentBlockStart {
                 index: state.block_index,

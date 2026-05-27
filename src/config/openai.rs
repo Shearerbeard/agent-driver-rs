@@ -156,7 +156,7 @@ impl OpenAiConfig {
             "o1-mini" => OpenAiModel::O1Mini,
             "o3" => OpenAiModel::O3,
             "o3-mini" => OpenAiModel::O3Mini,
-            other => OpenAiModel::Custom(other.to_string()),
+            other => OpenAiModel::Custom(other.to_owned()),
         };
 
         let max_tokens = std::env::var("OPENAI_MAX_TOKENS")

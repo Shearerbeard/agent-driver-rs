@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use futures::StreamExt;
+use futures::StreamExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::AgentLoopError;
@@ -146,11 +146,10 @@ impl<'s> AgentLoop<'s> {
 
         // Step 1: Send the initial user message
         #[cfg(feature = "phoenix")]
-        let _send_span = agent_span.as_ref().and_then(|span| {
-            tracer
-                .as_ref()
-                .and_then(|t| span.create_session_span(t, "session.send"))
-        });
+        let _send_span = agent_span
+            .as_ref()
+            .zip(tracer.as_ref())
+            .and_then(|(span, t)| span.create_session_span(t, "session.send"));
         let handle = self.session.send_streaming(message).await?;
 
         // Step 2: Collect the first response while forwarding events
@@ -261,11 +260,10 @@ impl<'s> AgentLoop<'s> {
 
             // Continue streaming (tool results are already in history)
             #[cfg(feature = "phoenix")]
-            let _continue_span = agent_span.as_ref().and_then(|span| {
-                tracer
-                    .as_ref()
-                    .and_then(|t| span.create_session_span(t, "session.continue"))
-            });
+            let _continue_span = agent_span
+                .as_ref()
+                .zip(tracer.as_ref())
+                .and_then(|(span, t)| span.create_session_span(t, "session.continue"));
             let handle = self.session.continue_streaming().await?;
 
             response = collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;
@@ -353,7 +351,15 @@ async fn collect_with_observer(
                                     })
                                     .await;
                             }
-                            _ => {}
+                            StreamEvent::Started { .. }
+                            | StreamEvent::ContentBlockStart { .. }
+                            | StreamEvent::ContentBlockStop { .. }
+                            | StreamEvent::BlockComplete { .. }
+                            | StreamEvent::Completed { .. }
+                            | StreamEvent::Error { .. }
+                            | StreamEvent::Delta(StreamDelta::SignatureDelta { .. })
+                            | StreamEvent::Delta(StreamDelta::ToolUseStart { .. })
+                            | StreamEvent::Delta(StreamDelta::ToolInputDelta { .. }) => {}
                         }
 
                         // Apply to response accumulator
@@ -379,7 +385,8 @@ async fn collect_with_observer(
                                     crate::error::SessionError::Stream(error),
                                 ));
                             }
-                            _ => {}
+                            StreamEvent::Started { .. }
+                            | StreamEvent::BlockComplete { .. } => {}
                         }
                     }
                     Some(Err(e)) => {
@@ -467,7 +474,7 @@ async fn execute_tools(
                     Some(tool) => match tool.execute(&tool_input, &ctx).await {
                         Ok(result) => {
                             let is_error = result.is_error();
-                            let content = result.content().to_string();
+                            let content = result.content().to_owned();
                             (id, name, content, is_error)
                         }
                         Err(e) => {

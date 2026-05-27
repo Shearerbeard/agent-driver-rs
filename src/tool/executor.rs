@@ -79,6 +79,8 @@ impl ToolInput {
     /// Some LLMs send `null` or omit arguments entirely for tools with no
     /// required parameters — this avoids wasting a tool iteration on a retry.
     pub fn from_value(value: JsonValue) -> Result<Self, ToolError> {
+        // serde_json::Value is from an external crate
+        #[allow(clippy::wildcard_enum_match_arm, reason = "serde_json::Value is an external enum that may add variants")]
         match value {
             JsonValue::Object(map) => Ok(Self(map)),
             JsonValue::Null => Ok(Self(Map::new())),
@@ -115,17 +117,17 @@ impl ToolInput {
 
     /// Get a string field
     pub fn get_str(&self, key: &str) -> Option<&str> {
-        self.0.get(key).and_then(|v| v.as_str())
+        self.0.get(key)?.as_str()
     }
 
     /// Get an integer field
     pub fn get_i64(&self, key: &str) -> Option<i64> {
-        self.0.get(key).and_then(|v| v.as_i64())
+        self.0.get(key)?.as_i64()
     }
 
     /// Get a boolean field
     pub fn get_bool(&self, key: &str) -> Option<bool> {
-        self.0.get(key).and_then(|v| v.as_bool())
+        self.0.get(key)?.as_bool()
     }
 }
 

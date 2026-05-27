@@ -193,7 +193,7 @@ impl OpenRouterProvider {
                 .filter_map(|b| match b {
                     ContentBlock::Text { text } => Some(text.as_str()),
                     ContentBlock::Thinking { text } => Some(text.as_str()),
-                    _ => None,
+                    ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
                 })
                 .collect::<Vec<_>>()
                 .join("");
@@ -210,7 +210,9 @@ impl OpenRouterProvider {
                             "arguments": serde_json::to_string(input).unwrap_or_default()
                         }
                     })),
-                    _ => None,
+                    ContentBlock::Text { .. }
+                    | ContentBlock::Thinking { .. }
+                    | ContentBlock::ToolResult { .. } => None,
                 })
                 .collect();
 
@@ -230,7 +232,9 @@ impl OpenRouterProvider {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
+                ContentBlock::Thinking { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("");
@@ -255,7 +259,7 @@ impl OpenRouterProvider {
             HeaderValue::from_str(&auth_value).map_err(|_| ProviderError::Auth {
                 provider: super::ProviderKind::OpenRouter,
                 kind: AuthErrorKind::InvalidApiKey,
-                message: "OPENROUTER_API_KEY contains invalid header characters".to_string(),
+                message: "OPENROUTER_API_KEY contains invalid header characters".to_owned(),
             })?,
         );
 
@@ -312,32 +316,32 @@ impl Provider for OpenRouterProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + slashes/hyphens/dots)
+            // All model IDs below are hardcoded valid strings
             Ok(vec![
                 ModelInfo {
                     id: ModelId::new("anthropic/claude-sonnet-4")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Sonnet 4".to_string(),
+                    name: "Claude Sonnet 4".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic/claude-opus-4").expect("hardcoded valid model ID"),
-                    name: "Claude Opus 4".to_string(),
+                    name: "Claude Opus 4".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("openai/gpt-4o").expect("hardcoded valid model ID"),
-                    name: "GPT-4o".to_string(),
+                    name: "GPT-4o".to_owned(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
                     id: ModelId::new("google/gemini-2.0-flash").expect("hardcoded valid model ID"),
-                    name: "Gemini 2.0 Flash".to_string(),
+                    name: "Gemini 2.0 Flash".to_owned(),
                     context_window: Some(1_000_000),
                 },
                 ModelInfo {
                     id: ModelId::new("meta-llama/llama-3.3-70b").expect("hardcoded valid model ID"),
-                    name: "Llama 3.3 70B".to_string(),
+                    name: "Llama 3.3 70B".to_owned(),
                     context_window: Some(128_000),
                 },
             ])
@@ -575,7 +579,7 @@ mod tests {
             started: true,
             ..Default::default()
         };
-        let _ = parse_openrouter_event(data, &mut state);
+        drop(parse_openrouter_event(data, &mut state));
 
         // Should update stop_reason in state
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
@@ -628,7 +632,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = parse_openrouter_event(data, &mut state);
+        drop(parse_openrouter_event(data, &mut state));
 
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
         let usage = state.usage.unwrap();

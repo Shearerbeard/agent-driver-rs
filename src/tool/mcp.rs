@@ -70,7 +70,7 @@ impl McpConnection {
             }
         })?;
 
-        use rmcp::ServiceExt;
+        use rmcp::ServiceExt as _;
         let service =
             ().serve(transport)
                 .await
@@ -93,7 +93,7 @@ impl McpConnection {
         let name = name.into();
         let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(uri);
 
-        use rmcp::ServiceExt;
+        use rmcp::ServiceExt as _;
         let service =
             ().serve(transport)
                 .await
@@ -138,7 +138,7 @@ impl McpConnection {
 
             let definition = ToolDefinition::new(
                 tool_name,
-                mcp_tool.description.as_deref().unwrap_or("").to_string(),
+                mcp_tool.description.as_deref().unwrap_or("").to_owned(),
                 schema,
             )
             .with_source(ToolSource::Mcp {
@@ -197,10 +197,11 @@ impl McpConnection {
     /// Disconnect from the MCP server
     pub async fn disconnect(mut self) {
         tracing::info!(server = %self.name, "Disconnecting from MCP server");
-        let _ = self
-            .service
-            .close_with_timeout(std::time::Duration::from_secs(5))
-            .await;
+        drop(
+            self.service
+                .close_with_timeout(std::time::Duration::from_secs(5))
+                .await,
+        );
     }
 }
 
@@ -234,7 +235,7 @@ impl Tool for McpToolWrapper {
             _ = ctx.cancellation.cancelled() => {
                 return Err(ToolError::ExecutionFailed {
                     tool_name: self.definition.name.clone(),
-                    message: "Tool execution cancelled".to_string(),
+                    message: "Tool execution cancelled".to_owned(),
                 });
             }
             result = self.peer.call_tool(params) => {

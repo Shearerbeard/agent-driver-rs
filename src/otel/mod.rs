@@ -29,7 +29,7 @@
 pub mod instrumentation;
 
 #[cfg(feature = "phoenix")]
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::TracerProvider as _;
 #[cfg(feature = "phoenix")]
 use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
 
@@ -42,7 +42,7 @@ pub static PHOENIX_TRACER_PROVIDER: std::sync::OnceLock<std::sync::Arc<SdkTracer
 
 #[cfg(feature = "phoenix")]
 pub fn init_tracer_provider(provider: std::sync::Arc<SdkTracerProvider>) {
-    PHOENIX_TRACER_PROVIDER.set(provider).ok();
+    drop(PHOENIX_TRACER_PROVIDER.set(provider));
 }
 
 #[cfg(feature = "phoenix")]
@@ -53,8 +53,8 @@ pub fn get_tracer_provider() -> Option<std::sync::Arc<SdkTracerProvider>> {
 #[cfg(feature = "phoenix")]
 pub fn get_tracer(name: &str) -> Result<opentelemetry_sdk::trace::Tracer, String> {
     let provider = get_tracer_provider()
-        .ok_or_else(|| "Phoenix tracer provider not initialized".to_string())?;
-    Ok(provider.tracer(name.to_string()))
+        .ok_or_else(|| "Phoenix tracer provider not initialized".to_owned())?;
+    Ok(provider.tracer(name.to_owned()))
 }
 
 /// Initialize Phoenix tracing with OTLP gRPC exporter.
@@ -63,10 +63,10 @@ pub fn get_tracer(name: &str) -> Result<opentelemetry_sdk::trace::Tracer, String
 /// Must be called from within a Tokio runtime.
 #[cfg(feature = "phoenix")]
 pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>, String> {
-    use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_otlp::WithExportConfig as _;
 
     let endpoint = std::env::var("PHOENIX_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+        .unwrap_or_else(|_| "http://localhost:4317".to_owned());
 
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
@@ -88,6 +88,6 @@ pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>
 #[cfg(feature = "phoenix")]
 pub fn shutdown_phoenix() {
     if let Some(provider) = get_tracer_provider() {
-        let _ = provider.shutdown();
+        let _shutdown = provider.shutdown();
     }
 }

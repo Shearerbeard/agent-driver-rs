@@ -83,7 +83,9 @@ impl OpenAiProvider {
                         .iter()
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
+                            ContentBlock::Thinking { .. }
+                            | ContentBlock::ToolUse { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -107,7 +109,9 @@ impl OpenAiProvider {
                         .iter()
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
+                            ContentBlock::Thinking { .. }
+                            | ContentBlock::ToolUse { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -132,7 +136,7 @@ impl OpenAiProvider {
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
                             ContentBlock::Thinking { text } => Some(text.as_str()),
-                            _ => None,
+                            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -145,7 +149,9 @@ impl OpenAiProvider {
                             ContentBlock::ToolUse { id, name, input } => {
                                 Some((id.clone(), name.clone(), input.clone()))
                             }
-                            _ => None,
+                            ContentBlock::Text { .. }
+                            | ContentBlock::Thinking { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect();
 
@@ -160,10 +166,10 @@ impl OpenAiProvider {
                             .into_iter()
                             .map(|(id, name, input)| {
                                 async_openai::types::ChatCompletionMessageToolCall {
-                                    id: id.as_str().to_string(),
+                                    id: id.as_str().to_owned(),
                                     r#type: ChatCompletionToolType::Function,
                                     function: async_openai::types::FunctionCall {
-                                        name: name.as_str().to_string(),
+                                        name: name.as_str().to_owned(),
                                         arguments: serde_json::to_string(&input)
                                             .unwrap_or_default(),
                                     },
@@ -261,7 +267,7 @@ impl Provider for OpenAiProvider {
             if !self.config.model.supports_streaming() {
                 return Err(ProviderError::StreamingNotSupported {
                     provider: super::ProviderKind::OpenAi,
-                    model: self.config.model.as_str().to_string(),
+                    model: self.config.model.as_str().to_owned(),
                 });
             }
 
@@ -345,7 +351,7 @@ impl Provider for OpenAiProvider {
                     } else if msg.contains("model") && msg.contains("not found") {
                         ProviderError::ModelNotFound {
                             provider: super::ProviderKind::OpenAi,
-                            model: model.to_string(),
+                            model: model.to_owned(),
                         }
                     } else if is_context_window_message(&msg) {
                         ProviderError::ContextWindowExceeded {
@@ -406,26 +412,26 @@ impl Provider for OpenAiProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + hyphens)
+            // All model IDs below are hardcoded valid strings
             Ok(vec![
                 ModelInfo {
                     id: ModelId::new("gpt-4o").expect("hardcoded valid model ID"),
-                    name: "GPT-4o".to_string(),
+                    name: "GPT-4o".to_owned(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
                     id: ModelId::new("gpt-4o-mini").expect("hardcoded valid model ID"),
-                    name: "GPT-4o Mini".to_string(),
+                    name: "GPT-4o Mini".to_owned(),
                     context_window: Some(128_000),
                 },
                 ModelInfo {
                     id: ModelId::new("o1").expect("hardcoded valid model ID"),
-                    name: "o1".to_string(),
+                    name: "o1".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("o1-mini").expect("hardcoded valid model ID"),
-                    name: "o1 Mini".to_string(),
+                    name: "o1 Mini".to_owned(),
                     context_window: Some(128_000),
                 },
             ])
@@ -476,7 +482,7 @@ fn parse_openai_chunk(
     for choice in &response.choices {
         // Check finish reason
         if let Some(ref reason) = choice.finish_reason {
-            #[allow(unreachable_patterns)] // forward-compat: async-openai may add variants
+            #[allow(unreachable_patterns, reason = "async-openai FinishReason may add variants")]
             let reason = match reason {
                 async_openai::types::FinishReason::Stop => StopReason::EndTurn,
                 async_openai::types::FinishReason::Length => StopReason::MaxTokens,
@@ -635,7 +641,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = parse_openai_chunk(finish_chunk("stop"), &mut state);
+        drop(parse_openai_chunk(finish_chunk("stop"), &mut state));
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
     }
 
@@ -646,7 +652,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = parse_openai_chunk(finish_chunk("tool_calls"), &mut state);
+        drop(parse_openai_chunk(finish_chunk("tool_calls"), &mut state));
         assert_eq!(state.stop_reason, Some(StopReason::ToolUse));
     }
 

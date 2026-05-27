@@ -22,19 +22,18 @@ impl CorrelationId {
     pub fn as_uuid(&self) -> Uuid {
         self.0
     }
+
+    /// Get the correlation ID as a string
+    pub fn as_str(&self) -> String {
+        self.0.to_string()
+    }
 }
 
 impl std::fmt::Display for CorrelationId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Short form (first 8 chars) for logs
-        write!(f, "{}", &self.0.to_string()[..8])
-    }
-}
-
-impl CorrelationId {
-    /// Get the correlation ID as a string
-    pub fn as_str(&self) -> String {
-        self.0.to_string()
+        let full = self.0.to_string();
+        let short = full.get(..8).unwrap_or(&full);
+        write!(f, "{short}")
     }
 }
 

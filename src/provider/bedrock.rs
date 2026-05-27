@@ -49,7 +49,7 @@ impl BedrockProvider {
     pub async fn new(config: BedrockConfig) -> Result<Self, ProviderError> {
         // Load AWS config from environment
         let aws_config = aws_config::defaults(BehaviorVersion::latest())
-            .region(aws_config::Region::new(config.region.as_str().to_string()))
+            .region(aws_config::Region::new(config.region.as_str().to_owned()))
             .load()
             .await;
 
@@ -280,7 +280,7 @@ impl Provider for BedrockProvider {
                 .config
                 .inference_profile
                 .clone()
-                .unwrap_or_else(|| self.config.model.model_id().to_string());
+                .unwrap_or_else(|| self.config.model.model_id().to_owned());
 
             // ── Build the Bedrock converse_stream request ────────────────
             let messages = self.convert_messages(&request.messages)?;
@@ -306,7 +306,7 @@ impl Provider for BedrockProvider {
             // Add system prompt
             if let Some(ref system) = request.system {
                 if !system.is_empty() {
-                    req = req.system(SystemContentBlock::Text(system.as_str().to_string()));
+                    req = req.system(SystemContentBlock::Text(system.as_str().to_owned()));
                 }
             }
 
@@ -347,7 +347,7 @@ impl Provider for BedrockProvider {
             // Bedrock stream event (e.g. ContentBlockStart + ToolUseStart), so we
             // drain the buffer before fetching the next raw event.
             //
-            // Buffer bound safety: parse_bedrock_event returns at most 2
+            // Buffer bound: parse_bedrock_event returns at most 2
             // events per Bedrock stream event (the worst case is
             // ContentBlockStart for a tool_use, which emits
             // ContentBlockStart + ToolUseStart). All other event types produce
@@ -414,30 +414,30 @@ impl Provider for BedrockProvider {
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Safety: all model IDs below are hardcoded valid strings (alphanumeric + dots/hyphens/colons)
+            // All model IDs below are hardcoded valid strings
             Ok(vec![
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-opus-4-5-20251101-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Opus 4.5 (Bedrock)".to_string(),
+                    name: "Claude Opus 4.5 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-sonnet-4-5-20250929-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Sonnet 4.5 (Bedrock)".to_string(),
+                    name: "Claude Sonnet 4.5 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-haiku-4-5-20251001-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Haiku 4.5 (Bedrock)".to_string(),
+                    name: "Claude Haiku 4.5 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
                 ModelInfo {
                     id: ModelId::new("anthropic.claude-sonnet-4-20250514-v1:0")
                         .expect("hardcoded valid model ID"),
-                    name: "Claude Sonnet 4 (Bedrock)".to_string(),
+                    name: "Claude Sonnet 4 (Bedrock)".to_owned(),
                     context_window: Some(200_000),
                 },
             ])
@@ -449,7 +449,7 @@ impl Provider for BedrockProvider {
 #[derive(Default)]
 struct StreamState {
     current_tool_use_id: Option<String>,
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "tracked for diagnostic context during stream parsing")]
     current_tool_name: Option<String>,
     /// Stored from MessageStop, emitted with Metadata for a single Completed event
     stop_reason: Option<StopReason>,
@@ -483,6 +483,8 @@ fn parse_bedrock_event(
 ) -> Vec<Result<StreamEvent, StreamError>> {
     use aws_sdk_bedrockruntime::types::ConverseStreamOutput;
 
+    // ConverseStreamOutput is #[non_exhaustive] in the AWS SDK
+    #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
     match event {
         ConverseStreamOutput::MessageStart(_msg) => {
             vec![Ok(StreamEvent::Started {
@@ -497,10 +499,12 @@ fn parse_bedrock_event(
             let index = usize::try_from(block.content_block_index()).unwrap_or(0);
 
             if let Some(start) = block.start() {
+                // ContentBlockStart is #[non_exhaustive] in the AWS SDK
+                #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
                 match start {
                     aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(tool) => {
-                        state.current_tool_use_id = Some(tool.tool_use_id().to_string());
-                        state.current_tool_name = Some(tool.name().to_string());
+                        state.current_tool_use_id = Some(tool.tool_use_id().to_owned());
+                        state.current_tool_name = Some(tool.name().to_owned());
 
                         vec![
                             Ok(StreamEvent::ContentBlockStart {
@@ -530,6 +534,8 @@ fn parse_bedrock_event(
         }
         ConverseStreamOutput::ContentBlockDelta(delta) => {
             if let Some(d) = delta.delta() {
+                // ContentBlockDelta is #[non_exhaustive] in the AWS SDK
+                #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
                 match d {
                     aws_sdk_bedrockruntime::types::ContentBlockDelta::Text(text) => {
                         vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
@@ -541,7 +547,7 @@ fn parse_bedrock_event(
                             id: ToolCallId::new(
                                 state.current_tool_use_id.clone().unwrap_or_default(),
                             ),
-                            partial_json: tool.input().to_string(),
+                            partial_json: tool.input().to_owned(),
                         }))]
                     }
                     _ => vec![],
@@ -558,7 +564,9 @@ fn parse_bedrock_event(
         ConverseStreamOutput::MessageStop(stop) => {
             // Store stop_reason in state; emit Completed only from Metadata
             // to avoid duplicate Completed events.
-            state.stop_reason = match stop.stop_reason() {
+            // Bedrock StopReason is #[non_exhaustive] in the AWS SDK
+            #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
+            let reason = match stop.stop_reason() {
                 aws_sdk_bedrockruntime::types::StopReason::EndTurn => Some(StopReason::EndTurn),
                 aws_sdk_bedrockruntime::types::StopReason::MaxTokens => Some(StopReason::MaxTokens),
                 aws_sdk_bedrockruntime::types::StopReason::ToolUse => Some(StopReason::ToolUse),
@@ -566,8 +574,8 @@ fn parse_bedrock_event(
                     Some(StopReason::StopSequence)
                 }
                 other => {
-                    // Bedrock uses non_exhaustive StopReason; match string representation
-                    // for ContentFiltered and GuardrailIntervened variants.
+                    // Match string representation for ContentFiltered and
+                    // GuardrailIntervened variants.
                     let s = other.as_str();
                     if s == "content_filtered" || s == "guardrail_intervened" {
                         Some(StopReason::ContentFilter)
@@ -576,6 +584,7 @@ fn parse_bedrock_event(
                     }
                 }
             };
+            state.stop_reason = reason;
             vec![]
         }
         ConverseStreamOutput::Metadata(meta) => {

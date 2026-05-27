@@ -97,3 +97,120 @@ required-features = ["phoenix", "ollama"]
 [[test]]
 name = "phoenix_openinference"
 required-features = ["phoenix", "test-support"]
+
+# =============================================================================
+# Lints — progressive adoption from rust-seed baseline
+# Wave 1 (broad groups at warn) is always active.
+# Subsequent waves promote individual restriction lints to deny.
+# =============================================================================
+
+[lints.rust]
+let_underscore_drop = { level = "deny", priority = 127 }
+non_ascii_idents = { level = "deny", priority = 127 }
+
+[lints.clippy]
+# --- Wave 1: Broad groups at warn (compile never breaks, just signals) ---
+all = "warn"
+correctness = "warn"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
+style = "warn"
+pedantic = "warn"
+
+# --- Pedantic overrides (known conflicts / false positives) ---
+collapsible_if = { level = "allow", priority = 127 }
+let_and_return = { level = "allow", priority = 127 }
+needless_continue = { level = "allow", priority = 127 }
+needless_borrowed_reference = { level = "allow", priority = 127 }
+redundant_else = { level = "allow", priority = 127 }
+uninlined_format_args = { level = "allow", priority = 127 }
+module_name_repetitions = { level = "allow", priority = 127 }
+
+# --- Pedantic: silenced for now, triage in future session ---
+# FUTURE: consider adopting these (low count, high value)
+# cast_lossless — use From instead of `as` casts (3 violations)
+# map_unwrap_or — cleaner than .map().unwrap_or() (3 violations)
+# single_match_else — if-let vs match preference (2 violations)
+# unnested_or_patterns — style preference (2 violations)
+# needless_pass_by_value — potential perf wins (2 violations)
+# redundant_closure_for_method_calls — minor cleanup (2 violations)
+doc_markdown = { level = "allow", priority = 127 }
+must_use_candidate = { level = "allow", priority = 127 }
+return_self_not_must_use = { level = "allow", priority = 127 }
+missing_errors_doc = { level = "allow", priority = 127 }
+missing_panics_doc = { level = "allow", priority = 127 }
+match_same_arms = { level = "allow", priority = 127 }
+unused_self = { level = "allow", priority = 127 }
+too_many_lines = { level = "allow", priority = 127 }
+ignored_unit_patterns = { level = "allow", priority = 127 }
+items_after_statements = { level = "allow", priority = 127 }
+struct_excessive_bools = { level = "allow", priority = 127 }
+struct_field_names = { level = "allow", priority = 127 }
+if_not_else = { level = "allow", priority = 127 }
+cast_possible_truncation = { level = "allow", priority = 127 }
+cast_possible_wrap = { level = "allow", priority = 127 }
+cast_lossless = { level = "allow", priority = 127 }
+map_unwrap_or = { level = "allow", priority = 127 }
+single_match_else = { level = "allow", priority = 127 }
+unnested_or_patterns = { level = "allow", priority = 127 }
+needless_pass_by_value = { level = "allow", priority = 127 }
+redundant_closure_for_method_calls = { level = "allow", priority = 127 }
+option_as_ref_cloned = { level = "allow", priority = 127 }
+
+# --- Wave 2: Agent-critical safety (deny) ---
+dbg_macro = { level = "deny", priority = 127 }
+todo = { level = "deny", priority = 127 }
+unimplemented = { level = "deny", priority = 127 }
+panic_in_result_fn = { level = "deny", priority = 127 }
+unused_result_ok = { level = "deny", priority = 127 }
+exit = { level = "deny", priority = 127 }
+missing_assert_message = { level = "deny", priority = 127 }
+tests_outside_test_module = { level = "deny", priority = 127 }
+
+# --- Wave 3: Ownership clarity (deny) ---
+clone_on_ref_ptr = { level = "deny", priority = 127 }
+str_to_string = { level = "deny", priority = 127 }
+string_add = { level = "deny", priority = 127 }
+string_slice = { level = "deny", priority = 127 }
+rc_buffer = { level = "deny", priority = 127 }
+rc_mutex = { level = "deny", priority = 127 }
+
+# --- Wave 4: Exhaustiveness & correctness (deny) ---
+wildcard_enum_match_arm = { level = "deny", priority = 127 }
+rest_pat_in_fully_bound_structs = { level = "deny", priority = 127 }
+assertions_on_result_states = { level = "deny", priority = 127 }
+try_err = { level = "deny", priority = 127 }
+error_impl_error = { level = "deny", priority = 127 }
+return_and_then = { level = "deny", priority = 127 }
+
+# --- Wave 5: Code hygiene & style (deny) ---
+needless_raw_strings = { level = "deny", priority = 127 }
+redundant_test_prefix = { level = "deny", priority = 127 }
+semicolon_inside_block = { level = "deny", priority = 127 }
+multiple_inherent_impl = { level = "deny", priority = 127 }
+deref_by_slicing = { level = "deny", priority = 127 }
+lossy_float_literal = { level = "deny", priority = 127 }
+verbose_file_reads = { level = "deny", priority = 127 }
+unused_trait_names = { level = "deny", priority = 127 }
+
+# --- Wave 6: Concurrency & unsafe discipline (deny) ---
+mutex_atomic = { level = "deny", priority = 127 }
+mutex_integer = { level = "deny", priority = 127 }
+mem_forget = { level = "deny", priority = 127 }
+multiple_unsafe_ops_per_block = { level = "deny", priority = 127 }
+undocumented_unsafe_blocks = { level = "deny", priority = 127 }
+unnecessary_safety_comment = { level = "deny", priority = 127 }
+unnecessary_safety_doc = { level = "deny", priority = 127 }
+let_underscore_must_use = { level = "deny", priority = 127 }
+infinite_loop = { level = "deny", priority = 127 }
+
+# --- Wave 7: Final restriction lints (deny) ---
+# impl_trait_in_params: skipped — idiomatic Rust uses `impl Into<String>` extensively
+# mod_module_files: skipped — this codebase uses mod.rs convention
+# partial_pub_fields: skipped — mixed pub/private fields are intentional (CollectedResponse)
+# field_scoped_visibility_modifiers: skipped — pub(crate) is idiomatic for encapsulation
+renamed_function_params = { level = "deny", priority = 127 }
+allow_attributes_without_reason = { level = "deny", priority = 127 }
+mixed_read_write_in_expression = { level = "deny", priority = 127 }
+cfg_not_test = { level = "deny", priority = 127 }

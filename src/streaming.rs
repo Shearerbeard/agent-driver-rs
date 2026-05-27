@@ -228,7 +228,8 @@ impl CollectedResponse {
                     });
                 }
             }
-            _ => {}
+            // Guard-failed fallthrough: empty pending text/thinking
+            ContentBlockType::Text | ContentBlockType::Thinking => {}
         }
     }
 
@@ -268,7 +269,9 @@ impl CollectedResponse {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
+                ContentBlock::Thinking { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("")
@@ -281,7 +284,9 @@ impl CollectedResponse {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::Thinking { text } => Some(text.as_str()),
-                _ => None,
+                ContentBlock::Text { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("")
@@ -294,7 +299,9 @@ impl CollectedResponse {
             .iter()
             .filter_map(|b| match b {
                 ContentBlock::ToolUse { id, name, input } => Some((id, name, input)),
-                _ => None,
+                ContentBlock::Text { .. }
+                | ContentBlock::Thinking { .. }
+                | ContentBlock::ToolResult { .. } => None,
             })
             .collect()
     }
@@ -334,7 +341,9 @@ impl CollectedResponse {
                         new_content.push(ContentBlock::Text { text: remaining });
                     }
                 }
-                other => new_content.push(other),
+                ContentBlock::Thinking { .. }
+                | ContentBlock::ToolUse { .. }
+                | ContentBlock::ToolResult { .. } => new_content.push(block),
             }
         }
 
@@ -354,9 +363,13 @@ impl CollectedResponse {
 /// Parse embedded tool calls from a text string.
 ///
 /// Returns (extracted_tool_use_blocks, remaining_text).
-fn parse_embedded_tool_calls(text: &str, counter: &mut u32) -> (Vec<ContentBlock>, String) {
+#[allow(clippy::string_slice, reason = "offsets from .find() on ASCII delimiters are valid char boundaries")]
+fn parse_embedded_tool_calls(
+    text: &str,
+    counter: &mut u32,
+) -> (Vec<ContentBlock>, String) {
     let mut tool_calls = Vec::new();
-    let mut remaining = text.to_string();
+    let mut remaining = text.to_owned();
 
     // Pattern 1: <tool_call>...</tool_call>
     while let Some(start) = remaining.find("<tool_call>") {
@@ -552,7 +565,7 @@ impl StreamHandle {
     /// ContentBlockStart/ContentBlockStop pairs (across different indices)
     /// are finalized with the correct type.
     pub async fn collect(self) -> Result<CollectedResponse, StreamError> {
-        use futures::StreamExt;
+        use futures::StreamExt as _;
 
         // Destructure self to avoid partial move issues
         let Self {

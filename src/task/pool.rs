@@ -16,10 +16,10 @@ use super::handle::TaskHandle;
 
 /// Internal task registration info
 struct RegisteredTask {
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "retained for future abort-on-shutdown support")]
     abort_handle: tokio::task::AbortHandle,
     cancellation: CancellationToken,
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "retained for diagnostic logging of registered tasks")]
     name: &'static str,
 }
 
@@ -104,7 +104,7 @@ impl TaskPool {
         // Spawn via TaskTracker - task waits for gate before running
         let handle = self.tracker.spawn(async move {
             // Wait for registration to complete (ignore error if sender dropped)
-            let _ = start_rx.await;
+            drop(start_rx.await);
             let result = future.await;
             // Cleanup on completion
             pool.tasks.write().remove(&cid);
@@ -130,7 +130,7 @@ impl TaskPool {
         }
 
         // Release the gate - task can now execute
-        let _ = start_tx.send(());
+        let _sent = start_tx.send(());
 
         Ok(TaskHandle {
             inner: handle,

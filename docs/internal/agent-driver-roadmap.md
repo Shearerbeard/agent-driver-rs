@@ -1,5 +1,7 @@
 # agent-driver-rs Roadmap
 
+> See also: [thinking-reasoning-status.md](thinking-reasoning-status.md) — per-provider architecture map and prioritized todo (2026-05-26)
+
 > **Created:** May 2026
 > **Context:** Cross-repo evaluation for replacing rig.rs in Aura orchestration mode
 

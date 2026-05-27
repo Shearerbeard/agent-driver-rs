@@ -60,10 +60,13 @@ src/
 ## Key Design Principles
 
 ### 1. Error Types First
+
 Always define errors in `src/error.rs` before other modules. Other code depends on these.
 
 ### 2. Newtype Pattern with Validation
+
 All domain types use newtypes with protected constructors:
+
 ```rust
 // Good: Validation on construction
 let model = ModelId::new("claude-sonnet-4.5")?;
@@ -74,7 +77,9 @@ pub struct ToolName(String);
 ```
 
 ### 3. Split Locks
+
 Separate RwLocks for independent state to avoid contention:
+
 ```rust
 pub struct Session {
     system_prompt: RwLock<SystemPrompt>,  // Independent
@@ -84,14 +89,18 @@ pub struct Session {
 ```
 
 ### 4. Streaming First
+
 All providers implement streaming. Non-streaming via `collect()`:
+
 ```rust
 let handle = provider.complete_stream(request, ctx).await?;
 let response = handle.collect().await?;  // Accumulates stream
 ```
 
 ### 5. Cancellation Everywhere
+
 Use `CancellationToken` from tokio-util. Providers MUST check cancellation in stream loops:
+
 ```rust
 tokio::select! {
     biased;
@@ -101,10 +110,13 @@ tokio::select! {
 ```
 
 ### 6. No Free Spawning
+
 All tasks go through `TaskPool` with registration-before-execution guarantee.
 
 ### 7. Agent Loop = Typed Infrastructure
+
 The agent loop (`src/agent/`) is lower-level infrastructure, not a prompting strategy:
+
 ```rust
 // The loop drives: send → detect tool_use → execute → continue
 let outcome = AgentLoop::new(&session)
@@ -112,10 +124,11 @@ let outcome = AgentLoop::new(&session)
     .run("Use tools to answer this")
     .await?;
 ```
+
 - **Observer-driven streaming**: Loop owns the stream, forwards `TextDelta`/`ThinkingDelta` to observer
 - **Tool depth counting**: Counts tool execution rounds, not model responses. Safety limit via `MaxToolDepth`
 - **Re-reads registry each turn**: `continue_streaming()` snapshots tools, so tools added/removed between turns are picked up
-- ReAct and other strategies compose *on top* of this loop
+- ReAct and other strategies compose _on top_ of this loop
 
 ## Feature Flags
 
@@ -148,6 +161,7 @@ When implementing a new provider:
 ## Environment Configuration
 
 Copy `.env.example` or create `.env`:
+
 ```bash
 PROVIDER=bedrock  # anthropic, openai, bedrock, openrouter, ollama
 
@@ -168,6 +182,7 @@ OPENAI_MODEL=gpt-4o
 ## Common Patterns
 
 ### Adding a new model to existing provider
+
 ```rust
 // In config/{provider}.rs
 pub enum ProviderModel {
@@ -187,7 +202,9 @@ impl ProviderModel {
 ```
 
 ### Handling provider-specific streaming formats
+
 Each provider has different SSE formats. Parse in provider, emit standard `StreamEvent`:
+
 ```rust
 // Provider receives: {"type": "content_block_delta", "delta": {"text": "Hi"}}
 // Emit: StreamEvent::Delta(StreamDelta::TextDelta { text: "Hi".into() })
@@ -219,6 +236,32 @@ PHOENIX_ENDPOINT=http://your-phoenix-host:4317 \
 
 See `docs/manual-testing.md` for the full checklist, multi-tool testing, per-provider commands, and known gotchas.
 
+## Contributing
+
+### Commit conventions
+
+Use [Conventional Commits](https://www.conventionalcommits.org/). First line lowercase, no trailing period, under 72 characters.
+
+Format: `<type>(<optional scope>): <description>`
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
+
+### Branch naming
+
+`<type>/<short-description>` — e.g. `feat/gemini-provider`, `fix/bedrock-tool-loop`
+
+### Before submitting
+
+```bash
+make check  # runs fmt, clippy, test
+```
+
+All clippy warnings must be resolved. See `LINT_WAVES.md` for the lint configuration.
+
+### PR process
+
+Open a PR against `master`. Include what changed and why. Link relevant ADRs if applicable.
+
 ## Architecture Decision Records
 
 Design decisions are documented in `docs/adr/`. Read these before making architectural changes.
@@ -231,7 +274,7 @@ Design decisions are documented in `docs/adr/`. Read these before making archite
 - **ADR-0006:** Multi-Agent Trace Composition with OpenInference (Proposed)
 - See `docs/adr/README.md` for the full index and ADR format
 
-When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on *context and consequences*, not implementation details.
+When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on _context and consequences_, not implementation details.
 
 ## Task Tracking
 
@@ -240,6 +283,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 - **docs/adr/README.md**: ADR index with implementation order
 
 **Current Priorities (in order):**
+
 1. **ADR-0002** (Wave 1): Fix thinking/reasoning — signature loss (multi-turn broken), Bedrock thinking, Anthropic adaptive mode, OpenAI dead config
 2. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
 3. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
@@ -247,6 +291,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 5. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
 
 **Completed:**
+
 - OTel/Phoenix integration — OpenInference-compliant spans (AGENT/CHAIN/TOOL), 7 conformance tests
 - Phoenix: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`
@@ -259,4 +304,4 @@ When proposing a significant architectural change (new subsystem, protocol integ
 2. **aws_smithy_types::Document::Null** - Unit variant, not `Null(true)`
 3. **OpenAI o3/o3-mini don't support streaming** - Check `model.supports_streaming()`
 4. **Temperature not allowed on reasoning models** - GPT-5, o1, o3 series
-5. **Edition 2021** - Rust 2024 edition doesn't exist yet
+5. **Edition 2021** - Uses edition 2021. Upgrade to 2024 edition is a future task

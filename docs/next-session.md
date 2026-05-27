@@ -2,11 +2,11 @@
 
 ## Where we left off
 
-Performance quick wins from the benchmark analysis are complete. All 4 items from the previous session's Priority 1 list are done. Test count unchanged: 169 (141 unit + 28 integration). Bench harness now has `--json` output for CI regression tracking.
+Performance quick wins from the benchmark analysis are complete. All 4 items from the previous session's Priority 1 list are done. Test count: 215+ (unit + integration). Bench harness now has `--json` output for CI regression tracking.
 
 ## Current state
 
-- All tests pass: `cargo test --all-features` (169 tests)
+- All tests pass: `cargo test --all-features` (215+ tests)
 - Clippy clean: `cargo clippy --all-features -- -D warnings`
 - Bench compiles and runs: `cd bench && cargo run --release -- -n 20 -w 3`
 - JSON output: `cd bench && cargo run --release -- -n 20 -w 3 --json`
@@ -75,7 +75,7 @@ Performance quick wins from the benchmark analysis are complete. All 4 items fro
 ```bash
 # Compile + test + lint
 cargo check --all-features
-cargo test --all-features           # 169 tests
+cargo test --all-features           # 215+ tests
 cargo clippy --all-features -- -D warnings
 
 # Benchmark (requires OPENAI_API_KEY)
@@ -88,7 +88,7 @@ cd bench && cargo run --release -- -n 20 --json        # JSON output for CI
 OPENAI_API_KEY=test cargo run -- -n 1 -w 0 -s cold_start --json
 ```
 
-## Test coverage snapshot (169 tests)
+## Test coverage snapshot (215+ tests)
 
 | Module | Tests | Notes |
 |--------|-------|-------|

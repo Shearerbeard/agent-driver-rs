@@ -112,6 +112,10 @@ See `docs/ARCHITECTURE.md` for details.
 - `docs/adr/` — architecture decision records
 - `docs/manual-testing.md` — testing checklist
 
-## License
+## Benchmarks
 
-See LICENSE
+A standalone benchmark harness lives in `bench/`. It compares agent-driver-rs against rig-core:
+
+```bash
+cd bench && cargo run --release -- -n 20 -w 3 --json
+```

@@ -45,6 +45,7 @@ What becomes easier or harder as a result?
 | [0004](0004-live-provider-integration-tests.md) | Live Provider Integration Tests | Proposed | testing, provider, integration, ci | **Wave 3** (live validation) |
 | [0005](0005-prompt-caching-support.md) | Prompt Caching Support Across Providers | Proposed | caching, provider, performance, telemetry | **Wave 4** (performance) |
 | [0006](0006-multi-agent-trace-composition.md) | Multi-Agent Trace Composition with OpenInference | Proposed | otel, phoenix, multi-agent, tracing, architecture | **Wave 5** (observability) |
+| [0007](0007-codex-style-lint-tooling-adoption.md) | Codex-Style Lint & Tooling Adoption | Proposed | linting, tooling, quality, ci | **Parallel track** (Tier 1 iterative) |
 
 ## Implementation Order
 
@@ -61,5 +62,10 @@ Wave 4: ADR-0005 (Caching)      → extends TokenUsage, needed before multi-agen
   ↓
 Wave 5: ADR-0006 (Multi-Agent)  → depends on OTel infra + TokenUsage + thinking
 ```
+
+ADR-0007 runs as a **parallel track** alongside the waves. It does not block
+any wave, but its Layer B (`expect_used = deny`) is gated by the Tier 2
+rust-design task T2.4 (const-constructible `MaxTokens`), which folds into
+Wave 1's `ContentBlock` type work.
 
 See [roadmap](../internal/agent-driver-roadmap.md) for phase mapping.

@@ -1,6 +1,9 @@
 # TODO - agent-driver-rs
 
-> Organized by ADR implementation waves. See [docs/adr/README.md](docs/adr/README.md) for ADR index and [docs/internal/agent-driver-roadmap.md](docs/internal/agent-driver-roadmap.md) for phase mapping.
+> Last reviewed: 2026-06-20. This is the canonical active roadmap. Historical
+> handoffs such as `docs/next-session.md` are snapshots, not active planning
+> sources. ADR wave details live in [docs/adr/README.md](docs/adr/README.md);
+> longer-range phase mapping lives in [docs/internal/agent-driver-roadmap.md](docs/internal/agent-driver-roadmap.md).
 
 ---
 
@@ -105,6 +108,21 @@ echo "What is 2+2? Think about it first." | PROVIDER=anthropic cargo run --featu
 
 These can run alongside any wave:
 
+### Tier 0: Usability and Documentation Hygiene (ADR-0007 audit follow-up)
+- [x] ADR-0007: Codex-Style Lint & Tooling Adoption drafted and indexed
+- [x] Fix README/CLAUDE/manual-testing provider-default inconsistency (Anthropic default, Bedrock production smoke path)
+- [x] Add README run/test cheat sheet
+- [x] Mark `TODO.md` as canonical active roadmap and demote `docs/next-session.md` to historical handoff snapshot
+- [x] Add `CHANGELOG.md`
+- [x] Add minimal CI compile workflow for the public-dependency feature set (excludes `schema-sanitize` private git dependency)
+- [ ] Next: Tier 1 Layer A — add `clippy.toml` with tokio await-holding guard rules
+
+### Tier 1: ADR-0007 — Codex-Style Lint & Tooling Adoption
+- [ ] Layer A: `clippy.toml` (`await-holding-invalid-types`, test-only unwrap/expect allowances, anti-slop methods)
+- [ ] Layer B: promote codex core clippy set to `deny`, one lint per commit
+- [ ] Layer C: add `deny.toml`; pin `mcp-openai-bridge` to an immutable `rev`
+- [ ] Layer D: add cargo-shear unused-dependency check
+
 ### Phase 1: Aura Compatibility
 - [ ] Sequential tool execution config (`sequential_tool_execution: bool` in `AgentLoopConfig`)
 - [ ] MCP cancellation propagation (port Aura's `InFlightRequests` + `notifications/cancelled`)
@@ -134,6 +152,7 @@ These can run alongside any wave:
 - [x] ADR-0004: Live Provider Integration Tests (Proposed)
 - [x] ADR-0005: Prompt Caching Support (Proposed)
 - [x] ADR-0006: Multi-Agent Trace Composition (Proposed)
+- [x] ADR-0007: Codex-Style Lint & Tooling Adoption (Proposed)
 
 ### Core Infrastructure
 - [x] Core types with validation (ModelId, ToolName, etc.)

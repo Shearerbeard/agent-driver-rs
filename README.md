@@ -14,16 +14,51 @@ A Rust library providing a unified abstraction over multiple LLM providers with 
 
 ## Quick Start
 
-```bash
-# Run with default provider (Bedrock Sonnet 4.5)
-cargo run --features bedrock --bin chat
+The default feature set compiles Anthropic, OpenAI, and OpenRouter. The
+checked-in `.env.example` defaults to Anthropic, so the first live chat path is:
 
-# Run tests
+```bash
+# 1. Configure a provider
+cp .env.example .env
+# Edit .env and set ANTHROPIC_API_KEY
+
+# 2. Run the chat client
+cargo run --bin chat
+
+# 3. Run tests
 cargo test --all-features
 
-# Check all features compile
+# 4. Check all features compile
 cargo check --all-features
 ```
+
+For a local no-cloud-provider smoke test, use Ollama instead:
+
+```bash
+ollama serve
+PROVIDER=ollama cargo run --no-default-features --features ollama --bin chat
+```
+
+Bedrock is supported but is not the default feature set. Modern Claude models
+on Bedrock require AWS credentials and `BEDROCK_INFERENCE_PROFILE`; see
+`.env.example` and `docs/manual-testing.md`.
+
+## Run / Test Cheat Sheet
+
+| Goal | Command | Requirements |
+|------|---------|--------------|
+| Format, lint, and test | `make check` | Rust toolchain |
+| Compile all feature-gated code | `cargo check --all-features` | Rust toolchain |
+| Run all tests | `cargo test --all-features` | Rust toolchain |
+| Run Anthropic chat | `cargo run --bin chat` | `.env` with `PROVIDER=anthropic`, `ANTHROPIC_API_KEY` |
+| Run local Ollama chat | `PROVIDER=ollama cargo run --no-default-features --features ollama --bin chat` | `ollama serve` |
+| Run Bedrock chat | `PROVIDER=bedrock cargo run --no-default-features --features bedrock --bin chat` | AWS credentials, `BEDROCK_INFERENCE_PROFILE` |
+| Live MCP tool smoke | `echo "List docs/adr" \| PROVIDER=bedrock cargo run --features "bedrock mcp" --bin chat -- --mcp "npx -y @modelcontextprotocol/server-filesystem $(pwd)"` | AWS credentials, Node/npm |
+| Phoenix mock tracing | `cargo run --example phoenix_integration_mock --features phoenix` | No provider key |
+| Benchmark smoke | `cd bench && OPENAI_API_KEY=test cargo run -- -n 1 -w 0 -s cold_start --json` | No live API call |
+
+For the full checklist, including provider-specific live tests and known MCP
+gotchas, see `docs/manual-testing.md`.
 
 ## Feature Flags
 
@@ -35,6 +70,9 @@ cargo check --all-features
 | `openrouter` | OpenRouter API | — |
 | `ollama` | Ollama local models | `ollama-rs` |
 | `mcp` | MCP tool integration | `rmcp` |
+| `mcp-http` | MCP streamable HTTP transport | `mcp`, `rmcp/transport-streamable-http-client-reqwest` |
+| `schema-sanitize` | OpenAI strict schema sanitization | `mcp-openai-bridge` |
+| `phoenix` | OpenTelemetry/Phoenix tracing | `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` |
 | `test-support` | Expose `MockProvider` for integration tests | — |
 
 Default features: `anthropic`, `openai`, `openrouter`
@@ -97,13 +135,12 @@ See `docs/ARCHITECTURE.md` for details.
 
 ## Environment Configuration
 
-| Variable | Provider | Description |
-|----------|----------|-------------|
-| `PROVIDER` | All | Provider to use: `anthropic`, `openai`, `bedrock`, `openrouter`, `ollama` |
-| `ANTHROPIC_API_KEY` | Anthropic | API key |
-| `OPENAI_API_KEY` | OpenAI | API key |
-| `BEDROCK_INFERENCE_PROFILE` | Bedrock | Inference profile ARN |
-| `OLLAMA_HOST` | Ollama | Host URL (default: `http://localhost:11434`) |
+Copy `.env.example` to `.env`. `.env.example` is the canonical config
+reference and lists provider-specific models, token limits, temperature knobs,
+reasoning settings, Bedrock inference profiles, and Ollama options.
+
+At minimum set `PROVIDER` to one of `anthropic`, `openai`, `bedrock`,
+`openrouter`, or `ollama`, then set the matching API key or local endpoint.
 
 ## Documentation
 

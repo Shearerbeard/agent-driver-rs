@@ -30,14 +30,22 @@ cargo clippy --all-features -- -D warnings
 
 ## 2. Live Smoke Test — Basic Chat (required for provider changes)
 
-Verify the default provider still works end-to-end with streaming.
+Verify the active provider still works end-to-end with streaming. Anthropic is
+the default in `.env.example`; Bedrock remains the primary production smoke path
+when AWS credentials and `BEDROCK_INFERENCE_PROFILE` are available.
 
 ```bash
+# Anthropic default from .env.example
+echo "What is 2 + 2? Answer in one sentence." | \
+    PROVIDER=anthropic cargo run --features anthropic --bin chat
+
+# Bedrock production smoke path
 echo "What is 2 + 2? Answer in one sentence." | \
     PROVIDER=bedrock cargo run --features bedrock --bin chat
 ```
 
-Expected: Streamed text response, token usage line, clean exit. No errors.
+Expected: streamed text appears before the token usage line, then the process
+exits cleanly.
 
 If your change touches a specific provider, test that provider too:
 

@@ -1,4 +1,8 @@
-# Next Session Handoff
+# Historical Handoff Snapshot
+
+> Last reviewed: 2026-06-20. This file is historical context from a prior
+> performance session, not the canonical active plan. Use `TODO.md` for current
+> priorities and `docs/adr/README.md` for ADR implementation order.
 
 ## Where we left off
 
@@ -6,7 +10,7 @@ Performance quick wins from the benchmark analysis are complete. All 4 items fro
 
 ## Current state
 
-- All tests pass: `cargo test --all-features` (215+ tests)
+- Previous snapshot reported green `cargo test --all-features` output (215+ tests)
 - Clippy clean: `cargo clippy --all-features -- -D warnings`
 - Bench compiles and runs: `cd bench && cargo run --release -- -n 20 -w 3`
 - JSON output: `cd bench && cargo run --release -- -n 20 -w 3 --json`
@@ -62,7 +66,7 @@ Performance quick wins from the benchmark analysis are complete. All 4 items fro
 - Proper MCP cancellation notification (`send_cancellable_request()` + `notify_cancelled()`)
 - StreamHandle drop cancellation propagation
 
-## Investigation items remaining (from docs/todo.md)
+## Investigation items remaining (from historical TODO content)
 
 - `cold_start: 89us vs 76us` — profile SessionBuilder overhead (architectural, low priority)
 - `ttft stddev: 61ms vs 347ms` — document why (biased select + drain-first)

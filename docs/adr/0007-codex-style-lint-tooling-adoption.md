@@ -130,7 +130,7 @@ violations, commit, move to the next. This is the iterative linting loop the
 
 **Add new `deny` entries** (codex set, not currently in our config):
 
-- `unwrap_used`, `expect_used` — requires Layer A's test allowances **and**
+- `unwrap_used`, `expect_used` — requires Layer A's test allowances and
   Tier 2 item T2.4 (const-constructible `MaxTokens` / `Default` impl) to
   remove the 6 `MaxTokens::new(4096).expect(...)` sites across
   `provider.rs`, `config/{anthropic,openai,bedrock,openrouter}.rs`, and
@@ -236,7 +236,7 @@ unused-deps:
 
 ### Out of scope
 
-These are larger migrations that warrant their own ADRs and are **not** part
+These are larger migrations that warrant their own ADRs and are not part
 of this decision:
 
 - Edition 2024 upgrade (CLAUDE.md Gotcha #5; codex uses 2024)

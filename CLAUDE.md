@@ -6,56 +6,15 @@
 
 ## Quick Start
 
-```bash
-# Run with default provider (Bedrock Sonnet 4.5)
-cargo run --features bedrock --bin chat
-
-# Run tests
-cargo test --features bedrock
-
-# Check all features compile
-cargo check --all-features
-```
+Use `README.md` as the canonical source for first-run setup, feature flags,
+environment variables, and the run/test cheat sheet. Use
+`docs/manual-testing.md` for the full provider smoke-test checklist.
 
 ## Architecture
 
-```
-src/
-├── lib.rs                 # Crate root, re-exports
-├── error.rs               # All error types (define first!)
-├── types/                 # Core newtypes with validation
-│   ├── model.rs           # ModelId, MaxTokens, Temperature
-│   ├── message.rs         # Role, Message, ContentBlock, ToolName
-│   └── correlation.rs     # CorrelationId for request tracking
-├── config/                # Provider-specific configurations
-│   ├── provider.rs        # ProviderConfig enum (discriminator-based)
-│   ├── anthropic.rs, openai.rs, bedrock.rs, etc.
-├── provider/              # Provider implementations
-│   ├── mod.rs             # Provider trait definition
-│   ├── anthropic.rs       # Direct HTTP + SSE
-│   ├── bedrock.rs         # AWS SDK converse_stream
-│   └── (openai.rs, etc.)  # Other providers
-├── streaming.rs           # StreamEvent, StreamDelta, StreamHandle
-├── agent/                 # Agentic tool loop
-│   ├── mod.rs             # Re-exports
-│   ├── config.rs          # AgentLoopConfig, MaxToolDepth
-│   ├── observer.rs        # AgentObserver trait, AgentEvent, LoopStopReason
-│   └── driver.rs          # AgentLoop struct, AgentOutcome, run()
-├── tool/                  # Tool system
-│   ├── types.rs           # ToolSchema, ToolDefinition
-│   ├── executor.rs        # Tool trait
-│   ├── registry.rs        # Dynamic tool registration
-│   └── mcp.rs             # MCP integration (McpConnection, McpManager) [mcp feature]
-├── otel/                  # OpenTelemetry / Phoenix tracing [phoenix feature]
-│   ├── mod.rs             # Provider init, init_phoenix(), shutdown
-│   ├── types.rs           # Attribute types, enums, newtypes
-│   └── instrumentation.rs # RAII span guards (AgentLoopSpan, ToolSpan, etc.)
-├── task/                  # Task tracking with cancellation
-│   ├── pool.rs            # TaskPool (registration-before-execution)
-│   └── handle.rs          # TaskHandle wrapper
-├── session.rs             # Session with split locks
-└── bin/chat.rs            # CLI chat client
-```
+Use `docs/ARCHITECTURE.md` for the canonical architecture overview and module
+map. This file records agent-facing implementation rules and current priorities
+only.
 
 ## Key Design Principles
 
@@ -130,20 +89,6 @@ let outcome = AgentLoop::new(&session)
 - **Re-reads registry each turn**: `continue_streaming()` snapshots tools, so tools added/removed between turns are picked up
 - ReAct and other strategies compose _on top_ of this loop
 
-## Feature Flags
-
-```toml
-[features]
-default = ["anthropic", "openai", "openrouter"]
-anthropic = []
-openai = ["dep:async-openai"]
-bedrock = ["dep:aws-sdk-bedrockruntime", "dep:aws-config", "dep:aws-smithy-types"]
-openrouter = []
-ollama = ["dep:ollama-rs"]
-mcp = ["dep:rmcp"]
-phoenix = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions"]
-```
-
 ## Provider Implementation Checklist
 
 When implementing a new provider:
@@ -157,27 +102,6 @@ When implementing a new provider:
 7. [ ] Add feature flag to `Cargo.toml`
 8. [ ] Update `src/bin/chat.rs` to handle new provider
 9. [ ] Test with live API
-
-## Environment Configuration
-
-Copy `.env.example` or create `.env`:
-
-```bash
-PROVIDER=bedrock  # anthropic, openai, bedrock, openrouter, ollama
-
-# Bedrock (current default)
-BEDROCK_MODEL=claude-sonnet-4.5
-BEDROCK_MAX_TOKENS=4096
-BEDROCK_INFERENCE_PROFILE=us.anthropic.claude-sonnet-4-5-20250929-v1:0
-
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
-
-# OpenAI
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
-```
 
 ## Common Patterns
 
@@ -212,29 +136,9 @@ Each provider has different SSE formats. Parse in provider, emit standard `Strea
 
 ## Testing
 
-Before committing a feature, run through the full checklist in [`docs/manual-testing.md`](docs/manual-testing.md). At minimum:
-
-```bash
-# Compile + test + lint (every change)
-cargo check --all-features
-cargo test --all-features
-cargo clippy --features bedrock -- -D warnings
-
-# Live smoke test (provider/agent/tool changes)
-echo "What is 2 + 2? Answer in one sentence." | \
-    PROVIDER=bedrock cargo run --features bedrock --bin chat
-
-# Live tool calling test (agent/tool/provider changes)
-echo "List the contents of the docs/adr directory" | \
-    PROVIDER=bedrock cargo run --features "bedrock mcp" --bin chat -- \
-    --mcp "npx -y @modelcontextprotocol/server-filesystem $(pwd)"
-
-# Phoenix tracing test (otel changes)
-PHOENIX_ENDPOINT=http://your-phoenix-host:4317 \
-    cargo run --features phoenix --example phoenix_integration_mock
-```
-
-See `docs/manual-testing.md` for the full checklist, multi-tool testing, per-provider commands, and known gotchas.
+Before committing a feature, run through `docs/manual-testing.md`. For ordinary
+docs-only changes, run the relevant link/coherence checks instead of provider
+smoke tests. For source changes, `make check` is the default gate.
 
 ## Contributing
 
@@ -272,14 +176,15 @@ Design decisions are documented in `docs/adr/`. Read these before making archite
 - **ADR-0004:** Live Provider Integration Tests (Proposed)
 - **ADR-0005:** Prompt Caching Support Across Providers (Proposed)
 - **ADR-0006:** Multi-Agent Trace Composition with OpenInference (Proposed)
+- **ADR-0007:** Codex-Style Lint & Tooling Adoption (Proposed)
 - See `docs/adr/README.md` for the full index and ADR format
 
 When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on _context and consequences_, not implementation details.
 
 ## Task Tracking
 
-- **TODO.md**: Active development tasks and milestones (ADR-driven waves)
-- **docs/internal/agent-driver-roadmap.md**: Strategic roadmap (Phases 0-9)
+- **TODO.md**: Canonical active roadmap and next actions
+- **docs/internal/agent-driver-roadmap.md**: Longer-range phase mapping
 - **docs/adr/README.md**: ADR index with implementation order
 
 **Current Priorities (in order):**
@@ -289,6 +194,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 3. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
 4. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
 5. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
+6. **ADR-0007** (parallel): Codex-style lint/tooling — `clippy.toml`, `deny.toml`, cargo-shear
 
 **Completed:**
 
@@ -296,7 +202,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 - Phoenix: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`
 - ADR-0001: Tool System & MCP Integration (Accepted)
-- ADR-0002 through ADR-0006: All written and reviewed
+- ADR-0002 through ADR-0007: All written and reviewed
 
 ## Gotchas
 

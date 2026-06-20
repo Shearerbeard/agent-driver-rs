@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  check:
+    name: public feature compile
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_FEATURES: anthropic openai openrouter bedrock ollama mcp mcp-http phoenix test-support
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check public feature set
+        run: cargo check --features "$PUBLIC_FEATURES"

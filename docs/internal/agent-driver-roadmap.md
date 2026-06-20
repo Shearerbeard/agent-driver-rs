@@ -46,7 +46,7 @@ The evaluation identified agent-driver-rs as **architecturally sound but early-s
 
 **Completion criteria:**
 - All existing TODO.md Milestone 1-2 items checked off
-- `cargo test --all-features` passes with >100 tests (currently ~61)
+- `cargo test --all-features` passes (215 tests at the 2026-06-20 docs audit)
 - All 5 providers verified working with agent loop + MCP
 - Bedrock tool loop bug fixed and regression-tested
 - Multi-turn conversations with extended thinking work (signature round-trip)

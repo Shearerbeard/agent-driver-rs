@@ -19,6 +19,10 @@ Three gaps remain versus mature OSS Rust codebases. The reference is
 codebase with a disciplined lint setup. The comparison surfaced three missing
 layers and a promotion gap.
 
+codex uses `disallowed-methods` for terminal UI color methods. This ADR adopts
+that mechanism for agent-driver-rs-specific boundaries, such as env access and
+JSON parsing, rather than copying codex's exact banned-method list.
+
 ### Decision drivers
 
 - **Correctness MUST come before style.** The `await-holding-invalid-types`
@@ -109,11 +113,10 @@ mixed_script_confusables = { level = "deny", priority = 127 }
 confusable_idents = { level = "warn", priority = 127 }
 ```
 
-The `disallowed-methods` list is scoped to library code (`src/`, excluding
-`src/bin/` and `examples/`) via the `disallowed-methods` path-prefix matching
-or a `#[allow]` at the binary crate root. The `println!`/`eprintln!` ban is
-deferred to Layer B (requires fixing the few diagnostic prints in
-`src/tool/mcp.rs` first).
+`disallowed-methods` applies crate-wide. Any valid binary/example exception
+must use a narrow `#[allow]` with a reason at the call site or module boundary.
+The `println!`/`eprintln!` ban is deferred to Layer B (requires fixing the few
+diagnostic prints in `src/tool/mcp.rs` first).
 
 ### Layer B — Promote codex core clippy set to `deny`
 
@@ -130,15 +133,13 @@ violations, commit, move to the next. This is the iterative linting loop the
 
 **Add new `deny` entries** (codex set, not currently in our config):
 
-- `unwrap_used`, `expect_used` — requires Layer A's test allowances and
-  Tier 2 item T2.4 (const-constructible `MaxTokens` / `Default` impl) to
-  remove the 6 `MaxTokens::new(4096).expect(...)` sites across
-  `provider.rs`, `config/{anthropic,openai,bedrock,openrouter}.rs`, and
-  `bin/chat.rs`. A further ~35 `.expect()` calls exist in provider
-  implementations for hardcoded valid `ModelId`/`ToolName`/URL/JSON — these
-  need either `const` constructors on the newtypes, `#[allow]` with
-  recorded justification, or refactoring to `?`. T2.4 must land first;
-  the provider `.expect()` cleanup may be staged across multiple commits.
+- `unwrap_used`, `expect_used` — requires Layer A's test allowances. The 6
+  `MaxTokens::new(4096).expect(...)` sites can use the existing
+  `MaxTokens::default()` implementation. A further ~35 `.expect()` calls exist
+  in provider implementations for hardcoded valid `ModelId`/`ToolName`/URL/JSON;
+  these need either constructors that cannot fail for constants, `#[allow]` with
+  recorded justification, or refactoring to `?`. The provider `.expect()`
+  cleanup may be staged across multiple commits.
 - `redundant_clone`, `unnecessary_to_owned`, `needless_collect`
 - `manual_clamp`, `manual_filter`, `manual_find`, `manual_flatten`,
   `manual_map`, `manual_memcpy`, `manual_non_exhaustive`, `manual_ok_or`,
@@ -154,7 +155,8 @@ violations, commit, move to the next. This is the iterative linting loop the
   these effective for tokio guards)
 
 **Sequencing constraint**: `expect_used = deny` is the last lint promoted in
-this layer, after T2.4 lands. Everything else can proceed in any order.
+this layer because it needs a separate cleanup pass. Everything else can
+proceed in any order.
 
 ### Layer C — `deny.toml` (cargo-deny)
 
@@ -219,14 +221,12 @@ unused-deps:
   `redundant_closure_for_method_calls` (Cargo.toml notes 2–3 each). Higher
   for `unwrap_used` / `expect_used` (requires auditing every `unwrap()` /
   `expect()` in non-test `src/`).
-- **`expect_used = deny` requires T2.4 first** — the 6
+- **`expect_used = deny` is high effort** — the 6
   `MaxTokens::new(4096).expect(...)` sites (`provider.rs:123`,
-  `config/{anthropic,openai,bedrock,openrouter}.rs`, `bin/chat.rs`) must
-  become const-constructible `MaxTokens` or `Default` impls. A further ~35
-  `.expect()` calls in provider code (hardcoded valid `ModelId`,
-  `ToolName`, URL, JSON parse) need individual resolution. This is the
-  highest-effort lint in Layer B and may span multiple commits. Tier 2
-  rust-design task T2.4 gates it.
+  `config/{anthropic,openai,bedrock,openrouter}.rs`, `bin/chat.rs`) can switch
+  to `MaxTokens::default()`, but a further ~35 `.expect()` calls in provider
+  code (hardcoded valid `ModelId`, `ToolName`, URL, JSON parse) need individual
+  resolution. This may span multiple commits.
 - **`deny.toml` advisories may surface unmaintained transitive crates**
   (`opentelemetry 0.27`, `aws-sdk-*`, `rmcp`) requiring
   ignored-with-reason entries until upstreams update. Each ignore is a
@@ -261,4 +261,5 @@ Each layer must leave the tree green before the next begins:
 - **Layer C**: `cargo deny check` clean (advisories, bans, sources, licenses).
   Confirm `mcp-openai-bridge` resolves to the pinned `rev`.
 - **Layer D**: `cargo shear` clean (or only listed `[metadata]` ignores).
-- **Throughout**: `cargo test --all-features` (215+ tests) remains green.
+- **Throughout**: `cargo test --all-features` (215 tests at the time of this
+  ADR) remains green.

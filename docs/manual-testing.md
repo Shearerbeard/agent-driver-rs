@@ -5,19 +5,19 @@ Run through this checklist before committing a feature. Every step must pass.
 ## 1. Automated Checks (required, every change)
 
 ```bash
-# Compile check — the active provider feature
+# Compile check — default features plus Bedrock
 cargo check --features bedrock
 
 # Compile check — all features together (catches conditional compilation issues)
 cargo check --all-features
 
-# Unit tests — active provider
+# Unit tests — default features plus Bedrock
 cargo test --features bedrock
 
 # Unit tests — all features
 cargo test --all-features
 
-# Clippy — zero warnings policy
+# Clippy — default features plus Bedrock, zero warnings policy
 cargo clippy --features bedrock -- -D warnings
 ```
 

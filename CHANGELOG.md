@@ -18,8 +18,8 @@ commit history.
 
 ## 2026-06-20
 
-- Ran a documentation bus-test audit (16/24 on the current 24-item checklist)
-  and a rust-design review.
+- Ran a documentation bus-test audit (16/24 using the `docs-bustest` skill's
+  24-item checklist) and a rust-design review.
 - Compared the existing rust-seed lint baseline with openai/codex `codex-rs`
   lint tooling (`clippy.toml`, `deny.toml`, and cargo-shear metadata).
 

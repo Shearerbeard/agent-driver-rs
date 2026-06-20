@@ -64,8 +64,8 @@ Wave 5: ADR-0006 (Multi-Agent)  → depends on OTel infra + TokenUsage + thinkin
 ```
 
 ADR-0007 runs as a **parallel track** alongside the waves. It does not block
-any wave, but its Layer B (`expect_used = deny`) is gated by the Tier 2
-rust-design task T2.4 (const-constructible `MaxTokens`), which folds into
-Wave 1's `ContentBlock` type work.
+any wave, but its Layer B (`expect_used = deny`) should be promoted last in
+that track because provider `.expect()` cleanup is broader than the other lint
+promotions.
 
 See [roadmap](../internal/agent-driver-roadmap.md) for phase mapping.

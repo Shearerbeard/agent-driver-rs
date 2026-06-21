@@ -7,7 +7,10 @@ use crate::error::ConfigError;
 use crate::types::{MaxTokens, Temperature};
 
 fn default_ollama_url() -> url::Url {
-    "http://localhost:11434".parse().expect("valid default URL")
+    let Ok(url) = url::Url::parse("http://localhost:11434") else {
+        unreachable!("default Ollama URL is valid")
+    };
+    url
 }
 
 /// Ollama configuration

@@ -82,7 +82,7 @@ impl CompletionRequest {
 }
 
 /// Configuration for completion requests
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompletionConfig {
     /// Maximum tokens in response
     pub max_tokens: MaxTokens,
@@ -114,16 +114,6 @@ impl CompletionConfig {
     pub fn with_stop_sequences(mut self, sequences: Vec<String>) -> Self {
         self.stop_sequences = sequences;
         self
-    }
-}
-
-impl Default for CompletionConfig {
-    fn default() -> Self {
-        Self {
-            max_tokens: MaxTokens::new(4096).expect("4096 is valid"),
-            temperature: None,
-            stop_sequences: Vec::new(),
-        }
     }
 }
 

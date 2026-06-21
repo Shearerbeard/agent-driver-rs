@@ -163,8 +163,7 @@ impl OpenAiConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .and_then(MaxTokens::new)
-            // Safe: 4096 is a hardcoded non-zero constant
-            .unwrap_or_else(|| MaxTokens::new(4096).expect("4096 is non-zero"));
+            .unwrap_or_default();
 
         let temperature = if model.supports_temperature() {
             std::env::var("OPENAI_TEMPERATURE")

@@ -355,12 +355,7 @@ async fn create_provider(
         ProviderConfig::Ollama(cfg) => {
             let model_id = ModelId::new(cfg.model.as_str())?;
             let completion_config = CompletionConfig {
-                max_tokens: cfg
-                    .max_tokens
-                    // Safe: 4096 is a hardcoded non-zero constant
-                    .unwrap_or_else(|| {
-                        agent_driver_rs::MaxTokens::new(4096).expect("4096 is non-zero")
-                    }),
+                max_tokens: cfg.max_tokens.unwrap_or_default(),
                 temperature: cfg.temperature,
                 stop_sequences: vec![],
             };

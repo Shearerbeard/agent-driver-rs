@@ -192,11 +192,12 @@ where
                                 continue;
                             }
                             let mut iter = events.into_iter();
-                            let first = iter.next().expect("non-empty vec");
-                            for remaining in iter {
-                                s.pending.push_back(remaining);
+                            if let Some(first) = iter.next() {
+                                for remaining in iter {
+                                    s.pending.push_back(remaining);
+                                }
+                                return Some((first, (s, parse, end)));
                             }
-                            return Some((first, (s, parse, end)));
                         }
                         None => {
                             if s.ended {

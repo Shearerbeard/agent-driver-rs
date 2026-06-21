@@ -59,13 +59,13 @@ rmcp = { version = "0.14", features = ["client", "transport-child-process"], opt
 mcp-openai-bridge = { git = "ssh://git@github.com/example-org/mcp-openai-bridge.git", rev = "b505bfe2da648b02b598ea2b29e466ccb27cfd83", default-features = false, optional = true }
 
 # OpenTelemetry for Phoenix (optional)
-opentelemetry = { version = "0.27", features = ["trace"], optional = true }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"], optional = true }
-opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"], optional = true }
+opentelemetry = { version = "0.32", features = ["trace"], optional = true }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "trace"], optional = true }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace"], optional = true }
 
 [dev-dependencies]
 agent-driver-rs = { path = ".", features = ["test-support"] }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "testing"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "trace", "testing"] }
 
 [[bin]]
 name = "chat"

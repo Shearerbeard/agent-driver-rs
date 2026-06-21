@@ -73,7 +73,7 @@ fn init_tracer() -> Arc<opentelemetry_sdk::trace::Tracer> {
         }
         Err(_) => {
             eprintln!("   Warning: Could not connect to Phoenix, using no-op tracer");
-            let provider = opentelemetry_sdk::trace::TracerProvider::default();
+            let provider = opentelemetry_sdk::trace::SdkTracerProvider::default();
             otel::init_tracer_provider(Arc::new(provider));
             Arc::new(otel::get_tracer("phoenix-integration").unwrap())
         }

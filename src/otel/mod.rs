@@ -31,7 +31,7 @@ pub mod instrumentation;
 #[cfg(feature = "phoenix")]
 use opentelemetry::trace::TracerProvider as _;
 #[cfg(feature = "phoenix")]
-use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 
 #[cfg(feature = "phoenix")]
 pub use instrumentation::{AgentLoopSpan, SessionOperationSpan, SpanKind, ToolSpan, attr};
@@ -75,7 +75,7 @@ pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>
         .map_err(|e| format!("Failed to build OTLP exporter: {e}"))?;
 
     let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_batch_exporter(exporter)
         .build();
 
     let tracer = provider.tracer("agent-driver-rs");

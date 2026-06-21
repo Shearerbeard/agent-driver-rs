@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use futures::FutureExt;
 use opentelemetry::trace::TracerProvider;
-use opentelemetry_sdk::export::trace::SpanData;
-use opentelemetry_sdk::testing::trace::InMemorySpanExporterBuilder;
-use opentelemetry_sdk::trace::{SimpleSpanProcessor, TracerProvider as SdkTracerProvider};
+use opentelemetry_sdk::trace::{
+    InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SimpleSpanProcessor,
+    SpanData,
+};
 
 use agent_driver_rs::agent::AgentLoop;
 use agent_driver_rs::otel::attr;
@@ -22,12 +23,12 @@ use agent_driver_rs::types::{ModelId, ToolName};
 
 fn test_tracer() -> (
     Arc<opentelemetry_sdk::trace::Tracer>,
-    opentelemetry_sdk::testing::trace::InMemorySpanExporter,
+    opentelemetry_sdk::trace::InMemorySpanExporter,
     Arc<SdkTracerProvider>,
 ) {
     let exporter = InMemorySpanExporterBuilder::new().build();
     let provider = SdkTracerProvider::builder()
-        .with_span_processor(SimpleSpanProcessor::new(Box::new(exporter.clone())))
+        .with_span_processor(SimpleSpanProcessor::new(exporter.clone()))
         .build();
     let tracer = Arc::new(provider.tracer("test"));
     (tracer, exporter, Arc::new(provider))
@@ -81,9 +82,9 @@ fn echo_tool() -> agent_driver_rs::tool::DynTool {
 
 fn flush_and_collect(
     provider: &SdkTracerProvider,
-    exporter: &opentelemetry_sdk::testing::trace::InMemorySpanExporter,
+    exporter: &InMemorySpanExporter,
 ) -> Vec<SpanData> {
-    provider.force_flush();
+    let _flush = provider.force_flush();
     exporter.get_finished_spans().unwrap()
 }
 

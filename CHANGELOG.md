@@ -11,8 +11,11 @@ commit history.
 - Dependency modernization: `async-openai` 0.28→0.41 (removes transitive
   `backoff`), AWS SDK 1.124→1.135 (drops legacy rustls 0.21 stack), `thiserror`
   1→2, `backoff` direct dependency replaced with hand-rolled retry logic.
-- cargo-deny RUSTSEC exceptions reduced from 6 to 1 (only async-std via
-  OpenTelemetry 0.27 remains).
+- OpenTelemetry 0.27→0.32 (`SdkTracerProvider` rename, `with_batch_exporter` no
+  longer takes runtime, `SimpleSpanProcessor` now generic, `InMemorySpanExporter`
+  moved to `trace` module). Clears the last cargo-deny RUSTSEC exception
+  (async-std). cargo-deny exceptions now at 0.
+- cargo-deny RUSTSEC exceptions reduced from 6 to 0.
 - `ollama-rs` bumped 0.3.3→0.3.5 (fixed `Ollama::new` deprecation).
 - Added ADR-0007 for codex-style lint and tooling adoption.
 - Clarified the documented first-run path: Anthropic is the `.env.example`

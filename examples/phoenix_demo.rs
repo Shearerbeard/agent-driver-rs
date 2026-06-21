@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tracer = agent_driver_rs::otel::init_phoenix().unwrap_or_else(|e| {
         eprintln!("Warning: Phoenix init failed ({}), using no-op tracer", e);
-        let provider = opentelemetry_sdk::trace::TracerProvider::default();
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::default();
         agent_driver_rs::otel::init_tracer_provider(Arc::new(provider));
         Arc::new(agent_driver_rs::otel::get_tracer("agent-driver-rs").unwrap())
     });

@@ -195,12 +195,11 @@ When proposing a significant architectural change (new subsystem, protocol integ
 4. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
 5. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
 6. **ADR-0007** (parallel): Codex-style lint/tooling — continue deferred items (`thiserror` 2 done, Dylint and stricter lint waves remain)
-7. **OTel 0.27 → 0.32**: clears the last cargo-deny exception (RUSTSEC-2025-0052 async-std); 5 minor versions of semconv churn, separate plan
 
 **Completed:**
 
 - Toolchain modernization — MSRV 1.91.1, edition 2024, `rust-toolchain.toml` pinning stable
-- Dependency modernization — `async-openai` 0.41, AWS SDK 1.135, `thiserror` 2, `backoff` removed; cargo-deny exceptions 6 → 1
+- Dependency modernization — `async-openai` 0.41, AWS SDK 1.135, `thiserror` 2, `backoff` removed, OTel 0.32; cargo-deny exceptions 6 → 0
 - OTel/Phoenix integration — OpenInference-compliant spans (AGENT/CHAIN/TOOL), 7 conformance tests
 - Phoenix: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`

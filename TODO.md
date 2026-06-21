@@ -108,12 +108,12 @@ echo "What is 2+2? Think about it first." | PROVIDER=anthropic cargo run --featu
 
 These can run alongside any wave:
 
-### Next Session: Rust Toolchain Modernization
-- [ ] **Set current Rust/MSRV policy**: decide and record the minimum supported Rust version before bumping SDKs that now require newer compilers. Current local toolchain is `rustc 1.93.0-nightly`; latest AWS SDK crates require Rust 1.91.1.
-- [ ] **Upgrade to Rust edition 2024**: run the migration with `make check` as the exit gate. Track idiom and lint fallout in the same slice.
-- [ ] **Revisit ADR-0007 after edition migration**: decide whether deferred items (`thiserror` 2, Dylint, stricter lint waves) still belong after the toolchain bump.
-- [ ] **Modernize `async-openai` after edition work**: evaluate/migrate from locked `async-openai 0.28.3` toward current `0.41.x`; latest versions remove the transitive `backoff` dependency but may require OpenAI provider API changes.
-- [ ] **Update AWS SDK crates after MSRV decision**: current lock has `aws-sdk-bedrockruntime 1.124.0` / `aws-config 1.8.13`; latest observed versions were `1.135.0` / `1.8.18` and require Rust 1.91.1.
+### Rust Toolchain Modernization (completed)
+- [x] **Set current Rust/MSRV policy**: MSRV 1.91.1 declared in `Cargo.toml`, `rust-toolchain.toml` pins stable.
+- [x] **Upgrade to Rust edition 2024**: migrated with `make check` as the exit gate. No source changes needed beyond fmt.
+- [x] **Revisit ADR-0007 after edition migration**: `thiserror` 2 promoted; Dylint and stricter lint waves remain deferred.
+- [x] **Modernize `async-openai`**: migrated from `0.28.3` to `0.41.1`; removed `backoff` direct dep; clears RUSTSEC-2024-0384 and RUSTSEC-2025-0012.
+- [x] **Update AWS SDK crates**: `aws-sdk-bedrockruntime` 1.124→1.135, `aws-config` 1.8.13→1.8.18; disabled legacy `rustls` default feature to drop rustls 0.21 stack; clears RUSTSEC-2026-0098/0099/0104.
 
 ### Tier 0: Usability and Documentation Hygiene (ADR-0007 audit follow-up)
 - [x] ADR-0007: Codex-Style Lint & Tooling Adoption drafted and indexed

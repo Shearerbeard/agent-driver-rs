@@ -417,7 +417,7 @@ for rate-limited requests:
 - Only retries on `ProviderError::RateLimited` -- all other errors are returned
   immediately without retry.
 - Respects the `retry_after` duration from the provider if present; otherwise
-  uses exponential backoff via the `backoff` crate.
+  uses exponential backoff implemented in `RetryConfig::backoff_delay()`.
 - Default configuration: 3 retries, 500ms initial interval, 30s max interval,
   2x multiplier.
 

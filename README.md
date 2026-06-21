@@ -12,6 +12,12 @@ A Rust library providing a unified abstraction over multiple LLM providers with 
 - **Task tracking**: Cascading cancellation via `CancellationToken`, `TaskPool` with registration-before-execution
 - **Feature-flagged providers**: Only compile what you need
 
+## Prerequisites
+
+- **Rust 1.91.1+** (MSRV declared in `Cargo.toml`, pinned via `rust-toolchain.toml`)
+- Edition 2024
+- `make` (for the `make check` / `make deny` / `make unused-deps` gates)
+
 ## Quick Start
 
 The default feature set compiles Anthropic, OpenAI, and OpenRouter. The

@@ -6,6 +6,14 @@ commit history.
 
 ## Unreleased
 
+- Toolchain modernization: MSRV 1.91.1 declared, `rust-toolchain.toml` pins
+  stable, migrated to edition 2024.
+- Dependency modernization: `async-openai` 0.28→0.41 (removes transitive
+  `backoff`), AWS SDK 1.124→1.135 (drops legacy rustls 0.21 stack), `thiserror`
+  1→2, `backoff` direct dependency replaced with hand-rolled retry logic.
+- cargo-deny RUSTSEC exceptions reduced from 6 to 1 (only async-std via
+  OpenTelemetry 0.27 remains).
+- `ollama-rs` bumped 0.3.3→0.3.5 (fixed `Ollama::new` deprecation).
 - Added ADR-0007 for codex-style lint and tooling adoption.
 - Clarified the documented first-run path: Anthropic is the `.env.example`
   default; Bedrock is a supported production smoke path that requires AWS

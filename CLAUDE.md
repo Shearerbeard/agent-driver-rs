@@ -96,7 +96,7 @@ When implementing a new provider:
 1. [ ] Add config in `src/config/{provider}.rs`
 2. [ ] Add variant to `ProviderConfig` enum
 3. [ ] Implement `Provider` trait with `complete_stream`
-4. [ ] Handle rate limiting with `backoff` crate
+4. [ ] Handle rate limiting with `RetryConfig` in `src/provider/retry.rs`
 5. [ ] Check `ctx.cancellation` in stream poll loop
 6. [ ] Map provider errors to `ProviderError` variants
 7. [ ] Add feature flag to `Cargo.toml`
@@ -189,18 +189,18 @@ When proposing a significant architectural change (new subsystem, protocol integ
 
 **Current Priorities (in order):**
 
-1. **Toolchain modernization** (next session): set current Rust/MSRV policy, then migrate to edition 2024 with `make check` kept green
-2. **Dependency modernization after toolchain**: evaluate/migrate `async-openai` from locked `0.28.3` toward current `0.41.x`; latest versions remove `backoff` but may require provider API changes
-3. **AWS SDK update after MSRV decision**: current lock uses `aws-sdk-bedrockruntime 1.124.0` / `aws-config 1.8.13`; latest observed versions require Rust 1.91.1
-4. **ADR-0002** (Wave 1): Fix thinking/reasoning — signature loss (multi-turn broken), Bedrock thinking, Anthropic adaptive mode, OpenAI dead config
-5. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
-6. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
-7. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
-8. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
-9. **ADR-0007** (parallel): Codex-style lint/tooling — continue deferred items after edition 2024 migration (`thiserror` 2, Dylint, stricter lint waves)
+1. **ADR-0002** (Wave 1): Fix thinking/reasoning — signature loss (multi-turn broken), Bedrock thinking, Anthropic adaptive mode, OpenAI dead config
+2. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
+3. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
+4. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
+5. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
+6. **ADR-0007** (parallel): Codex-style lint/tooling — continue deferred items (`thiserror` 2 done, Dylint and stricter lint waves remain)
+7. **OTel 0.27 → 0.32**: clears the last cargo-deny exception (RUSTSEC-2025-0052 async-std); 5 minor versions of semconv churn, separate plan
 
 **Completed:**
 
+- Toolchain modernization — MSRV 1.91.1, edition 2024, `rust-toolchain.toml` pinning stable
+- Dependency modernization — `async-openai` 0.41, AWS SDK 1.135, `thiserror` 2, `backoff` removed; cargo-deny exceptions 6 → 1
 - OTel/Phoenix integration — OpenInference-compliant spans (AGENT/CHAIN/TOOL), 7 conformance tests
 - Phoenix: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`
@@ -213,4 +213,4 @@ When proposing a significant architectural change (new subsystem, protocol integ
 2. **aws_smithy_types::Document::Null** - Unit variant, not `Null(true)`
 3. **OpenAI o3/o3-mini don't support streaming** - Check `model.supports_streaming()`
 4. **Temperature not allowed on reasoning models** - GPT-5, o1, o3 series
-5. **Edition 2021** - Uses edition 2021. Upgrade to 2024 edition is a future task
+5. **Edition 2024** - MSRV 1.91.1, `rust-toolchain.toml` pins stable

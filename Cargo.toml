@@ -234,4 +234,17 @@ manual_retain = { level = "deny", priority = 127 }
 manual_strip = { level = "deny", priority = 127 }
 manual_try_fold = { level = "deny", priority = 127 }
 manual_unwrap_or = { level = "deny", priority = 127 }
+needless_borrow = { level = "deny", priority = 127 }
+needless_collect = { level = "deny", priority = 127 }
+needless_late_init = { level = "deny", priority = 127 }
+needless_option_as_deref = { level = "deny", priority = 127 }
+needless_question_mark = { level = "deny", priority = 127 }
+needless_update = { level = "deny", priority = 127 }
 redundant_clone = { level = "deny", priority = 127 }
+redundant_closure = { level = "deny", priority = 127 }
+redundant_static_lifetimes = { level = "deny", priority = 127 }
+trivially_copy_pass_by_ref = { level = "deny", priority = 127 }
+unnecessary_filter_map = { level = "deny", priority = 127 }
+unnecessary_lazy_evaluations = { level = "deny", priority = 127 }
+unnecessary_sort_by = { level = "deny", priority = 127 }
+unnecessary_to_owned = { level = "deny", priority = 127 }

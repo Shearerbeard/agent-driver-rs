@@ -54,7 +54,10 @@ impl OllamaProvider {
         let host = config.base_url.host_str().unwrap_or("localhost").to_owned();
         let port = config.base_url.port().unwrap_or(11434);
 
-        let client = Ollama::new(format!("http://{host}"), port);
+        let client = Ollama::builder()
+            .host(format!("http://{host}"))
+            .port(port)
+            .build();
 
         let info = ProviderInfo {
             kind: super::ProviderKind::Ollama,

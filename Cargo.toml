@@ -54,8 +54,8 @@ clap = { version = "4", features = ["derive"] }
 
 # Provider SDKs (optional)
 async-openai = { version = "0.28", optional = true }
-aws-sdk-bedrockruntime = { version = "1", optional = true }
-aws-config = { version = "1", optional = true }
+aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"], optional = true }
+aws-config = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "sso"], optional = true }
 aws-smithy-types = { version = "1", optional = true }
 ollama-rs = { version = "0.3", features = ["stream"], optional = true }
 rmcp = { version = "0.14", features = ["client", "transport-child-process"], optional = true }

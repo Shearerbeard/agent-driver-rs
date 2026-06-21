@@ -6,8 +6,6 @@
 
 use std::time::Duration;
 
-use backoff::{ExponentialBackoff, backoff::Backoff as _};
-
 use crate::error::ProviderError;
 
 /// Configuration for retry behavior
@@ -69,15 +67,16 @@ impl RetryConfig {
         self
     }
 
-    /// Convert to an ExponentialBackoff instance
-    pub fn into_backoff(&self) -> ExponentialBackoff {
-        ExponentialBackoff {
-            initial_interval: self.initial_interval,
-            max_interval: self.max_interval,
-            multiplier: self.multiplier,
-            max_elapsed_time: None, // We control via max_retries
-            ..Default::default()
+    /// Compute the backoff delay for a given attempt (0-indexed)
+    fn backoff_delay(&self, attempt: u32) -> Duration {
+        let mut delay = self.initial_interval;
+        for _ in 0..attempt {
+            delay = delay.mul_f64(self.multiplier);
+            if delay > self.max_interval {
+                return self.max_interval;
+            }
         }
+        delay
     }
 }
 
@@ -89,7 +88,6 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, ProviderError>>,
 {
-    let mut backoff = config.into_backoff();
     let mut attempts = 0;
 
     loop {
@@ -104,8 +102,7 @@ where
                 // Use retry_after if provided, otherwise use backoff
                 let delay = e
                     .retry_after()
-                    .or_else(|| backoff.next_backoff())
-                    .unwrap_or(config.max_interval);
+                    .unwrap_or_else(|| config.backoff_delay(attempts - 1));
 
                 tracing::debug!(
                     attempts = attempts,

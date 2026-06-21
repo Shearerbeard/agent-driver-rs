@@ -10,11 +10,13 @@ use std::pin::Pin;
 
 use async_openai::Client;
 use async_openai::config::OpenAIConfig;
-use async_openai::types::{
+use async_openai::types::chat::{
+    ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
     ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
-    ChatCompletionRequestUserMessageArgs, ChatCompletionToolArgs, ChatCompletionToolType,
-    CreateChatCompletionRequestArgs, FunctionObjectArgs,
+    ChatCompletionRequestUserMessageArgs, ChatCompletionTool, ChatCompletionTools,
+    CreateChatCompletionRequestArgs, CreateChatCompletionStreamResponse, FinishReason,
+    FunctionCall, FunctionObjectArgs, StopConfiguration,
 };
 
 use crate::config::OpenAiConfig;
@@ -165,15 +167,16 @@ impl OpenAiProvider {
                         let tc: Vec<_> = tool_calls
                             .into_iter()
                             .map(|(id, name, input)| {
-                                async_openai::types::ChatCompletionMessageToolCall {
-                                    id: id.as_str().to_owned(),
-                                    r#type: ChatCompletionToolType::Function,
-                                    function: async_openai::types::FunctionCall {
-                                        name: name.as_str().to_owned(),
-                                        arguments: serde_json::to_string(&input)
-                                            .unwrap_or_default(),
+                                ChatCompletionMessageToolCalls::Function(
+                                    ChatCompletionMessageToolCall {
+                                        id: id.as_str().to_owned(),
+                                        function: FunctionCall {
+                                            name: name.as_str().to_owned(),
+                                            arguments: serde_json::to_string(&input)
+                                                .unwrap_or_default(),
+                                        },
                                     },
-                                }
+                                )
                             })
                             .collect();
                         builder.tool_calls(tc);
@@ -225,7 +228,7 @@ impl OpenAiProvider {
     fn convert_tools(
         &self,
         tools: &[crate::tool::ToolDefinition],
-    ) -> Result<Vec<async_openai::types::ChatCompletionTool>, ProviderError> {
+    ) -> Result<Vec<ChatCompletionTools>, ProviderError> {
         tools
             .iter()
             .map(|t| {
@@ -239,14 +242,9 @@ impl OpenAiProvider {
                         message: format!("Failed to build function: {e}"),
                     })?;
 
-                ChatCompletionToolArgs::default()
-                    .r#type(ChatCompletionToolType::Function)
-                    .function(function)
-                    .build()
-                    .map_err(|e| ProviderError::InvalidRequest {
-                        provider: super::ProviderKind::OpenAi,
-                        message: format!("Failed to build tool: {e}"),
-                    })
+                Ok(ChatCompletionTools::Function(ChatCompletionTool {
+                    function,
+                }))
             })
             .collect()
     }
@@ -318,7 +316,9 @@ impl Provider for OpenAiProvider {
 
             // Add stop sequences
             if !request.config.stop_sequences.is_empty() {
-                req_builder.stop(request.config.stop_sequences.clone());
+                req_builder.stop(StopConfiguration::StringArray(
+                    request.config.stop_sequences.clone(),
+                ));
             }
 
             let openai_request =
@@ -461,7 +461,7 @@ struct StreamState {
     reason = "fallback tool name is a hardcoded valid sentinel"
 )]
 fn parse_openai_chunk(
-    response: async_openai::types::CreateChatCompletionStreamResponse,
+    response: CreateChatCompletionStreamResponse,
     state: &mut StreamState,
 ) -> Vec<Result<StreamEvent, StreamError>> {
     let mut events = Vec::new();
@@ -495,11 +495,11 @@ fn parse_openai_chunk(
                 reason = "async-openai FinishReason may add variants"
             )]
             let reason = match reason {
-                async_openai::types::FinishReason::Stop => StopReason::EndTurn,
-                async_openai::types::FinishReason::Length => StopReason::MaxTokens,
-                async_openai::types::FinishReason::ToolCalls => StopReason::ToolUse,
-                async_openai::types::FinishReason::ContentFilter => StopReason::ContentFilter,
-                async_openai::types::FinishReason::FunctionCall => StopReason::ToolUse,
+                FinishReason::Stop => StopReason::EndTurn,
+                FinishReason::Length => StopReason::MaxTokens,
+                FinishReason::ToolCalls => StopReason::ToolUse,
+                FinishReason::ContentFilter => StopReason::ContentFilter,
+                FinishReason::FunctionCall => StopReason::ToolUse,
                 _ => StopReason::EndTurn,
             };
             state.stop_reason = Some(reason);
@@ -577,7 +577,7 @@ fn parse_openai_chunk(
 mod tests {
     use super::*;
 
-    fn text_chunk(content: &str) -> async_openai::types::CreateChatCompletionStreamResponse {
+    fn text_chunk(content: &str) -> CreateChatCompletionStreamResponse {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
@@ -592,7 +592,7 @@ mod tests {
         .expect("valid text chunk JSON")
     }
 
-    fn finish_chunk(reason: &str) -> async_openai::types::CreateChatCompletionStreamResponse {
+    fn finish_chunk(reason: &str) -> CreateChatCompletionStreamResponse {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
@@ -607,11 +607,7 @@ mod tests {
         .expect("valid finish chunk JSON")
     }
 
-    fn tool_call_chunk(
-        id: &str,
-        name: &str,
-        args: &str,
-    ) -> async_openai::types::CreateChatCompletionStreamResponse {
+    fn tool_call_chunk(id: &str, name: &str, args: &str) -> CreateChatCompletionStreamResponse {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",

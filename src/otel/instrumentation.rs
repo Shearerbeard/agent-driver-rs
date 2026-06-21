@@ -102,9 +102,7 @@ impl AgentLoopSpan {
             stop_reason.to_string(),
         ));
         if matches!(stop_reason, LoopStopReason::ToolError { .. }) {
-            span.set_status(opentelemetry::trace::Status::error(
-                stop_reason.to_string(),
-            ));
+            span.set_status(opentelemetry::trace::Status::error(stop_reason.to_string()));
         } else {
             span.set_status(opentelemetry::trace::Status::Ok);
         }
@@ -180,10 +178,7 @@ pub struct SessionOperationSpan {
 
 #[cfg(feature = "phoenix")]
 impl SessionOperationSpan {
-    pub fn new(
-        tracer: &opentelemetry_sdk::trace::Tracer,
-        operation: &str,
-    ) -> Result<Self, String> {
+    pub fn new(tracer: &opentelemetry_sdk::trace::Tracer, operation: &str) -> Result<Self, String> {
         let span = tracer
             .span_builder(operation.to_owned())
             .with_kind(OtelSpanKind::Internal)

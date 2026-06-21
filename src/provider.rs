@@ -229,7 +229,7 @@ impl std::str::FromStr for ProviderKind {
             "bedrock" => Ok(Self::Bedrock),
             "openrouter" => Ok(Self::OpenRouter),
             "ollama" => Ok(Self::Ollama),
-            other => Err(format!("unknown provider: {}", other)),
+            other => Err(format!("unknown provider: {other}")),
         }
     }
 }

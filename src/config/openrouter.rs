@@ -133,8 +133,7 @@ impl OpenRouterConfig {
                 return Err(ConfigError::InvalidValue {
                     field: "model",
                     reason: format!(
-                        "OpenRouter model must be in 'provider/model' format, got: {}",
-                        s
+                        "OpenRouter model must be in 'provider/model' format, got: {s}"
                     ),
                 });
             }

@@ -65,14 +65,14 @@ pub fn get_tracer(name: &str) -> Result<opentelemetry_sdk::trace::Tracer, String
 pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>, String> {
     use opentelemetry_otlp::WithExportConfig as _;
 
-    let endpoint = std::env::var("PHOENIX_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:4317".to_owned());
+    let endpoint =
+        std::env::var("PHOENIX_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_owned());
 
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint)
         .build()
-        .map_err(|e| format!("Failed to build OTLP exporter: {}", e))?;
+        .map_err(|e| format!("Failed to build OTLP exporter: {e}"))?;
 
     let provider = SdkTracerProvider::builder()
         .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)

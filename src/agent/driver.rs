@@ -464,7 +464,7 @@ async fn execute_tools(
                 let tool_input = match crate::tool::ToolInput::from_value(input) {
                     Ok(ti) => ti,
                     Err(e) => {
-                        let err = format!("Invalid tool input: {}", e);
+                        let err = format!("Invalid tool input: {e}");
                         return (id, name, err, true);
                     }
                 };
@@ -478,12 +478,12 @@ async fn execute_tools(
                             (id, name, content, is_error)
                         }
                         Err(e) => {
-                            let err = format!("Tool execution error: {}", e);
+                            let err = format!("Tool execution error: {e}");
                             (id, name, err, true)
                         }
                     },
                     None => {
-                        let err = format!("Tool execution error: tool '{}' not found", name);
+                        let err = format!("Tool execution error: tool '{name}' not found");
                         (id, name, err, true)
                     }
                 }

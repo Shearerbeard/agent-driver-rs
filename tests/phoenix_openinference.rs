@@ -11,15 +11,11 @@ use futures::FutureExt;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::export::trace::SpanData;
 use opentelemetry_sdk::testing::trace::InMemorySpanExporterBuilder;
-use opentelemetry_sdk::trace::{
-    SimpleSpanProcessor, TracerProvider as SdkTracerProvider,
-};
+use opentelemetry_sdk::trace::{SimpleSpanProcessor, TracerProvider as SdkTracerProvider};
 
 use agent_driver_rs::agent::AgentLoop;
 use agent_driver_rs::otel::attr;
-use agent_driver_rs::provider::mock::{
-    mock_text_response, mock_tool_call_response, MockProvider,
-};
+use agent_driver_rs::provider::mock::{mock_text_response, mock_tool_call_response, MockProvider};
 use agent_driver_rs::session::SessionBuilder;
 use agent_driver_rs::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
 use agent_driver_rs::types::{ModelId, ToolName};
@@ -41,7 +37,13 @@ fn find_span<'a>(spans: &'a [SpanData], name: &str) -> &'a SpanData {
     spans
         .iter()
         .find(|s| s.name.as_ref() == name)
-        .unwrap_or_else(|| panic!("span '{}' not found in {:?}", name, spans.iter().map(|s| s.name.as_ref()).collect::<Vec<_>>()))
+        .unwrap_or_else(|| {
+            panic!(
+                "span '{}' not found in {:?}",
+                name,
+                spans.iter().map(|s| s.name.as_ref()).collect::<Vec<_>>()
+            )
+        })
 }
 
 fn get_attr<'a>(span: &'a SpanData, key: &str) -> Option<&'a opentelemetry::Value> {
@@ -156,8 +158,7 @@ async fn test_tool_span_is_tool_kind() {
     let tool = find_span(&spans, "tool.echo");
     assert_span_kind(tool, "TOOL");
 
-    let tool_name = get_attr(tool, attr::TOOL_NAME)
-        .expect("tool span missing tool.name attribute");
+    let tool_name = get_attr(tool, attr::TOOL_NAME).expect("tool span missing tool.name attribute");
     assert_eq!(tool_name.as_str(), "echo");
 }
 

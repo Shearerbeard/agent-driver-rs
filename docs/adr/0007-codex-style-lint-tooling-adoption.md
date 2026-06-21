@@ -16,8 +16,9 @@ and enforces ownership clarity (`clone_on_ref_ptr`, `str_to_string`, `string_sli
 
 Three gaps remain versus mature OSS Rust codebases. The reference is
 [openai/codex](https://github.com/openai/codex) `codex-rs/` — a 96% Rust
-codebase with a disciplined lint setup. The comparison surfaced three missing
-layers and a promotion gap.
+codebase with a disciplined lint setup. The comparison surfaced the missing
+core layers adopted here plus longer-term tooling that should stay separate
+until the basic gates are reliable.
 
 codex uses `disallowed-methods` for terminal UI color methods. This ADR adopts
 that mechanism for agent-driver-rs-specific boundaries, such as env access and
@@ -86,7 +87,7 @@ baseline, in four independently-committable layers. Each layer is a separate
 commit; no layer is merged until `cargo clippy --all-features -- -D warnings`
 and `cargo test --all-features` are clean.
 
-### Layer A — `clippy.toml` (conditional + anti-slop rules)
+### Layer A — `clippy.toml` (conditional + await-holding rules)
 
 Add a `clippy.toml` at the crate root:
 
@@ -104,6 +105,13 @@ disallowed-methods = [
     { path = "serde_json::from_str", reason = "JSON parsing belongs in provider/ and streaming/ only" },
 ]
 ```
+
+Adopt the test allowances, `await-holding-invalid-types`, and
+`large-error-threshold` first. Add `disallowed-methods` in a follow-up pass only
+after existing legitimate exception sites are written down: `std::env::var`
+currently belongs in `src/config/*` and has one Phoenix setup call in
+`src/otel/mod.rs`; `serde_json::from_str` belongs in provider/streaming code and
+has a CLI config-file use in `src/bin/chat.rs`.
 
 Add rustc anti-unicode lints to `[lints.rust]` in `Cargo.toml` (extends the
 existing `non_ascii_idents = deny`):
@@ -141,6 +149,7 @@ violations, commit, move to the next. This is the iterative linting loop the
   recorded justification, or refactoring to `?`. The provider `.expect()`
   cleanup may be staged across multiple commits.
 - `redundant_clone`, `unnecessary_to_owned`, `needless_collect`
+- `identity_op`
 - `manual_clamp`, `manual_filter`, `manual_find`, `manual_flatten`,
   `manual_map`, `manual_memcpy`, `manual_non_exhaustive`, `manual_ok_or`,
   `manual_range_contains`, `manual_retain`, `manual_strip`,
@@ -240,6 +249,8 @@ These are larger migrations that warrant their own ADRs and are not part
 of this decision:
 
 - Edition 2024 upgrade (CLAUDE.md Gotcha #5; codex uses 2024)
+- Custom Dylint adoption, including codex's `tools/argument-comment-lint`, which
+  is a separate custom-lint toolchain decision rather than basic lint config
 - `thiserror` 1 → 2 migration (codex uses `thiserror = "2.0.17"`)
 - `async-trait` removal (codex bans it via `deny.toml`; we use it in three
   core traits — `Provider`, `Tool`, `AgentObserver`)

@@ -51,14 +51,10 @@ impl OllamaProvider {
     /// Create a new Ollama provider
     pub fn new(config: OllamaConfig) -> Result<Self, ProviderError> {
         // Parse the base URL to extract host and port
-        let host = config
-            .base_url
-            .host_str()
-            .unwrap_or("localhost")
-            .to_owned();
+        let host = config.base_url.host_str().unwrap_or("localhost").to_owned();
         let port = config.base_url.port().unwrap_or(11434);
 
-        let client = Ollama::new(format!("http://{}", host), port);
+        let client = Ollama::new(format!("http://{host}"), port);
 
         let info = ProviderInfo {
             kind: super::ProviderKind::Ollama,
@@ -271,7 +267,7 @@ impl Provider for OllamaProvider {
                 .send_chat_messages_stream(chat_request)
                 .await
                 .map_err(|e| {
-                    let msg = format!("Ollama error: {}", e);
+                    let msg = format!("Ollama error: {e}");
                     if is_context_window_message(&msg) {
                         ProviderError::ContextWindowExceeded {
                             provider: super::ProviderKind::Ollama,
@@ -337,7 +333,7 @@ impl Provider for OllamaProvider {
                                 .unwrap_or_else(|_| {
                                     ModelId::new("unknown").expect("hardcoded valid model ID")
                                 }),
-                            name: m.name.clone(),
+                            name: m.name,
                             context_window: None, // Ollama doesn't report this in list
                         })
                         .collect();
@@ -476,8 +472,8 @@ fn parse_ollama_response(
             let name = ToolName::new(&tc.function.name)
                 .unwrap_or_else(|_| ToolName::new("unknown").expect("hardcoded valid"));
 
-            let input_json = serde_json::to_string(&tc.function.arguments)
-                .unwrap_or_else(|_| "{}".to_owned());
+            let input_json =
+                serde_json::to_string(&tc.function.arguments).unwrap_or_else(|_| "{}".to_owned());
 
             events.push(Ok(StreamEvent::ContentBlockStart {
                 index: state.block_index,

@@ -133,7 +133,7 @@ impl std::fmt::Display for LoopStopReason {
             Self::MaxToolDepthReached => write!(f, "max_tool_depth_reached"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::ToolError { tool_name, message } => {
-                write!(f, "tool_error({}): {}", tool_name, message)
+                write!(f, "tool_error({tool_name}): {message}")
             }
         }
     }

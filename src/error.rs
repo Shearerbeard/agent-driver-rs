@@ -258,7 +258,7 @@ pub enum StreamError {
 pub enum ToolError {
     #[error("Tool not found: {0}")]
     NotFound(ToolName),
-    #[error("Invalid input for {}: {message}", tool_name.as_ref().map(|n| n.as_str()).unwrap_or("<unknown>"))]
+    #[error("Invalid input for {}: {message}", tool_name.as_ref().map(ToolName::as_str).unwrap_or("<unknown>"))]
     InvalidInput {
         tool_name: Option<ToolName>,
         message: String,
@@ -349,7 +349,10 @@ impl AgentLoopError {
             Self::Session(SessionError::Stream(StreamError::ConnectionLost {
                 message, ..
             })) => is_context_window_message(message),
-            Self::Session(_) | Self::InvalidConfig(_) | Self::Cancelled | Self::MaxToolDepthReached(_) => false,
+            Self::Session(_)
+            | Self::InvalidConfig(_)
+            | Self::Cancelled
+            | Self::MaxToolDepthReached(_) => false,
         }
     }
 
@@ -365,7 +368,10 @@ impl AgentLoopError {
             Self::Session(SessionError::Stream(StreamError::ConnectionLost {
                 message, ..
             })) => is_content_policy_message(message),
-            Self::Session(_) | Self::InvalidConfig(_) | Self::Cancelled | Self::MaxToolDepthReached(_) => false,
+            Self::Session(_)
+            | Self::InvalidConfig(_)
+            | Self::Cancelled
+            | Self::MaxToolDepthReached(_) => false,
         }
     }
 
@@ -373,7 +379,10 @@ impl AgentLoopError {
     pub fn as_provider_error(&self) -> Option<&ProviderError> {
         match self {
             Self::Session(SessionError::Provider(e)) => Some(e),
-            Self::Session(_) | Self::InvalidConfig(_) | Self::Cancelled | Self::MaxToolDepthReached(_) => None,
+            Self::Session(_)
+            | Self::InvalidConfig(_)
+            | Self::Cancelled
+            | Self::MaxToolDepthReached(_) => None,
         }
     }
 }

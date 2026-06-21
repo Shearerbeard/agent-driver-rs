@@ -80,7 +80,10 @@ impl ToolInput {
     /// required parameters — this avoids wasting a tool iteration on a retry.
     pub fn from_value(value: JsonValue) -> Result<Self, ToolError> {
         // serde_json::Value is from an external crate
-        #[allow(clippy::wildcard_enum_match_arm, reason = "serde_json::Value is an external enum that may add variants")]
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "serde_json::Value is an external enum that may add variants"
+        )]
         match value {
             JsonValue::Object(map) => Ok(Self(map)),
             JsonValue::Null => Ok(Self(Map::new())),

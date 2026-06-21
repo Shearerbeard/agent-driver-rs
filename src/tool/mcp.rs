@@ -241,7 +241,7 @@ impl Tool for McpToolWrapper {
             result = self.peer.call_tool(params) => {
                 result.map_err(|e| ToolError::ExecutionFailed {
                     tool_name: self.definition.name.clone(),
-                    message: format!("MCP call_tool failed: {}", e),
+                    message: format!("MCP call_tool failed: {e}"),
                 })?
             }
         };
@@ -385,7 +385,7 @@ impl McpManager {
         let futures: Vec<_> = specs
             .into_iter()
             .map(|spec| async move {
-                let args: Vec<&str> = spec.args.iter().map(|s| s.as_str()).collect();
+                let args: Vec<&str> = spec.args.iter().map(String::as_str).collect();
                 let result = McpConnection::connect_stdio(&spec.name, &spec.command, &args).await;
                 (spec.name, result)
             })

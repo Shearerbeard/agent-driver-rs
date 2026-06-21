@@ -363,11 +363,11 @@ impl CollectedResponse {
 /// Parse embedded tool calls from a text string.
 ///
 /// Returns (extracted_tool_use_blocks, remaining_text).
-#[allow(clippy::string_slice, reason = "offsets from .find() on ASCII delimiters are valid char boundaries")]
-fn parse_embedded_tool_calls(
-    text: &str,
-    counter: &mut u32,
-) -> (Vec<ContentBlock>, String) {
+#[allow(
+    clippy::string_slice,
+    reason = "offsets from .find() on ASCII delimiters are valid char boundaries"
+)]
+fn parse_embedded_tool_calls(text: &str, counter: &mut u32) -> (Vec<ContentBlock>, String) {
     let mut tool_calls = Vec::new();
     let mut remaining = text.to_owned();
 
@@ -442,7 +442,7 @@ fn try_parse_tool_call_json(json_str: &str, counter: &mut u32) -> Option<Content
     // Validate name is a valid ToolName
     let name = ToolName::new(name_str).ok()?;
 
-    let id = ToolCallId::new(format!("fallback_call_{}", counter));
+    let id = ToolCallId::new(format!("fallback_call_{counter}"));
     *counter += 1;
 
     Some(ContentBlock::ToolUse {

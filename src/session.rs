@@ -223,7 +223,10 @@ impl Session {
     async fn build_completion_request(&self) -> CompletionRequest {
         let system = self.system_prompt.read().await.clone();
         let messages = self.messages.read().await.clone();
-        #[allow(unused_mut, reason = "mutated only when schema-sanitize feature is enabled")]
+        #[allow(
+            unused_mut,
+            reason = "mutated only when schema-sanitize feature is enabled"
+        )]
         let mut tools = self.tools.list().await;
 
         // Apply schema sanitization if configured

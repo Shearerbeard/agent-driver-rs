@@ -97,7 +97,7 @@ impl OpenAiProvider {
                                 .build()
                                 .map_err(|e| ProviderError::InvalidRequest {
                                     provider: super::ProviderKind::OpenAi,
-                                    message: format!("Failed to build system message: {}", e),
+                                    message: format!("Failed to build system message: {e}"),
                                 })?
                                 .into(),
                         );
@@ -123,7 +123,7 @@ impl OpenAiProvider {
                                 .build()
                                 .map_err(|e| ProviderError::InvalidRequest {
                                     provider: super::ProviderKind::OpenAi,
-                                    message: format!("Failed to build user message: {}", e),
+                                    message: format!("Failed to build user message: {e}"),
                                 })?
                                 .into(),
                         );
@@ -184,7 +184,7 @@ impl OpenAiProvider {
                             .build()
                             .map_err(|e| ProviderError::InvalidRequest {
                                 provider: super::ProviderKind::OpenAi,
-                                message: format!("Failed to build assistant message: {}", e),
+                                message: format!("Failed to build assistant message: {e}"),
                             })?
                             .into(),
                     );
@@ -208,7 +208,7 @@ impl OpenAiProvider {
                                     .build()
                                     .map_err(|e| ProviderError::InvalidRequest {
                                         provider: super::ProviderKind::OpenAi,
-                                        message: format!("Failed to build tool message: {}", e),
+                                        message: format!("Failed to build tool message: {e}"),
                                     })?
                                     .into(),
                             );
@@ -236,7 +236,7 @@ impl OpenAiProvider {
                     .build()
                     .map_err(|e| ProviderError::InvalidRequest {
                         provider: super::ProviderKind::OpenAi,
-                        message: format!("Failed to build function: {}", e),
+                        message: format!("Failed to build function: {e}"),
                     })?;
 
                 ChatCompletionToolArgs::default()
@@ -245,7 +245,7 @@ impl OpenAiProvider {
                     .build()
                     .map_err(|e| ProviderError::InvalidRequest {
                         provider: super::ProviderKind::OpenAi,
-                        message: format!("Failed to build tool: {}", e),
+                        message: format!("Failed to build tool: {e}"),
                     })
             })
             .collect()
@@ -285,7 +285,7 @@ impl Provider for OpenAiProvider {
                             .build()
                             .map_err(|e| ProviderError::InvalidRequest {
                                 provider: super::ProviderKind::OpenAi,
-                                message: format!("Failed to build system message: {}", e),
+                                message: format!("Failed to build system message: {e}"),
                             })?
                             .into(),
                     );
@@ -326,7 +326,7 @@ impl Provider for OpenAiProvider {
                     .build()
                     .map_err(|e| ProviderError::InvalidRequest {
                         provider: super::ProviderKind::OpenAi,
-                        message: format!("Failed to build request: {}", e),
+                        message: format!("Failed to build request: {e}"),
                     })?;
 
             // Create stream
@@ -482,7 +482,10 @@ fn parse_openai_chunk(
     for choice in &response.choices {
         // Check finish reason
         if let Some(ref reason) = choice.finish_reason {
-            #[allow(unreachable_patterns, reason = "async-openai FinishReason may add variants")]
+            #[allow(
+                unreachable_patterns,
+                reason = "async-openai FinishReason may add variants"
+            )]
             let reason = match reason {
                 async_openai::types::FinishReason::Stop => StopReason::EndTurn,
                 async_openai::types::FinishReason::Length => StopReason::MaxTokens,

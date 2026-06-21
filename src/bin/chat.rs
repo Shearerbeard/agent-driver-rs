@@ -66,16 +66,16 @@ impl AgentObserver for ChatObserver {
         let mut stdout = io::stdout();
         match event {
             AgentEvent::TextDelta { text } => {
-                print!("{}", text);
+                print!("{text}");
                 drop(stdout.flush());
             }
             AgentEvent::ThinkingDelta { thinking } => {
                 // Show thinking in dim style
-                print!("\x1b[2m{}\x1b[0m", thinking);
+                print!("\x1b[2m{thinking}\x1b[0m");
                 drop(stdout.flush());
             }
             AgentEvent::ToolCallStart { name, .. } => {
-                eprintln!("\x1b[33m[calling tool: {}]\x1b[0m", name);
+                eprintln!("\x1b[33m[calling tool: {name}]\x1b[0m");
             }
             AgentEvent::ToolCallComplete {
                 name,
@@ -83,22 +83,15 @@ impl AgentObserver for ChatObserver {
                 is_error,
                 ..
             } => {
+                let result = truncate(result, 200);
                 if *is_error {
-                    eprintln!(
-                        "\x1b[31m[tool {} error: {}]\x1b[0m",
-                        name,
-                        truncate(result, 200)
-                    );
+                    eprintln!("\x1b[31m[tool {name} error: {result}]\x1b[0m");
                 } else {
-                    eprintln!(
-                        "\x1b[32m[tool {} done: {}]\x1b[0m",
-                        name,
-                        truncate(result, 200)
-                    );
+                    eprintln!("\x1b[32m[tool {name} done: {result}]\x1b[0m");
                 }
             }
             AgentEvent::IterationStart { iteration } => {
-                eprintln!("\x1b[2m[tool iteration {}]\x1b[0m", iteration);
+                eprintln!("\x1b[2m[tool iteration {iteration}]\x1b[0m");
             }
             AgentEvent::LoopComplete {
                 reason,
@@ -106,20 +99,25 @@ impl AgentObserver for ChatObserver {
             } => {
                 if *total_iterations > 0 {
                     eprintln!(
-                        "\x1b[2m[loop done: {}, {} tool iteration(s)]\x1b[0m",
-                        reason, total_iterations
+                        "\x1b[2m[loop done: {reason}, {total_iterations} tool iteration(s)]\x1b[0m"
                     );
                 }
             }
             AgentEvent::IterationComplete { .. } => {}
             // AgentEvent is #[non_exhaustive] — wildcard needed for forward compatibility
-            #[allow(clippy::wildcard_enum_match_arm, reason = "AgentEvent is #[non_exhaustive]")]
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "AgentEvent is #[non_exhaustive]"
+            )]
             _ => {}
         }
     }
 }
 
-#[allow(clippy::string_slice, reason = "boundary is validated by is_char_boundary loop above")]
+#[allow(
+    clippy::string_slice,
+    reason = "boundary is validated by is_char_boundary loop above"
+)]
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_owned()
@@ -170,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Configuration ─────────────────────────────────────────────────
     let config = ProviderConfig::from_env().map_err(|e| {
-        eprintln!("Configuration error: {}", e);
+        eprintln!("Configuration error: {e}");
         eprintln!(
             "\nSet PROVIDER env var to one of: anthropic, openai, bedrock, openrouter, ollama"
         );
@@ -185,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Provider creation ──────────────────────────────────────────────
     let (provider, model_id, completion_config) = create_provider(config).await?;
 
-    println!("Using model: {}", model_id);
+    println!("Using model: {model_id}");
 
     // ── Session setup ──────────────────────────────────────────────────
     let session = SessionBuilder::new()
@@ -293,7 +291,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!();
             }
             Err(e) => {
-                eprintln!("\nError: {}", e);
+                eprintln!("\nError: {e}");
                 println!();
             }
         }
@@ -369,7 +367,10 @@ async fn create_provider(
             let provider = agent_driver_rs::provider::OllamaProvider::new(cfg)?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
-        #[allow(unreachable_patterns, reason = "reachable only when some provider features are disabled")]
+        #[allow(
+            unreachable_patterns,
+            reason = "reachable only when some provider features are disabled"
+        )]
         _ => Err("Provider not enabled in features".into()),
     }
 }
@@ -396,21 +397,24 @@ async fn setup_mcp_connections(
             eprintln!("Warning: empty MCP server command, skipping");
             continue;
         }
-        let name = format!("mcp-{}", i);
-        eprintln!("Connecting to MCP server '{}': {}", name, server_cmd);
+        let name = format!("mcp-{i}");
+        eprintln!("Connecting to MCP server '{name}': {server_cmd}");
         stdio_specs.push(McpServerSpec {
             name,
             command: parts[0].to_owned(),
-            args: parts[1..].iter().map(std::string::ToString::to_string).collect(),
+            args: parts[1..]
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
         });
     }
 
     // From --mcp-config file
     if let Some(config_path) = &args.mcp_config {
         let content = std::fs::read_to_string(config_path)
-            .map_err(|e| format!("Failed to read MCP config '{}': {}", config_path, e))?;
+            .map_err(|e| format!("Failed to read MCP config '{config_path}': {e}"))?;
         let config_file: McpConfigFile = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse MCP config '{}': {}", config_path, e))?;
+            .map_err(|e| format!("Failed to parse MCP config '{config_path}': {e}"))?;
 
         for entry in config_file.servers {
             eprintln!(
@@ -431,10 +435,7 @@ async fn setup_mcp_connections(
     if !stdio_specs.is_empty() {
         let errors = manager.connect_all_stdio(stdio_specs).await;
         for (name, err) in errors {
-            eprintln!(
-                "  Warning: failed to connect to MCP server '{}': {}",
-                name, err
-            );
+            eprintln!("  Warning: failed to connect to MCP server '{name}': {err}");
         }
     }
 
@@ -448,8 +449,8 @@ async fn setup_mcp_connections(
             .iter()
             .enumerate()
             .map(|(i, url)| {
-                let name = format!("mcp-http-{}", i);
-                eprintln!("Connecting to MCP HTTP server '{}': {}", name, url);
+                let name = format!("mcp-http-{i}");
+                eprintln!("Connecting to MCP HTTP server '{name}': {url}");
                 McpHttpSpec {
                     name,
                     uri: url.clone(),
@@ -459,10 +460,7 @@ async fn setup_mcp_connections(
 
         let errors = manager.connect_all_http(http_specs).await;
         for (name, err) in errors {
-            eprintln!(
-                "  Warning: failed to connect to MCP HTTP server '{}': {}",
-                name, err
-            );
+            eprintln!("  Warning: failed to connect to MCP HTTP server '{name}': {err}");
         }
     }
 
@@ -478,7 +476,7 @@ async fn setup_mcp_connections(
         );
     }
     for err in sync_errors {
-        eprintln!("  Warning: failed to discover tools: {}", err);
+        eprintln!("  Warning: failed to discover tools: {err}");
     }
 
     Ok(McpKeepAlive {

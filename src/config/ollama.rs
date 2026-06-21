@@ -151,7 +151,7 @@ impl KeepAlive {
     pub fn as_api_value(&self) -> String {
         match self {
             Self::Indefinite => "-1".to_owned(),
-            Self::Minutes(m) => format!("{}m", m),
+            Self::Minutes(m) => format!("{m}m"),
             Self::Unload => "0".to_owned(),
         }
     }

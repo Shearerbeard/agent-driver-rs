@@ -107,6 +107,8 @@ required-features = ["phoenix", "test-support"]
 [lints.rust]
 let_underscore_drop = { level = "deny", priority = 127 }
 non_ascii_idents = { level = "deny", priority = 127 }
+mixed_script_confusables = { level = "deny", priority = 127 }
+confusable_idents = { level = "warn", priority = 127 }
 
 [lints.clippy]
 # --- Wave 1: Broad groups at warn (compile never breaks, just signals) ---
@@ -124,7 +126,7 @@ let_and_return = { level = "allow", priority = 127 }
 needless_continue = { level = "allow", priority = 127 }
 needless_borrowed_reference = { level = "allow", priority = 127 }
 redundant_else = { level = "allow", priority = 127 }
-uninlined_format_args = { level = "allow", priority = 127 }
+uninlined_format_args = { level = "deny", priority = 127 }
 module_name_repetitions = { level = "allow", priority = 127 }
 
 # --- Pedantic: silenced for now, triage in future session ---
@@ -155,7 +157,7 @@ map_unwrap_or = { level = "allow", priority = 127 }
 single_match_else = { level = "allow", priority = 127 }
 unnested_or_patterns = { level = "allow", priority = 127 }
 needless_pass_by_value = { level = "allow", priority = 127 }
-redundant_closure_for_method_calls = { level = "allow", priority = 127 }
+redundant_closure_for_method_calls = { level = "deny", priority = 127 }
 option_as_ref_cloned = { level = "allow", priority = 127 }
 
 # --- Wave 2: Agent-critical safety (deny) ---
@@ -214,3 +216,22 @@ renamed_function_params = { level = "deny", priority = 127 }
 allow_attributes_without_reason = { level = "deny", priority = 127 }
 mixed_read_write_in_expression = { level = "deny", priority = 127 }
 cfg_not_test = { level = "deny", priority = 127 }
+
+# --- Codex-style clean baseline: already clean at adoption ---
+await_holding_invalid_type = { level = "deny", priority = 127 }
+await_holding_lock = { level = "deny", priority = 127 }
+identity_op = { level = "deny", priority = 127 }
+manual_clamp = { level = "deny", priority = 127 }
+manual_filter = { level = "deny", priority = 127 }
+manual_find = { level = "deny", priority = 127 }
+manual_flatten = { level = "deny", priority = 127 }
+manual_map = { level = "deny", priority = 127 }
+manual_memcpy = { level = "deny", priority = 127 }
+manual_non_exhaustive = { level = "deny", priority = 127 }
+manual_ok_or = { level = "deny", priority = 127 }
+manual_range_contains = { level = "deny", priority = 127 }
+manual_retain = { level = "deny", priority = 127 }
+manual_strip = { level = "deny", priority = 127 }
+manual_try_fold = { level = "deny", priority = 127 }
+manual_unwrap_or = { level = "deny", priority = 127 }
+redundant_clone = { level = "deny", priority = 127 }

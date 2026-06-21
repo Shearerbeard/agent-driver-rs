@@ -427,7 +427,7 @@ fn parse_anthropic_event(
         AnthropicStreamEvent::Ping => vec![],
         AnthropicStreamEvent::Error { error } => {
             let message = match (&error.error_type, &error.message) {
-                (Some(t), Some(m)) => format!("{}: {}", t, m),
+                (Some(t), Some(m)) => format!("{t}: {m}"),
                 (None, Some(m)) => m.clone(),
                 (Some(t), None) => t.clone(),
                 (None, None) => "Unknown error".into(),

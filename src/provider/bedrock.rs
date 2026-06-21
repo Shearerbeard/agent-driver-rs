@@ -102,7 +102,7 @@ impl BedrockProvider {
                 .build()
                 .map_err(|e| ProviderError::InvalidRequest {
                     provider: super::ProviderKind::Bedrock,
-                    message: format!("Failed to build tool spec: {}", e),
+                    message: format!("Failed to build tool spec: {e}"),
                 })?;
 
             bedrock_tools.push(Tool::ToolSpec(spec));
@@ -114,7 +114,7 @@ impl BedrockProvider {
                 .build()
                 .map_err(|e| ProviderError::InvalidRequest {
                     provider: super::ProviderKind::Bedrock,
-                    message: format!("Failed to build tool config: {}", e),
+                    message: format!("Failed to build tool config: {e}"),
                 })?,
         ))
     }
@@ -151,8 +151,7 @@ fn convert_messages(
                 ContentBlock::Thinking { text } => {
                     // Bedrock doesn't have a thinking block, include as text
                     content_blocks.push(BedrockContentBlock::Text(format!(
-                        "<thinking>{}</thinking>",
-                        text
+                        "<thinking>{text}</thinking>"
                     )));
                 }
                 ContentBlock::ToolUse { id, name, input } => {
@@ -173,7 +172,7 @@ fn convert_messages(
                             .build()
                             .map_err(|e| ProviderError::InvalidRequest {
                                 provider: super::ProviderKind::Bedrock,
-                                message: format!("Failed to build tool use: {}", e),
+                                message: format!("Failed to build tool use: {e}"),
                             })?,
                     ));
                 }
@@ -197,7 +196,7 @@ fn convert_messages(
                             .build()
                             .map_err(|e| ProviderError::InvalidRequest {
                                 provider: super::ProviderKind::Bedrock,
-                                message: format!("Failed to build tool result: {}", e),
+                                message: format!("Failed to build tool result: {e}"),
                             })?,
                     ));
                 }
@@ -230,7 +229,7 @@ fn convert_messages(
                 .build()
                 .map_err(|e| ProviderError::InvalidRequest {
                     provider: super::ProviderKind::Bedrock,
-                    message: format!("Failed to build message: {}", e),
+                    message: format!("Failed to build message: {e}"),
                 })
         })
         .collect()
@@ -327,8 +326,7 @@ impl Provider for BedrockProvider {
                     ProviderError::ModelNotFound { provider: super::ProviderKind::Bedrock, model: model_id.clone() }
                 } else if msg.contains("inference profile") || msg.contains("InferenceProfile") {
                     ProviderError::InvalidRequest { provider: super::ProviderKind::Bedrock, message: format!(
-                        "Model requires an inference profile. Set BEDROCK_INFERENCE_PROFILE env var. Error: {}",
-                        msg
+                        "Model requires an inference profile. Set BEDROCK_INFERENCE_PROFILE env var. Error: {msg}"
                     ) }
                 } else if is_context_window_message(&msg) {
                     ProviderError::ContextWindowExceeded { provider: super::ProviderKind::Bedrock, message: msg, context_window: None, tokens_used: None }
@@ -356,7 +354,7 @@ impl Provider for BedrockProvider {
             let event_stream = futures::stream::unfold(
                 (
                     stream,
-                    cancellation.clone(),
+                    cancellation,
                     StreamState::default(),
                     std::collections::VecDeque::new(),
                 ),
@@ -449,7 +447,10 @@ impl Provider for BedrockProvider {
 #[derive(Default)]
 struct StreamState {
     current_tool_use_id: Option<String>,
-    #[allow(dead_code, reason = "tracked for diagnostic context during stream parsing")]
+    #[allow(
+        dead_code,
+        reason = "tracked for diagnostic context during stream parsing"
+    )]
     current_tool_name: Option<String>,
     /// Stored from MessageStop, emitted with Metadata for a single Completed event
     stop_reason: Option<StopReason>,
@@ -484,7 +485,10 @@ fn parse_bedrock_event(
     use aws_sdk_bedrockruntime::types::ConverseStreamOutput;
 
     // ConverseStreamOutput is #[non_exhaustive] in the AWS SDK
-    #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "AWS SDK enum is #[non_exhaustive]"
+    )]
     match event {
         ConverseStreamOutput::MessageStart(_msg) => {
             vec![Ok(StreamEvent::Started {
@@ -500,7 +504,10 @@ fn parse_bedrock_event(
 
             if let Some(start) = block.start() {
                 // ContentBlockStart is #[non_exhaustive] in the AWS SDK
-                #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
+                #[allow(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "AWS SDK enum is #[non_exhaustive]"
+                )]
                 match start {
                     aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(tool) => {
                         state.current_tool_use_id = Some(tool.tool_use_id().to_owned());
@@ -535,7 +542,10 @@ fn parse_bedrock_event(
         ConverseStreamOutput::ContentBlockDelta(delta) => {
             if let Some(d) = delta.delta() {
                 // ContentBlockDelta is #[non_exhaustive] in the AWS SDK
-                #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
+                #[allow(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "AWS SDK enum is #[non_exhaustive]"
+                )]
                 match d {
                     aws_sdk_bedrockruntime::types::ContentBlockDelta::Text(text) => {
                         vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
@@ -565,7 +575,10 @@ fn parse_bedrock_event(
             // Store stop_reason in state; emit Completed only from Metadata
             // to avoid duplicate Completed events.
             // Bedrock StopReason is #[non_exhaustive] in the AWS SDK
-            #[allow(clippy::wildcard_enum_match_arm, reason = "AWS SDK enum is #[non_exhaustive]")]
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "AWS SDK enum is #[non_exhaustive]"
+            )]
             let reason = match stop.stop_reason() {
                 aws_sdk_bedrockruntime::types::StopReason::EndTurn => Some(StopReason::EndTurn),
                 aws_sdk_bedrockruntime::types::StopReason::MaxTokens => Some(StopReason::MaxTokens),

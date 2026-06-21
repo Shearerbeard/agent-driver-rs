@@ -19,7 +19,10 @@ struct RegisteredTask {
     #[allow(dead_code, reason = "retained for future abort-on-shutdown support")]
     abort_handle: tokio::task::AbortHandle,
     cancellation: CancellationToken,
-    #[allow(dead_code, reason = "retained for diagnostic logging of registered tasks")]
+    #[allow(
+        dead_code,
+        reason = "retained for diagnostic logging of registered tasks"
+    )]
     name: &'static str,
 }
 

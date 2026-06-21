@@ -38,7 +38,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 reqwest-eventsource = "0.6"
 
 # Error handling
-thiserror = "1"
+thiserror = "2"
 
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }

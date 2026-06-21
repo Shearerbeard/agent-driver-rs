@@ -126,7 +126,7 @@ cargo run --example phoenix_integration_ollama --features "phoenix ollama"
 
 ```bash
 # View OTel Collector logs
-docker compose -f docker-compose.phoenix.yaml logs -f otel-collector
+docker compose -f docker-compose.phoenix.yaml logs -f phoenix
 ```
 
 ## Architecture Overview

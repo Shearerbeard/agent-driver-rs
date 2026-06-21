@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use async_openai::Client;
 use async_openai::config::OpenAIConfig;
 use async_openai::types::{
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
@@ -15,12 +16,11 @@ use async_openai::types::{
     ChatCompletionRequestUserMessageArgs, ChatCompletionToolArgs, ChatCompletionToolType,
     CreateChatCompletionRequestArgs, FunctionObjectArgs,
 };
-use async_openai::Client;
 
 use crate::config::OpenAiConfig;
 use crate::error::{
-    is_content_policy_message, is_context_window_message, AuthErrorKind, ProviderError,
-    StreamError, StreamErrorKind,
+    AuthErrorKind, ProviderError, StreamError, StreamErrorKind, is_content_policy_message,
+    is_context_window_message,
 };
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,

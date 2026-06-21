@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use backoff::{backoff::Backoff as _, ExponentialBackoff};
+use backoff::{ExponentialBackoff, backoff::Backoff as _};
 
 use crate::error::ProviderError;
 
@@ -123,8 +123,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[tokio::test]
     async fn success_on_first_try() {

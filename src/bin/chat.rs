@@ -26,10 +26,10 @@ use std::sync::Arc;
 use clap::Parser;
 
 use agent_driver_rs::{
+    ModelId, SessionBuilder, SystemPrompt,
     agent::{AgentEvent, AgentLoop, AgentLoopConfig, AgentObserver, MaxToolDepth},
     config::ProviderConfig,
     provider::{CompletionConfig, Provider},
-    ModelId, SessionBuilder, SystemPrompt,
 };
 
 /// CLI arguments

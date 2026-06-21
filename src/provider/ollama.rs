@@ -19,16 +19,16 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use ollama_rs::Ollama;
 use ollama_rs::generation::chat::request::ChatMessageRequest;
 use ollama_rs::generation::chat::{ChatMessage, ChatMessageResponseStream, MessageRole};
 use ollama_rs::generation::tools::{
     ToolCall, ToolCallFunction, ToolFunctionInfo, ToolInfo, ToolType,
 };
 use ollama_rs::models::ModelOptions;
-use ollama_rs::Ollama;
 
 use crate::config::OllamaConfig;
-use crate::error::{is_context_window_message, ProviderError, StreamError, StreamErrorKind};
+use crate::error::{ProviderError, StreamError, StreamErrorKind, is_context_window_message};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
@@ -617,9 +617,11 @@ mod tests {
 
         let events = parse_ollama_response(streaming_chunk(""), &mut state);
         // Empty content should not produce a TextDelta
-        assert!(!events
-            .iter()
-            .any(|e| matches!(e, Ok(StreamEvent::Delta(StreamDelta::TextDelta { .. })))));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Delta(StreamDelta::TextDelta { .. }))))
+        );
     }
 
     #[test]
@@ -630,9 +632,11 @@ mod tests {
         state.text_block_open = true;
 
         let events = parse_ollama_response(final_chunk(), &mut state);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, Ok(StreamEvent::ContentBlockStop { index: 0 }))));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::ContentBlockStop { index: 0 })))
+        );
         // Usage should be tracked from final_data
         assert!(state.usage.is_some());
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
@@ -654,9 +658,11 @@ mod tests {
         let events = parse_ollama_response(chunk, &mut state);
 
         // Should have: Started, ContentBlockStart(ToolUse), ToolUseStart, ToolInputDelta, ContentBlockStop
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, Ok(StreamEvent::Started { .. }))));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Started { .. })))
+        );
         assert!(events.iter().any(|e| matches!(
             e,
             Ok(StreamEvent::ContentBlockStart {

@@ -5,7 +5,7 @@
 mod retry;
 pub(crate) mod stream_adapter;
 
-pub use retry::{with_retry, RetryConfig};
+pub use retry::{RetryConfig, with_retry};
 
 use std::future::Future;
 use std::pin::Pin;

@@ -303,9 +303,13 @@ pub enum McpToolError {
 /// Task pool errors.
 #[derive(Debug, Error)]
 pub enum TaskPoolError {
-    #[error("Task pool has been shut down and is no longer accepting new tasks. Create a new TaskPool to spawn more tasks")]
+    #[error(
+        "Task pool has been shut down and is no longer accepting new tasks. Create a new TaskPool to spawn more tasks"
+    )]
     Shutdown,
-    #[error("Task not found with correlation ID: {0}. The task may have already completed or been removed")]
+    #[error(
+        "Task not found with correlation ID: {0}. The task may have already completed or been removed"
+    )]
     TaskNotFound(String),
 }
 
@@ -432,9 +436,13 @@ pub(crate) fn is_content_policy_message(msg: &str) -> bool {
 /// Error when constructing a [`ModelId`](crate::types::ModelId).
 #[derive(Debug, Clone, Error)]
 pub enum ModelIdError {
-    #[error("Model ID cannot be empty. Provide a model identifier like \"claude-sonnet-4\" or \"gpt-4o\"")]
+    #[error(
+        "Model ID cannot be empty. Provide a model identifier like \"claude-sonnet-4\" or \"gpt-4o\""
+    )]
     Empty,
-    #[error("Model ID contains invalid characters. Only alphanumeric, hyphens (-), underscores (_), forward slashes (/), colons (:), and dots (.) are allowed")]
+    #[error(
+        "Model ID contains invalid characters. Only alphanumeric, hyphens (-), underscores (_), forward slashes (/), colons (:), and dots (.) are allowed"
+    )]
     InvalidCharacters,
 }
 
@@ -460,34 +468,42 @@ mod tests {
 
     #[test]
     fn provider_error_is_retriable() {
-        assert!(ProviderError::RateLimited {
-            provider: ProviderKind::Anthropic,
-            retry_after: None,
-        }
-        .is_retriable());
+        assert!(
+            ProviderError::RateLimited {
+                provider: ProviderKind::Anthropic,
+                retry_after: None,
+            }
+            .is_retriable()
+        );
 
         assert!(ProviderError::Timeout(Duration::from_secs(30)).is_retriable());
 
-        assert!(ProviderError::HttpError {
-            provider: ProviderKind::OpenAi,
-            status: Some(503),
-            message: "Service unavailable".into(),
-        }
-        .is_retriable());
+        assert!(
+            ProviderError::HttpError {
+                provider: ProviderKind::OpenAi,
+                status: Some(503),
+                message: "Service unavailable".into(),
+            }
+            .is_retriable()
+        );
 
-        assert!(!ProviderError::HttpError {
-            provider: ProviderKind::OpenAi,
-            status: Some(400),
-            message: "Bad request".into(),
-        }
-        .is_retriable());
+        assert!(
+            !ProviderError::HttpError {
+                provider: ProviderKind::OpenAi,
+                status: Some(400),
+                message: "Bad request".into(),
+            }
+            .is_retriable()
+        );
 
-        assert!(!ProviderError::Auth {
-            provider: ProviderKind::Anthropic,
-            kind: AuthErrorKind::Rejected,
-            message: "unauthorized".into(),
-        }
-        .is_retriable());
+        assert!(
+            !ProviderError::Auth {
+                provider: ProviderKind::Anthropic,
+                kind: AuthErrorKind::Rejected,
+                message: "unauthorized".into(),
+            }
+            .is_retriable()
+        );
     }
 
     #[test]
@@ -541,58 +557,72 @@ mod tests {
 
     #[test]
     fn provider_error_is_recoverable() {
-        assert!(ProviderError::ContextWindowExceeded {
-            provider: ProviderKind::OpenAi,
-            message: "too long".into(),
-            context_window: None,
-            tokens_used: None,
-        }
-        .is_recoverable());
+        assert!(
+            ProviderError::ContextWindowExceeded {
+                provider: ProviderKind::OpenAi,
+                message: "too long".into(),
+                context_window: None,
+                tokens_used: None,
+            }
+            .is_recoverable()
+        );
 
-        assert!(ProviderError::ContentPolicyViolation {
-            provider: ProviderKind::Anthropic,
-            message: "blocked".into(),
-        }
-        .is_recoverable());
+        assert!(
+            ProviderError::ContentPolicyViolation {
+                provider: ProviderKind::Anthropic,
+                message: "blocked".into(),
+            }
+            .is_recoverable()
+        );
 
-        assert!(ProviderError::RateLimited {
-            provider: ProviderKind::Bedrock,
-            retry_after: None,
-        }
-        .is_recoverable());
+        assert!(
+            ProviderError::RateLimited {
+                provider: ProviderKind::Bedrock,
+                retry_after: None,
+            }
+            .is_recoverable()
+        );
 
         // Not recoverable:
-        assert!(!ProviderError::Auth {
-            provider: ProviderKind::Anthropic,
-            kind: AuthErrorKind::Rejected,
-            message: "nope".into(),
-        }
-        .is_recoverable());
+        assert!(
+            !ProviderError::Auth {
+                provider: ProviderKind::Anthropic,
+                kind: AuthErrorKind::Rejected,
+                message: "nope".into(),
+            }
+            .is_recoverable()
+        );
 
-        assert!(!ProviderError::InvalidRequest {
-            provider: ProviderKind::OpenAi,
-            message: "bad request".into(),
-        }
-        .is_recoverable());
+        assert!(
+            !ProviderError::InvalidRequest {
+                provider: ProviderKind::OpenAi,
+                message: "bad request".into(),
+            }
+            .is_recoverable()
+        );
 
         assert!(!ProviderError::Cancelled.is_recoverable());
     }
 
     #[test]
     fn context_window_not_retriable() {
-        assert!(!ProviderError::ContextWindowExceeded {
-            provider: ProviderKind::OpenAi,
-            message: "too long".into(),
-            context_window: None,
-            tokens_used: None,
-        }
-        .is_retriable());
+        assert!(
+            !ProviderError::ContextWindowExceeded {
+                provider: ProviderKind::OpenAi,
+                message: "too long".into(),
+                context_window: None,
+                tokens_used: None,
+            }
+            .is_retriable()
+        );
 
-        assert!(!ProviderError::ContentPolicyViolation {
-            provider: ProviderKind::Anthropic,
-            message: "blocked".into(),
-        }
-        .is_retriable());
+        assert!(
+            !ProviderError::ContentPolicyViolation {
+                provider: ProviderKind::Anthropic,
+                message: "blocked".into(),
+            }
+            .is_retriable()
+        );
     }
 
     #[test]

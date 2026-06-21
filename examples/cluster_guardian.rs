@@ -235,7 +235,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if trigger.is_empty() {
         eprintln!("No trigger provided on stdin. Provide a message, e.g.:");
-        eprintln!("  echo \"Perform cluster health check\" | cargo run --example cluster_guardian --features \"ollama mcp-http schema-sanitize\"");
+        eprintln!(
+            "  echo \"Perform cluster health check\" | cargo run --example cluster_guardian --features \"ollama mcp-http schema-sanitize\""
+        );
         std::process::exit(1);
     }
 

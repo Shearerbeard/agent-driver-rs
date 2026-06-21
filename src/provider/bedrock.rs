@@ -12,18 +12,18 @@ use std::future::Future;
 use std::pin::Pin;
 
 use aws_config::BehaviorVersion;
+use aws_sdk_bedrockruntime::Client;
 use aws_sdk_bedrockruntime::types::{
     ContentBlock as BedrockContentBlock, ConversationRole, Message as BedrockMessage,
     SystemContentBlock, Tool, ToolConfiguration, ToolInputSchema, ToolResultBlock,
     ToolResultContentBlock, ToolSpecification, ToolUseBlock,
 };
-use aws_sdk_bedrockruntime::Client;
 use aws_smithy_types::Document;
 
 use crate::config::BedrockConfig;
 use crate::error::{
-    is_content_policy_message, is_context_window_message, AuthErrorKind, ProviderError,
-    StreamError, StreamErrorKind,
+    AuthErrorKind, ProviderError, StreamError, StreamErrorKind, is_content_policy_message,
+    is_context_window_message,
 };
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,

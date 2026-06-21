@@ -599,7 +599,7 @@ mod tests {
 
     // --- Integration tests using MockProvider ---
 
-    use crate::provider::{mock_text_response, mock_tool_call_response, MockProvider};
+    use crate::provider::{MockProvider, mock_text_response, mock_tool_call_response};
     use crate::session::SessionBuilder;
     use crate::tool::{FnTool, ToolDefinition, ToolResult, ToolSchema};
     use crate::types::ModelId;

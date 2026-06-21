@@ -558,7 +558,7 @@ impl Default for SessionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{mock_text_response, MockProvider};
+    use crate::provider::{MockProvider, mock_text_response};
     use crate::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
     use futures::FutureExt;
     use std::sync::Arc;

@@ -184,7 +184,7 @@ pub fn mock_multi_tool_response(tools: &[(&str, &str, &str)]) -> Vec<StreamEvent
         }));
         events.push(StreamEvent::Delta(StreamDelta::ToolInputDelta {
             id: ToolCallId::new(*id),
-            partial_json: input_json.to_string(),
+            partial_json: (*input_json).to_owned(),
         }));
         events.push(StreamEvent::ContentBlockStop { index: i });
     }

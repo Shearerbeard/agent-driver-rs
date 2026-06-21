@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest_eventsource::EventSource;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;

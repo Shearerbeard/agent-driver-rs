@@ -65,8 +65,8 @@ pub use provider::{
 
 #[cfg(feature = "phoenix")]
 pub use otel::{
-    attr, get_tracer, get_tracer_provider, init_phoenix, init_tracer_provider, shutdown_phoenix,
-    AgentLoopSpan, SessionOperationSpan, SpanKind as OpenInferenceSpanKind, ToolSpan,
+    AgentLoopSpan, SessionOperationSpan, SpanKind as OpenInferenceSpanKind, ToolSpan, attr,
+    get_tracer, get_tracer_provider, init_phoenix, init_tracer_provider, shutdown_phoenix,
 };
 
 #[cfg(any(test, feature = "test-support"))]

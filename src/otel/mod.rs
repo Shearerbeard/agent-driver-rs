@@ -34,7 +34,7 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
 
 #[cfg(feature = "phoenix")]
-pub use instrumentation::{attr, AgentLoopSpan, SessionOperationSpan, SpanKind, ToolSpan};
+pub use instrumentation::{AgentLoopSpan, SessionOperationSpan, SpanKind, ToolSpan, attr};
 
 #[cfg(feature = "phoenix")]
 pub static PHOENIX_TRACER_PROVIDER: std::sync::OnceLock<std::sync::Arc<SdkTracerProvider>> =

@@ -9,7 +9,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest_eventsource::EventSource;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;

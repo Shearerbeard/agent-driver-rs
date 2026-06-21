@@ -15,7 +15,7 @@ use opentelemetry_sdk::trace::{SimpleSpanProcessor, TracerProvider as SdkTracerP
 
 use agent_driver_rs::agent::AgentLoop;
 use agent_driver_rs::otel::attr;
-use agent_driver_rs::provider::mock::{mock_text_response, mock_tool_call_response, MockProvider};
+use agent_driver_rs::provider::mock::{MockProvider, mock_text_response, mock_tool_call_response};
 use agent_driver_rs::session::SessionBuilder;
 use agent_driver_rs::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
 use agent_driver_rs::types::{ModelId, ToolName};

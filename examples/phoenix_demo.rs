@@ -65,5 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(not(feature = "phoenix"))]
 fn main() {
     println!("Phoenix feature is not enabled.");
-    println!("Run with: PHOENIX_ENDPOINT=http://your-phoenix:4317 cargo run --features phoenix --example phoenix_demo");
+    println!(
+        "Run with: PHOENIX_ENDPOINT=http://your-phoenix:4317 cargo run --features phoenix --example phoenix_demo"
+    );
 }

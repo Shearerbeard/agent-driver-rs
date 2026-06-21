@@ -55,7 +55,7 @@ aws-sdk-bedrockruntime = { version = "1", default-features = false, features = [
 aws-config = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "sso"], optional = true }
 aws-smithy-types = { version = "1", optional = true }
 ollama-rs = { version = "0.3", features = ["stream"], optional = true }
-rmcp = { version = "0.14", features = ["client", "transport-child-process"], optional = true }
+rmcp = { version = "1.7", features = ["client", "transport-child-process"], optional = true }
 mcp-openai-bridge = { git = "ssh://git@github.com/example-org/mcp-openai-bridge.git", rev = "b505bfe2da648b02b598ea2b29e466ccb27cfd83", default-features = false, optional = true }
 
 # OpenTelemetry for Phoenix (optional)

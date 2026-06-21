@@ -3,7 +3,6 @@
 //! This module provides integration with MCP servers for dynamic tool loading.
 //! All types are behind `#[cfg(feature = "mcp")]`.
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -223,14 +222,10 @@ impl Tool for McpToolWrapper {
     }
 
     async fn execute(&self, input: &ToolInput, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let arguments = Some(input.inner().clone());
+        let arguments = input.inner().clone();
 
-        let params = rmcp::model::CallToolRequestParams {
-            name: Cow::Owned(self.mcp_tool_name.clone()),
-            arguments,
-            meta: None,
-            task: None,
-        };
+        let params = rmcp::model::CallToolRequestParams::new(self.mcp_tool_name.clone())
+            .with_arguments(arguments);
 
         // Race MCP call against cancellation (matches codebase pattern in
         // collect_with_observer and all stream adapters)

@@ -411,6 +411,10 @@ impl Provider for OpenAiProvider {
         &self,
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
+        #[allow(
+            clippy::expect_used,
+            reason = "listed OpenAI model IDs are hardcoded valid constants"
+        )]
         Box::pin(async move {
             // All model IDs below are hardcoded valid strings
             Ok(vec![
@@ -452,6 +456,10 @@ struct StreamState {
 }
 
 /// Parse an OpenAI streaming chunk
+#[allow(
+    clippy::expect_used,
+    reason = "fallback tool name is a hardcoded valid sentinel"
+)]
 fn parse_openai_chunk(
     response: async_openai::types::CreateChatCompletionStreamResponse,
     state: &mut StreamState,

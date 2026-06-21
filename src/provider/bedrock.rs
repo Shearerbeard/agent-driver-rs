@@ -411,6 +411,10 @@ impl Provider for BedrockProvider {
         &self,
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
+        #[allow(
+            clippy::expect_used,
+            reason = "listed Bedrock model IDs are hardcoded valid constants"
+        )]
         Box::pin(async move {
             // All model IDs below are hardcoded valid strings
             Ok(vec![
@@ -478,6 +482,10 @@ fn is_tool_result(block: &BedrockContentBlock) -> bool {
 }
 
 /// Parse a Bedrock streaming event
+#[allow(
+    clippy::expect_used,
+    reason = "fallback tool name is a hardcoded valid sentinel"
+)]
 fn parse_bedrock_event(
     event: aws_sdk_bedrockruntime::types::ConverseStreamOutput,
     state: &mut StreamState,

@@ -321,6 +321,10 @@ impl Provider for OllamaProvider {
         &self,
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
+        #[allow(
+            clippy::expect_used,
+            reason = "fallback Ollama model IDs are hardcoded valid constants"
+        )]
         Box::pin(async move {
             // Query Ollama for local models
             match self.client.list_local_models().await {
@@ -404,6 +408,10 @@ impl StreamState {
 ///
 /// Ollama delivers tool calls fully-formed in the final chunk (`done: true`).
 /// Text and thinking content stream incrementally across chunks.
+#[allow(
+    clippy::expect_used,
+    reason = "fallback tool name is a hardcoded valid sentinel"
+)]
 fn parse_ollama_response(
     response: ollama_rs::generation::chat::ChatMessageResponse,
     state: &mut StreamState,

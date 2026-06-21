@@ -108,6 +108,10 @@ impl McpConnection {
     }
 
     /// Discover available tools from the MCP server
+    #[allow(
+        clippy::expect_used,
+        reason = "MCP connection name is validated before discovery and reused as tool source metadata"
+    )]
     pub async fn discover_tools(&self) -> Result<Vec<DynTool>, McpToolError> {
         let mcp_tools =
             self.service

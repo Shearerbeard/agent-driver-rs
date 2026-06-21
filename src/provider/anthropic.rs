@@ -237,6 +237,10 @@ impl Provider for AnthropicProvider {
         &self,
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
+        #[allow(
+            clippy::expect_used,
+            reason = "listed Anthropic model IDs are hardcoded valid constants"
+        )]
         Box::pin(async move {
             // All model IDs below are hardcoded valid strings
             Ok(vec![
@@ -292,6 +296,10 @@ struct StreamState {
 }
 
 /// Parse an Anthropic SSE event
+#[allow(
+    clippy::expect_used,
+    reason = "fallback tool name is a hardcoded valid sentinel"
+)]
 fn parse_anthropic_event(
     data: &str,
     state: &mut StreamState,

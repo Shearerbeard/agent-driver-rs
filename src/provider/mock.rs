@@ -4,6 +4,11 @@
 //! `complete_stream()` call. Helper functions create the standard event sequences
 //! for text and tool-call responses.
 
+#![allow(
+    clippy::expect_used,
+    reason = "mock provider panics identify invalid test fixtures or exhausted test queues"
+)]
+
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Mutex;

@@ -315,6 +315,10 @@ impl Provider for OpenRouterProvider {
         &self,
         _ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
+        #[allow(
+            clippy::expect_used,
+            reason = "listed OpenRouter model IDs are hardcoded valid constants"
+        )]
         Box::pin(async move {
             // All model IDs below are hardcoded valid strings
             Ok(vec![
@@ -391,6 +395,10 @@ struct StreamState {
 }
 
 /// Parse an OpenRouter SSE event (OpenAI-compatible format)
+#[allow(
+    clippy::expect_used,
+    reason = "fallback tool name is a hardcoded valid sentinel"
+)]
 fn parse_openrouter_event(
     data: &str,
     state: &mut StreamState,

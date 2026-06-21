@@ -248,3 +248,4 @@ unnecessary_filter_map = { level = "deny", priority = 127 }
 unnecessary_lazy_evaluations = { level = "deny", priority = 127 }
 unnecessary_sort_by = { level = "deny", priority = 127 }
 unnecessary_to_owned = { level = "deny", priority = 127 }
+unwrap_used = { level = "deny", priority = 127 }

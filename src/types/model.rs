@@ -104,8 +104,10 @@ impl std::fmt::Display for MaxTokens {
 
 impl Default for MaxTokens {
     fn default() -> Self {
-        // Safe: 4096 is non-zero
-        Self(NonZeroU32::new(4096).unwrap())
+        let Some(tokens) = NonZeroU32::new(4096) else {
+            unreachable!("4096 is non-zero")
+        };
+        Self(tokens)
     }
 }
 

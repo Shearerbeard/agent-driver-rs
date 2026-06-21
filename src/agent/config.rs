@@ -38,7 +38,10 @@ impl std::fmt::Display for MaxToolDepth {
 
 impl Default for MaxToolDepth {
     fn default() -> Self {
-        Self(NonZeroU32::new(25).unwrap())
+        let Some(depth) = NonZeroU32::new(25) else {
+            unreachable!("25 is non-zero")
+        };
+        Self(depth)
     }
 }
 

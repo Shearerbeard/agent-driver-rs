@@ -1,4 +1,4 @@
-.PHONY: check build test clippy clippy-tests fmt fmt-fix bench clean
+.PHONY: check build test clippy clippy-tests fmt fmt-fix unused-deps bench clean
 
 # Default target
 check: fmt clippy test
@@ -26,6 +26,10 @@ fmt:
 # Format fix
 fmt-fix:
 	cargo fmt
+
+# Detect unused direct dependencies
+unused-deps:
+	cargo shear
 
 # Run benchmarks
 bench:

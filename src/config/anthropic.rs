@@ -65,8 +65,8 @@ impl AnthropicConfig {
             }
         })?);
 
-        let model_str =
-            std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
+        let model_str = std::env::var("ANTHROPIC_MODEL")
+            .unwrap_or_else(|_| "claude-sonnet-4-5-20250929".into());
 
         let max_tokens = std::env::var("ANTHROPIC_MAX_TOKENS")
             .ok()
@@ -137,6 +137,8 @@ pub enum WellKnownAnthropicModel {
     ClaudeOpus4_20250514,
     #[serde(rename = "claude-sonnet-4-20250514")]
     ClaudeSonnet4_20250514,
+    #[serde(rename = "claude-sonnet-4-5-20250929")]
+    ClaudeSonnet4_5_20250929,
     #[serde(rename = "claude-3-5-haiku-20241022")]
     ClaudeHaiku3_5_20241022,
 }
@@ -148,6 +150,7 @@ impl AnthropicModel {
             Self::WellKnown(m) => match m {
                 WellKnownAnthropicModel::ClaudeOpus4_20250514 => "claude-opus-4-20250514",
                 WellKnownAnthropicModel::ClaudeSonnet4_20250514 => "claude-sonnet-4-20250514",
+                WellKnownAnthropicModel::ClaudeSonnet4_5_20250929 => "claude-sonnet-4-5-20250929",
                 WellKnownAnthropicModel::ClaudeHaiku3_5_20241022 => "claude-3-5-haiku-20241022",
             },
             Self::Custom(s) => s,
@@ -161,6 +164,7 @@ impl AnthropicModel {
                 m,
                 WellKnownAnthropicModel::ClaudeOpus4_20250514
                     | WellKnownAnthropicModel::ClaudeSonnet4_20250514
+                    | WellKnownAnthropicModel::ClaudeSonnet4_5_20250929
             ),
             Self::Custom(s) => s.contains("claude-opus-4") || s.contains("claude-sonnet-4"),
         }
@@ -169,7 +173,7 @@ impl AnthropicModel {
 
 impl Default for AnthropicModel {
     fn default() -> Self {
-        Self::WellKnown(WellKnownAnthropicModel::ClaudeSonnet4_20250514)
+        Self::WellKnown(WellKnownAnthropicModel::ClaudeSonnet4_5_20250929)
     }
 }
 
@@ -188,8 +192,8 @@ mod tests {
     #[test]
     fn model_as_str() {
         assert_eq!(
-            AnthropicModel::WellKnown(WellKnownAnthropicModel::ClaudeSonnet4_20250514).as_str(),
-            "claude-sonnet-4-20250514"
+            AnthropicModel::WellKnown(WellKnownAnthropicModel::ClaudeSonnet4_5_20250929).as_str(),
+            "claude-sonnet-4-5-20250929"
         );
         assert_eq!(
             AnthropicModel::Custom("claude-3-opus".into()).as_str(),

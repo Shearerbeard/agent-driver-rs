@@ -35,6 +35,7 @@ pub enum BedrockModel {
     ClaudeSonnet4,
     #[default]
     ClaudeSonnet4_5,
+    ClaudeSonnet4_6,
     ClaudeOpus4,
     ClaudeOpus4_5,
     ClaudeHaiku4_5,
@@ -50,6 +51,7 @@ impl BedrockModel {
         match self {
             Self::ClaudeSonnet4 => "anthropic.claude-sonnet-4-20250514-v1:0",
             Self::ClaudeSonnet4_5 => "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            Self::ClaudeSonnet4_6 => "us.anthropic.claude-sonnet-4-6",
             Self::ClaudeOpus4 => "anthropic.claude-opus-4-1-20250805-v1:0",
             Self::ClaudeOpus4_5 => "anthropic.claude-opus-4-5-20251101-v1:0",
             Self::ClaudeHaiku4_5 => "anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -63,6 +65,7 @@ impl BedrockModel {
         match self {
             Self::ClaudeSonnet4 => "claude-sonnet-4",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4.5",
+            Self::ClaudeSonnet4_6 => "claude-sonnet-4.6",
             Self::ClaudeOpus4 => "claude-opus-4",
             Self::ClaudeOpus4_5 => "claude-opus-4.5",
             Self::ClaudeHaiku4_5 => "claude-haiku-4.5",
@@ -84,6 +87,7 @@ impl BedrockConfig {
         let model = match model_str.as_str() {
             "claude-sonnet-4" => BedrockModel::ClaudeSonnet4,
             "claude-sonnet-4.5" => BedrockModel::ClaudeSonnet4_5,
+            "claude-sonnet-4.6" => BedrockModel::ClaudeSonnet4_6,
             "claude-opus-4" => BedrockModel::ClaudeOpus4,
             "claude-opus-4.5" => BedrockModel::ClaudeOpus4_5,
             "claude-haiku-4.5" => BedrockModel::ClaudeHaiku4_5,

@@ -1,6 +1,6 @@
 # TODO - agent-driver-rs
 
-> Last reviewed: 2026-06-20. This is the canonical active roadmap. Historical
+> Last reviewed: 2026-06-21. This is the canonical active roadmap. Historical
 > handoffs such as `docs/next-session.md` are snapshots, not active planning
 > sources. ADR wave details live in [docs/adr/README.md](docs/adr/README.md);
 > longer-range phase mapping lives in [docs/internal/agent-driver-roadmap.md](docs/internal/agent-driver-roadmap.md).
@@ -108,6 +108,13 @@ echo "What is 2+2? Think about it first." | PROVIDER=anthropic cargo run --featu
 
 These can run alongside any wave:
 
+### Next Session: Rust Toolchain Modernization
+- [ ] **Set current Rust/MSRV policy**: decide and record the minimum supported Rust version before bumping SDKs that now require newer compilers. Current local toolchain is `rustc 1.93.0-nightly`; latest AWS SDK crates require Rust 1.91.1.
+- [ ] **Upgrade to Rust edition 2024**: run the migration with `make check` as the exit gate. Track idiom and lint fallout in the same slice.
+- [ ] **Revisit ADR-0007 after edition migration**: decide whether deferred items (`thiserror` 2, Dylint, stricter lint waves) still belong after the toolchain bump.
+- [ ] **Modernize `async-openai` after edition work**: evaluate/migrate from locked `async-openai 0.28.3` toward current `0.41.x`; latest versions remove the transitive `backoff` dependency but may require OpenAI provider API changes.
+- [ ] **Update AWS SDK crates after MSRV decision**: current lock has `aws-sdk-bedrockruntime 1.124.0` / `aws-config 1.8.13`; latest observed versions were `1.135.0` / `1.8.18` and require Rust 1.91.1.
+
 ### Tier 0: Usability and Documentation Hygiene (ADR-0007 audit follow-up)
 - [x] ADR-0007: Codex-Style Lint & Tooling Adoption drafted and indexed
 - [x] Fix README/CLAUDE/manual-testing provider-default inconsistency (Anthropic default, Bedrock production smoke path)
@@ -115,13 +122,13 @@ These can run alongside any wave:
 - [x] Mark `TODO.md` as canonical active roadmap and demote `docs/next-session.md` to historical handoff snapshot
 - [x] Add `CHANGELOG.md`
 - [x] Add minimal CI compile workflow for the public-dependency feature set (excludes `schema-sanitize` private git dependency)
-- [ ] Next: Tier 1 Layer A — add `clippy.toml` with tokio await-holding guard rules
+- [x] Add ADR-0007 clippy, cargo-deny, and cargo-shear gates
 
 ### Tier 1: ADR-0007 — Codex-Style Lint & Tooling Adoption
-- [ ] Layer A: `clippy.toml` (`await-holding-invalid-types`, test-only unwrap/expect allowances, anti-slop methods)
-- [ ] Layer B: promote codex core clippy set to `deny`, one lint per commit
-- [ ] Layer C: add `deny.toml`; pin `mcp-openai-bridge` to an immutable `rev`
-- [ ] Layer D: add cargo-shear unused-dependency check
+- [x] Layer A: `clippy.toml` (`await-holding-invalid-types`, test-only unwrap/expect allowances, anti-slop methods)
+- [x] Layer B: promote codex core clippy set to `deny`, one lint per commit
+- [x] Layer C: add `deny.toml`; pin `mcp-openai-bridge` to an immutable `rev`
+- [x] Layer D: add cargo-shear unused-dependency check
 
 ### Phase 1: Aura Compatibility
 - [ ] Sequential tool execution config (`sequential_tool_execution: bool` in `AgentLoopConfig`)

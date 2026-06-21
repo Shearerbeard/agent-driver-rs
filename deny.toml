@@ -1,0 +1,46 @@
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0384", reason = "instant is unmaintained; pulled via backoff v0.4.0 used directly and by async-openai; remove when retry code and async-openai migrate away from backoff" },
+    { id = "RUSTSEC-2025-0012", reason = "backoff is unmaintained; direct retry dependency and async-openai transitive; remove after migrating direct retry code to a maintained crate and async-openai no longer pulls backoff" },
+    { id = "RUSTSEC-2025-0052", reason = "async-std is discontinued; pulled transitively by opentelemetry_sdk 0.27.1; remove when OTel stack no longer pulls async-std" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 is pulled by the AWS SDK rustls 0.21 stack; newer rustls-webpki 0.103.x in this graph has been updated; remove when AWS SDK drops the older rustls stack" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 is pulled by the AWS SDK rustls 0.21 stack; newer rustls-webpki 0.103.x in this graph has been updated; remove when AWS SDK drops the older rustls stack" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 is pulled by the AWS SDK rustls 0.21 stack; crate does not directly parse CRLs; remove when AWS SDK drops the older rustls stack" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+name = "ollama-rs"
+version = "0.3.3"
+expression = "MIT"
+license-files = [{ path = "LICENSE.md", hash = 0x630febd2 }]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    "ssh://git@github.com/example-org/mcp-openai-bridge.git",
+]

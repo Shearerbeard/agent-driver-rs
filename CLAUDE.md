@@ -189,12 +189,15 @@ When proposing a significant architectural change (new subsystem, protocol integ
 
 **Current Priorities (in order):**
 
-1. **ADR-0002** (Wave 1): Fix thinking/reasoning — signature loss (multi-turn broken), Bedrock thinking, Anthropic adaptive mode, OpenAI dead config
-2. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
-3. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
-4. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
-5. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
-6. **ADR-0007** (parallel): Codex-style lint/tooling — `clippy.toml`, `deny.toml`, cargo-shear
+1. **Toolchain modernization** (next session): set current Rust/MSRV policy, then migrate to edition 2024 with `make check` kept green
+2. **Dependency modernization after toolchain**: evaluate/migrate `async-openai` from locked `0.28.3` toward current `0.41.x`; latest versions remove `backoff` but may require provider API changes
+3. **AWS SDK update after MSRV decision**: current lock uses `aws-sdk-bedrockruntime 1.124.0` / `aws-config 1.8.13`; latest observed versions require Rust 1.91.1
+4. **ADR-0002** (Wave 1): Fix thinking/reasoning — signature loss (multi-turn broken), Bedrock thinking, Anthropic adaptive mode, OpenAI dead config
+5. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
+6. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
+7. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
+8. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans
+9. **ADR-0007** (parallel): Codex-style lint/tooling — continue deferred items after edition 2024 migration (`thiserror` 2, Dylint, stricter lint waves)
 
 **Completed:**
 

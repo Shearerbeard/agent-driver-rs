@@ -2,6 +2,7 @@
 name = "agent-driver-rs"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [features]
 default = ["anthropic", "openai", "openrouter"]
@@ -57,7 +58,7 @@ aws-config = { version = "1", optional = true }
 aws-smithy-types = { version = "1", optional = true }
 ollama-rs = { version = "0.3", features = ["stream"], optional = true }
 rmcp = { version = "0.14", features = ["client", "transport-child-process"], optional = true }
-mcp-openai-bridge = { git = "ssh://git@github.com/example-org/mcp-openai-bridge.git", default-features = false, optional = true }
+mcp-openai-bridge = { git = "ssh://git@github.com/example-org/mcp-openai-bridge.git", rev = "b505bfe2da648b02b598ea2b29e466ccb27cfd83", default-features = false, optional = true }
 
 # OpenTelemetry for Phoenix (optional)
 opentelemetry = { version = "0.27", features = ["trace"], optional = true }

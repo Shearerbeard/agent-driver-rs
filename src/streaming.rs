@@ -141,7 +141,7 @@ struct PendingToolUse {
 ///
 /// let mut response = CollectedResponse::new();
 /// response.apply_delta(StreamDelta::TextDelta { text: "Hello!".into() });
-/// response.finalize_block(ContentBlockType::Text);
+/// response.finalize_block(0, ContentBlockType::Text);
 /// assert_eq!(response.text(), "Hello!");
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -153,13 +153,23 @@ pub struct CollectedResponse {
     // Internal: accumulation state for streaming
     pending_text: String,
     pending_thinking: String,
-    pending_tool_use: Option<PendingToolUse>,
+    pending_tool_uses: HashMap<ToolCallId, PendingToolUse>,
+    pending_tool_index: Option<usize>,
+    tool_block_indices: HashMap<usize, ToolCallId>,
 }
 
 impl CollectedResponse {
     /// Create an empty response
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record that a `ContentBlockStart` with a tool-use block type was seen
+    /// at the given index. The next `ToolUseStart` delta will be associated
+    /// with this index so that a later `ContentBlockStop` at the same index
+    /// finalizes the correct pending tool.
+    pub fn start_tool_block(&mut self, index: usize) {
+        self.pending_tool_index = Some(index);
     }
 
     /// Apply a stream delta to accumulate content
@@ -172,11 +182,15 @@ impl CollectedResponse {
                 self.pending_thinking.push_str(&thinking);
             }
             StreamDelta::ToolUseStart { id, name } => {
-                // If there's already a pending tool use, finalize it first.
-                // This handles parallel tool calls from providers that don't
-                // emit ContentBlockStop between tool calls (e.g., OpenRouter).
-                if let Some(prev) = self.pending_tool_use.take() {
-                    // Fallback to empty object if accumulated JSON fragments are incomplete.
+                // Associate the tool id with the most recently started tool-use
+                // block index so we can finalize the right tool when the matching
+                // ContentBlockStop arrives. If a tool with the same id is already
+                // pending, finalize it defensively (should not happen in normal
+                // provider event streams).
+                if let Some(index) = self.pending_tool_index.take() {
+                    self.tool_block_indices.insert(index, id.clone());
+                }
+                if let Some(prev) = self.pending_tool_uses.remove(&id) {
                     let input = serde_json::from_str(&prev.input_json)
                         .unwrap_or_else(|_| serde_json::json!({}));
                     self.content.push(ContentBlock::ToolUse {
@@ -185,14 +199,18 @@ impl CollectedResponse {
                         input,
                     });
                 }
-                self.pending_tool_use = Some(PendingToolUse {
+                let pending_id = id.clone();
+                self.pending_tool_uses.insert(
                     id,
-                    name,
-                    input_json: String::new(),
-                });
+                    PendingToolUse {
+                        id: pending_id,
+                        name,
+                        input_json: String::new(),
+                    },
+                );
             }
-            StreamDelta::ToolInputDelta { partial_json, .. } => {
-                if let Some(ref mut pending) = self.pending_tool_use {
+            StreamDelta::ToolInputDelta { id, partial_json } => {
+                if let Some(pending) = self.pending_tool_uses.get_mut(&id) {
                     pending.input_json.push_str(&partial_json);
                 }
             }
@@ -203,7 +221,7 @@ impl CollectedResponse {
     }
 
     /// Finalize a content block (called on ContentBlockStop)
-    pub fn finalize_block(&mut self, block_type: ContentBlockType) {
+    pub fn finalize_block(&mut self, index: usize, block_type: ContentBlockType) {
         match block_type {
             ContentBlockType::Text if !self.pending_text.is_empty() => {
                 self.content.push(ContentBlock::Text {
@@ -216,16 +234,18 @@ impl CollectedResponse {
                 });
             }
             ContentBlockType::ToolUse => {
-                if let Some(pending) = self.pending_tool_use.take() {
-                    // Fallback to empty object if accumulated JSON fragments are incomplete
-                    // (e.g., stream interrupted mid-tool-input).
-                    let input = serde_json::from_str(&pending.input_json)
-                        .unwrap_or_else(|_| serde_json::json!({}));
-                    self.content.push(ContentBlock::ToolUse {
-                        id: pending.id,
-                        name: pending.name,
-                        input,
-                    });
+                if let Some(id) = self.tool_block_indices.remove(&index) {
+                    if let Some(pending) = self.pending_tool_uses.remove(&id) {
+                        // Fallback to empty object if accumulated JSON fragments are incomplete
+                        // (e.g., stream interrupted mid-tool-input).
+                        let input = serde_json::from_str(&pending.input_json)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        self.content.push(ContentBlock::ToolUse {
+                            id: pending.id,
+                            name: pending.name,
+                            input,
+                        });
+                    }
                 }
             }
             // Guard-failed fallthrough: empty pending text/thinking
@@ -249,7 +269,7 @@ impl CollectedResponse {
                 text: std::mem::take(&mut self.pending_thinking),
             });
         }
-        if let Some(pending) = self.pending_tool_use.take() {
+        for (_, pending) in std::mem::take(&mut self.pending_tool_uses) {
             // Fallback to empty object if accumulated JSON fragments are incomplete
             // (e.g., stream ended without explicit ContentBlockStop).
             let input =
@@ -421,7 +441,7 @@ fn parse_embedded_tool_calls(text: &str, counter: &mut u32) -> (Vec<ContentBlock
                 let candidate = &trimmed[pos..];
                 if let Some(block) = try_parse_tool_call_json(candidate, counter) {
                     tool_calls.push(block);
-                    remaining = trimmed[..pos].to_string();
+                    remaining = trimmed[..pos].to_owned();
                     break;
                 }
             }
@@ -571,7 +591,7 @@ impl StreamHandle {
         let Self {
             mut stream,
             cancellation,
-            correlation_id: _,
+            correlation_id,
         } = self;
 
         let mut response = CollectedResponse::default();
@@ -583,6 +603,7 @@ impl StreamHandle {
                 biased; // Check cancellation first
 
                 _ = cancellation.cancelled() => {
+                    tracing::debug!(correlation_id = %correlation_id, "stream collect cancelled");
                     return Err(StreamError::Cancelled);
                 }
 
@@ -591,13 +612,16 @@ impl StreamHandle {
                         Some(Ok(event)) => match event {
                             StreamEvent::ContentBlockStart { index, block_type } => {
                                 block_types.insert(index, block_type);
+                                if block_type == ContentBlockType::ToolUse {
+                                    response.start_tool_block(index);
+                                }
                             }
                             StreamEvent::Delta(delta) => {
                                 response.apply_delta(delta);
                             }
                             StreamEvent::ContentBlockStop { index } => {
                                 if let Some(block_type) = block_types.remove(&index) {
-                                    response.finalize_block(block_type);
+                                    response.finalize_block(index, block_type);
                                 }
                             }
                             StreamEvent::BlockComplete { .. } => {
@@ -610,6 +634,7 @@ impl StreamHandle {
                             }
                             StreamEvent::Started { .. } => {}
                             StreamEvent::Error { error } => {
+                                tracing::debug!(correlation_id = %correlation_id, ?error, "stream collect error");
                                 return Err(error);
                             }
                         },
@@ -664,7 +689,7 @@ mod tests {
         response.apply_delta(StreamDelta::TextDelta {
             text: "world!".into(),
         });
-        response.finalize_block(ContentBlockType::Text);
+        response.finalize_block(0, ContentBlockType::Text);
 
         assert_eq!(response.text(), "Hello world!");
     }
@@ -675,7 +700,7 @@ mod tests {
         response.apply_delta(StreamDelta::ThinkingDelta {
             thinking: "Let me think...".into(),
         });
-        response.finalize_block(ContentBlockType::Thinking);
+        response.finalize_block(0, ContentBlockType::Thinking);
 
         assert_eq!(response.thinking(), "Let me think...");
     }
@@ -686,12 +711,13 @@ mod tests {
     #[test]
     fn tool_use_with_empty_input_produces_empty_object() {
         let mut response = CollectedResponse::new();
+        response.start_tool_block(0);
         response.apply_delta(StreamDelta::ToolUseStart {
             id: ToolCallId::new("call_empty"),
             name: ToolName::new("list_dirs").unwrap(),
         });
         // No ToolInputDelta — simulates a tool with no arguments
-        response.finalize_block(ContentBlockType::ToolUse);
+        response.finalize_block(0, ContentBlockType::ToolUse);
 
         let tool_uses = response.tool_uses();
         assert_eq!(tool_uses.len(), 1);
@@ -730,6 +756,7 @@ mod tests {
     #[test]
     fn collected_response_tool_use() {
         let mut response = CollectedResponse::new();
+        response.start_tool_block(0);
         response.apply_delta(StreamDelta::ToolUseStart {
             id: ToolCallId::new("call_123"),
             name: ToolName::new("read_file").unwrap(),
@@ -738,13 +765,113 @@ mod tests {
             id: ToolCallId::new("call_123"),
             partial_json: r#"{"path": "/test"}"#.into(),
         });
-        response.finalize_block(ContentBlockType::ToolUse);
+        response.finalize_block(0, ContentBlockType::ToolUse);
 
         assert!(response.has_tool_use());
         let tool_uses = response.tool_uses();
         assert_eq!(tool_uses.len(), 1);
         assert_eq!(tool_uses[0].0.as_str(), "call_123");
         assert_eq!(tool_uses[0].1.as_str(), "read_file");
+    }
+
+    /// Parallel tool calls must accumulate JSON fragments by their ToolCallId,
+    /// not by arrival order. This regression test sends two tool calls with
+    /// interleaved deltas and asserts each tool receives its own arguments.
+    #[test]
+    fn parallel_tool_calls_accumulate_by_id() {
+        let mut response = CollectedResponse::new();
+
+        // Provider starts two tool-use blocks.
+        response.start_tool_block(0);
+        response.apply_delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new("call_a"),
+            name: ToolName::new("read_file").unwrap(),
+        });
+        response.start_tool_block(1);
+        response.apply_delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new("call_b"),
+            name: ToolName::new("list_dir").unwrap(),
+        });
+
+        // Deltas arrive out of order (B then A).
+        response.apply_delta(StreamDelta::ToolInputDelta {
+            id: ToolCallId::new("call_b"),
+            partial_json: r#"{"path": "/tmp"}"#.into(),
+        });
+        response.apply_delta(StreamDelta::ToolInputDelta {
+            id: ToolCallId::new("call_a"),
+            partial_json: r#"{"path": "/test.txt"}"#.into(),
+        });
+
+        // Both blocks stop.
+        response.finalize_block(0, ContentBlockType::ToolUse);
+        response.finalize_block(1, ContentBlockType::ToolUse);
+
+        let tool_uses = response.tool_uses();
+        assert_eq!(tool_uses.len(), 2);
+
+        let a = tool_uses
+            .iter()
+            .find(|(id, _, _)| id.as_str() == "call_a")
+            .expect("call_a should be present");
+        assert_eq!(a.1.as_str(), "read_file");
+        assert_eq!(a.2, &serde_json::json!({"path": "/test.txt"}));
+
+        let b = tool_uses
+            .iter()
+            .find(|(id, _, _)| id.as_str() == "call_b")
+            .expect("call_b should be present");
+        assert_eq!(b.1.as_str(), "list_dir");
+        assert_eq!(b.2, &serde_json::json!({"path": "/tmp"}));
+    }
+
+    /// If a provider emits a second ToolUseStart with the same id before the
+    /// first one was finalized, the first pending tool is flushed defensively
+    /// and the new one takes its place. This guards against malformed or
+    /// interleaved provider event streams.
+    #[test]
+    fn duplicate_tool_use_start_defensively_finalizes_prior() {
+        let mut response = CollectedResponse::new();
+
+        // First tool-use block starts and receives partial input.
+        response.start_tool_block(0);
+        response.apply_delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new("call_a"),
+            name: ToolName::new("read_file").unwrap(),
+        });
+        response.apply_delta(StreamDelta::ToolInputDelta {
+            id: ToolCallId::new("call_a"),
+            partial_json: r#"{"path": "/first"}"#.into(),
+        });
+
+        // A second block starts and re-uses the same id. The prior pending tool
+        // should be finalized immediately so its input is not lost.
+        response.start_tool_block(1);
+        response.apply_delta(StreamDelta::ToolUseStart {
+            id: ToolCallId::new("call_a"),
+            name: ToolName::new("read_file").unwrap(),
+        });
+        response.apply_delta(StreamDelta::ToolInputDelta {
+            id: ToolCallId::new("call_a"),
+            partial_json: r#"{"path": "/second"}"#.into(),
+        });
+        response.finalize_block(1, ContentBlockType::ToolUse);
+
+        let tool_uses = response.tool_uses();
+        assert_eq!(tool_uses.len(), 2, "both occurrences should be present");
+        assert!(tool_uses.iter().all(|(id, _, _)| id.as_str() == "call_a"));
+
+        let inputs: std::collections::HashSet<String> = tool_uses
+            .iter()
+            .map(|(_, _, input)| input["path"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            inputs,
+            ["/first", "/second"]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect::<std::collections::HashSet<String>>()
+        );
     }
 
     // --- Fallback tool parsing tests ---

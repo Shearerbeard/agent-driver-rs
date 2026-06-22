@@ -115,6 +115,7 @@ impl<'s> AgentLoop<'s> {
     /// 2. If the response contains tool_use blocks, execute them
     /// 3. Continue streaming with tool results in history
     /// 4. Repeat until no more tool calls, or a limit is hit
+    #[must_use = "ignoring this result can silently drop agent loop errors"]
     pub async fn run(self, message: impl Into<String>) -> Result<AgentOutcome, AgentLoopError> {
         #[cfg(feature = "phoenix")]
         let agent_name = self.config.name.as_deref().unwrap_or("agent_loop");
@@ -128,13 +129,6 @@ impl<'s> AgentLoop<'s> {
             None
         };
 
-        #[cfg(feature = "phoenix")]
-        let cancellation = self
-            .cancellation
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| self.session.child_token());
-        #[cfg(not(feature = "phoenix"))]
         let cancellation = self
             .cancellation
             .as_ref()
@@ -150,11 +144,46 @@ impl<'s> AgentLoop<'s> {
             .as_ref()
             .zip(tracer.as_ref())
             .and_then(|(span, t)| span.create_session_span(t, "session.send"));
-        let handle = self.session.send_streaming(message).await?;
+        let handle = match self.session.send_streaming(message).await {
+            Ok(h) => h,
+            Err(e) => {
+                return self
+                    .fail_loop(
+                        LoopStopReason::LoopFailed {
+                            message: e.to_string(),
+                        },
+                        tool_depth,
+                        AgentLoopError::from(e),
+                    )
+                    .await;
+            }
+        };
 
         // Step 2: Collect the first response while forwarding events
         let mut response =
-            collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;
+            match collect_with_observer(handle, &cancellation, self.observer.as_ref()).await {
+                Ok(r) => r,
+                Err(AgentLoopError::Cancelled) => {
+                    return self
+                        .fail_loop(
+                            LoopStopReason::Cancelled,
+                            tool_depth,
+                            AgentLoopError::Cancelled,
+                        )
+                        .await;
+                }
+                Err(e) => {
+                    return self
+                        .fail_loop(
+                            LoopStopReason::LoopFailed {
+                                message: e.to_string(),
+                            },
+                            tool_depth,
+                            e,
+                        )
+                        .await;
+                }
+            };
 
         // Fallback tool parsing: scan text for embedded tool calls
         if self.config.fallback_tool_parsing && !response.has_tool_use() {
@@ -228,7 +257,36 @@ impl<'s> AgentLoop<'s> {
                     .and_then(|name| span.create_tool_span(name))
             });
 
-            let tool_error = execute_tools(self.session, self.observer.as_ref(), &response).await;
+            let tool_error = match execute_tools(
+                self.session,
+                self.observer.as_ref(),
+                &cancellation,
+                &response,
+            )
+            .await
+            {
+                Ok(err) => err,
+                Err(AgentLoopError::Cancelled) => {
+                    return self
+                        .fail_loop(
+                            LoopStopReason::Cancelled,
+                            tool_depth,
+                            AgentLoopError::Cancelled,
+                        )
+                        .await;
+                }
+                Err(e) => {
+                    return self
+                        .fail_loop(
+                            LoopStopReason::LoopFailed {
+                                message: e.to_string(),
+                            },
+                            tool_depth,
+                            e,
+                        )
+                        .await;
+                }
+            };
 
             responses.push(response);
 
@@ -264,9 +322,45 @@ impl<'s> AgentLoop<'s> {
                 .as_ref()
                 .zip(tracer.as_ref())
                 .and_then(|(span, t)| span.create_session_span(t, "session.continue"));
-            let handle = self.session.continue_streaming().await?;
+            let handle = match self.session.continue_streaming().await {
+                Ok(h) => h,
+                Err(e) => {
+                    return self
+                        .fail_loop(
+                            LoopStopReason::LoopFailed {
+                                message: e.to_string(),
+                            },
+                            tool_depth,
+                            AgentLoopError::from(e),
+                        )
+                        .await;
+                }
+            };
 
-            response = collect_with_observer(handle, &cancellation, self.observer.as_ref()).await?;
+            response =
+                match collect_with_observer(handle, &cancellation, self.observer.as_ref()).await {
+                    Ok(r) => r,
+                    Err(AgentLoopError::Cancelled) => {
+                        return self
+                            .fail_loop(
+                                LoopStopReason::Cancelled,
+                                tool_depth,
+                                AgentLoopError::Cancelled,
+                            )
+                            .await;
+                    }
+                    Err(e) => {
+                        return self
+                            .fail_loop(
+                                LoopStopReason::LoopFailed {
+                                    message: e.to_string(),
+                                },
+                                tool_depth,
+                                e,
+                            )
+                            .await;
+                    }
+                };
 
             // Fallback tool parsing: scan text for embedded tool calls
             if self.config.fallback_tool_parsing && !response.has_tool_use() {
@@ -306,6 +400,22 @@ impl<'s> AgentLoop<'s> {
             stop_reason: reason,
             iterations: tool_depth,
         })
+    }
+
+    /// Emit a LoopComplete event for a failed loop and return the error.
+    async fn fail_loop(
+        &self,
+        reason: LoopStopReason,
+        tool_depth: u32,
+        err: AgentLoopError,
+    ) -> Result<AgentOutcome, AgentLoopError> {
+        self.observer
+            .on_event(&AgentEvent::LoopComplete {
+                reason: reason.clone(),
+                total_iterations: tool_depth,
+            })
+            .await;
+        Err(err)
     }
 }
 
@@ -366,13 +476,16 @@ async fn collect_with_observer(
                         match event {
                             StreamEvent::ContentBlockStart { index, block_type } => {
                                 block_types.insert(index, block_type);
+                                if block_type == ContentBlockType::ToolUse {
+                                    response.start_tool_block(index);
+                                }
                             }
                             StreamEvent::Delta(delta) => {
                                 response.apply_delta(delta);
                             }
                             StreamEvent::ContentBlockStop { index } => {
                                 if let Some(block_type) = block_types.remove(&index) {
-                                    response.finalize_block(block_type);
+                                    response.finalize_block(index, block_type);
                                 }
                             }
                             StreamEvent::Completed { metadata } => {
@@ -411,15 +524,19 @@ async fn collect_with_observer(
 /// ordering in both observer events and message history:
 ///
 /// 1. **Emit ToolCallStart** events sequentially (preserves response order)
-/// 2. **Execute all tools concurrently** via `futures::future::join_all`
+/// 2. **Execute all tools concurrently** via `futures::future::join_all`, racing
+///    against the loop cancellation token
 /// 3. **Add results to history & emit ToolCallComplete** sequentially (preserves order)
 ///
-/// Returns `Some((tool_name, error_message))` for the first tool error encountered.
+/// Returns `Ok(Some((tool_name, error_message)))` for the first tool error
+/// encountered, or `Err(AgentLoopError::Cancelled)` if the loop is cancelled
+/// while tools are running.
 async fn execute_tools(
     session: &Session,
     observer: &dyn AgentObserver,
+    cancellation: &CancellationToken,
     response: &CollectedResponse,
-) -> Option<(ToolName, String)> {
+) -> Result<Option<(ToolName, String)>, AgentLoopError> {
     // Collect tool_use blocks in response order
     let tool_calls: Vec<_> = response
         .content
@@ -434,7 +551,7 @@ async fn execute_tools(
         .collect();
 
     if tool_calls.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // Phase 1: Emit all ToolCallStart events (sequential, preserves order)
@@ -448,17 +565,14 @@ async fn execute_tools(
             .await;
     }
 
-    // Phase 2: Execute all tools concurrently via join_all
-    // Create one shared ToolContext from session's child token
-    let tool_ctx = crate::tool::ToolContext::new(session.child_token());
+    // Phase 2: Execute all tools concurrently via join_all, with cancellation
+    // Create one shared ToolContext that is a child of the loop cancellation token
+    let tool_ctx = crate::tool::ToolContext::new(cancellation.child_token());
 
     let futures: Vec<_> = tool_calls
-        .iter()
+        .into_iter()
         .map(|(id, name, input)| {
             let ctx = tool_ctx.clone();
-            let id = id.clone();
-            let name = name.clone();
-            let input = input.clone();
             async move {
                 // Validate input
                 let tool_input = match crate::tool::ToolInput::from_value(input) {
@@ -491,13 +605,17 @@ async fn execute_tools(
         })
         .collect();
 
-    let results = futures::future::join_all(futures).await;
+    let results = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(AgentLoopError::Cancelled),
+        results = futures::future::join_all(futures) => results,
+    };
 
     // Phase 3: Add results to history & emit ToolCallComplete (sequential, preserves order)
     let mut first_error = None;
 
     for (id, name, content, is_error) in results {
-        // Emit observer event first (clones content for the temporary event struct)
+        // Emit observer event first (observer borrows the result)
         observer
             .on_event(&AgentEvent::ToolCallComplete {
                 id: id.clone(),
@@ -508,26 +626,23 @@ async fn execute_tools(
             .await;
 
         if is_error && first_error.is_none() {
-            first_error = Some((name, content.clone()));
+            first_error = Some((name.clone(), content.clone()));
         }
 
-        // Move content into message — avoids the hidden clone from &String → Into<String>
+        // Move content into message
         session
             .add_message(Message::tool_result(id, content, is_error))
             .await;
     }
 
-    first_error
+    Ok(first_error)
 }
 
 /// Add assistant response content to session history
 async fn add_assistant_to_history(session: &Session, response: &CollectedResponse) {
     if !response.content.is_empty() {
         session
-            .add_message(Message::with_content(
-                Role::Assistant,
-                response.content.clone(),
-            ))
+            .add_message(Message::new(Role::Assistant, response.content.clone()))
             .await;
     }
 }
@@ -620,7 +735,7 @@ mod tests {
             let events = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
-                    events: events.clone(),
+                    events: Arc::clone(&events),
                 },
                 events,
             )
@@ -631,25 +746,28 @@ mod tests {
     impl AgentObserver for RecordingObserver {
         async fn on_event(&self, event: &AgentEvent) {
             let tag = match event {
-                AgentEvent::TextDelta { text } => format!("TextDelta:{}", text),
-                AgentEvent::ThinkingDelta { .. } => "ThinkingDelta".to_string(),
+                AgentEvent::TextDelta { text } => format!("TextDelta:{text}"),
+                AgentEvent::ThinkingDelta { .. } => "ThinkingDelta".to_owned(),
                 AgentEvent::IterationStart { iteration } => {
-                    format!("IterationStart:{}", iteration)
+                    format!("IterationStart:{iteration}")
                 }
                 AgentEvent::ToolCallStart { name, .. } => {
-                    format!("ToolCallStart:{}", name)
+                    format!("ToolCallStart:{name}")
                 }
                 AgentEvent::ToolCallComplete { name, .. } => {
-                    format!("ToolCallComplete:{}", name)
+                    format!("ToolCallComplete:{name}")
                 }
                 AgentEvent::IterationComplete { iteration, .. } => {
-                    format!("IterationComplete:{}", iteration)
+                    format!("IterationComplete:{iteration}")
                 }
                 AgentEvent::LoopComplete { reason, .. } => {
-                    format!("LoopComplete:{}", reason)
+                    format!("LoopComplete:{reason}")
                 }
             };
-            self.events.lock().unwrap().push(tag);
+            self.events
+                .lock()
+                .expect("observer events mutex poisoned")
+                .push(tag);
         }
     }
 
@@ -671,7 +789,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_tool_call_round() {
-        use futures::FutureExt;
+        use futures::FutureExt as _;
 
         // First response: tool call, second response: text
         let provider = MockProvider::new(vec![
@@ -713,7 +831,7 @@ mod tests {
 
     #[tokio::test]
     async fn max_tool_depth_enforced() {
-        use futures::FutureExt;
+        use futures::FutureExt as _;
 
         // Provider always returns tool calls — the loop should stop at depth 2
         let provider = MockProvider::new(vec![

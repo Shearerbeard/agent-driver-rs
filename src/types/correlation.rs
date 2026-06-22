@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn correlation_id_display_short() {
         let id = CorrelationId::generate();
-        let display = format!("{}", id);
+        let display = format!("{id}");
         assert_eq!(display.len(), 8);
     }
 

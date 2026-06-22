@@ -59,6 +59,15 @@ impl ToolSchema {
     /// is not enabled.
     #[cfg(feature = "schema-sanitize")]
     pub fn sanitize_openai(&self) -> Self {
+        if self.0.is_empty() {
+            let mut schema = Map::new();
+            schema.insert("type".to_owned(), JsonValue::String("object".to_owned()));
+            schema.insert("properties".to_owned(), JsonValue::Object(Map::new()));
+            schema.insert("required".to_owned(), JsonValue::Array(Vec::new()));
+            schema.insert("additionalProperties".to_owned(), JsonValue::Bool(false));
+            return Self::new(schema);
+        }
+
         let mut val = self.to_value();
         mcp_openai_bridge::fix_empty_root_required(&mut val);
         mcp_openai_bridge::recursive_set_additional_properties_false(&mut val);
@@ -225,14 +234,14 @@ mod tests {
 
     #[test]
     fn mcp_server_name_validation() {
-        assert!(McpServerName::new("my-server").is_ok());
-        assert!(McpServerName::new("").is_err());
+        McpServerName::new("my-server").unwrap();
+        McpServerName::new("").unwrap_err();
     }
 
     #[test]
     fn plugin_id_validation() {
-        assert!(PluginId::new("my-plugin").is_ok());
-        assert!(PluginId::new("").is_err());
+        PluginId::new("my-plugin").unwrap();
+        PluginId::new("").unwrap_err();
     }
 
     #[cfg(feature = "schema-sanitize")]
@@ -286,7 +295,14 @@ mod tests {
     fn sanitize_openai_handles_empty_schema() {
         let schema = ToolSchema::empty();
         let sanitized = schema.sanitize_openai();
-        // Empty schema should survive sanitization without panic
-        assert!(sanitized.inner().is_empty() || !sanitized.inner().is_empty());
+        let val = sanitized.to_value();
+
+        assert_eq!(val.get("type"), Some(&serde_json::json!("object")));
+        assert_eq!(val.get("properties"), Some(&serde_json::json!({})));
+        assert_eq!(val.get("required"), Some(&serde_json::json!([])));
+        assert_eq!(
+            val.get("additionalProperties"),
+            Some(&serde_json::json!(false))
+        );
     }
 }

@@ -46,14 +46,6 @@ impl ToolContext {
     }
 }
 
-impl Default for ToolContext {
-    fn default() -> Self {
-        Self {
-            cancellation: CancellationToken::new(),
-        }
-    }
-}
-
 /// Input for tool execution, wrapping a validated JSON object.
 ///
 /// # Example
@@ -128,6 +120,11 @@ impl ToolInput {
         self.0.get(key)?.as_i64()
     }
 
+    /// Get a floating-point field
+    pub fn get_f64(&self, key: &str) -> Option<f64> {
+        self.0.get(key)?.as_f64()
+    }
+
     /// Get a boolean field
     pub fn get_bool(&self, key: &str) -> Option<bool> {
         self.0.get(key)?.as_bool()
@@ -141,6 +138,10 @@ impl Default for ToolInput {
 }
 
 /// Result of tool execution -- either success with content or an error message.
+///
+/// If you need to return structured data, serialize it to a string and pass it
+/// to [`ToolResult::text`]. The library does not currently carry a separate
+/// structured payload on the wire.
 ///
 /// # Example
 ///
@@ -156,10 +157,7 @@ impl Default for ToolInput {
 #[derive(Debug, Clone)]
 pub enum ToolResult {
     /// Successful execution
-    Success {
-        content: String,
-        structured: Option<JsonValue>,
-    },
+    Success { content: String },
     /// Execution failed
     Error {
         message: String,
@@ -170,18 +168,7 @@ pub enum ToolResult {
 impl ToolResult {
     /// Create a success result with text content
     pub fn text(s: impl Into<String>) -> Self {
-        Self::Success {
-            content: s.into(),
-            structured: None,
-        }
-    }
-
-    /// Create a success result with structured data
-    pub fn json(content: impl Into<String>, data: JsonValue) -> Self {
-        Self::Success {
-            content: content.into(),
-            structured: Some(data),
-        }
+        Self::Success { content: s.into() }
     }
 
     /// Create an error result
@@ -247,45 +234,42 @@ pub trait Tool: Send + Sync {
 /// Type-erased tool
 pub type DynTool = Arc<dyn Tool>;
 
-/// Wrapper for function-based tools
-pub struct FnTool<F>
-where
-    F: Fn(
+type DynToolFn = Box<
+    dyn Fn(
             &ToolInput,
             &ToolContext,
         ) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
         + Send
         + Sync,
-{
+>;
+
+/// Wrapper for function-based tools
+pub struct FnTool {
     definition: ToolDefinition,
-    func: F,
+    func: DynToolFn,
 }
 
-impl<F> FnTool<F>
-where
-    F: Fn(
-            &ToolInput,
-            &ToolContext,
-        ) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
-        + Send
-        + Sync,
-{
+impl FnTool {
     /// Create a new function-based tool
-    pub fn new(definition: ToolDefinition, func: F) -> Self {
-        Self { definition, func }
+    pub fn new<F>(definition: ToolDefinition, func: F) -> Self
+    where
+        F: Fn(
+                &ToolInput,
+                &ToolContext,
+            ) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self {
+            definition,
+            func: Box::new(func),
+        }
     }
 }
 
 #[async_trait]
-impl<F> Tool for FnTool<F>
-where
-    F: Fn(
-            &ToolInput,
-            &ToolContext,
-        ) -> futures::future::BoxFuture<'static, Result<ToolResult, ToolError>>
-        + Send
-        + Sync,
-{
+impl Tool for FnTool {
     fn definition(&self) -> &ToolDefinition {
         &self.definition
     }
@@ -307,6 +291,7 @@ mod tests {
             serde_json::json!({
                 "path": "/test/file.txt",
                 "count": 42,
+                "ratio": 0.5,
                 "enabled": true
             })
             .as_object()
@@ -316,6 +301,7 @@ mod tests {
 
         assert_eq!(input.get_str("path"), Some("/test/file.txt"));
         assert_eq!(input.get_i64("count"), Some(42));
+        assert_eq!(input.get_f64("ratio"), Some(0.5));
         assert_eq!(input.get_bool("enabled"), Some(true));
         assert!(input.get_str("missing").is_none());
     }
@@ -334,10 +320,10 @@ mod tests {
 
     #[test]
     fn tool_input_rejects_non_object_types() {
-        assert!(ToolInput::from_value(serde_json::json!("string")).is_err());
-        assert!(ToolInput::from_value(serde_json::json!(42)).is_err());
-        assert!(ToolInput::from_value(serde_json::json!(true)).is_err());
-        assert!(ToolInput::from_value(serde_json::json!([1, 2])).is_err());
+        ToolInput::from_value(serde_json::json!("string")).unwrap_err();
+        ToolInput::from_value(serde_json::json!(42)).unwrap_err();
+        ToolInput::from_value(serde_json::json!(true)).unwrap_err();
+        ToolInput::from_value(serde_json::json!([1, 2])).unwrap_err();
     }
 
     #[test]
@@ -358,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn fn_tool_execution() {
-        use futures::FutureExt;
+        use futures::FutureExt as _;
 
         let definition = ToolDefinition::new(
             ToolName::new("test_tool").unwrap(),
@@ -371,7 +357,10 @@ mod tests {
         });
 
         let result = tool
-            .execute(&ToolInput::default(), &ToolContext::default())
+            .execute(
+                &ToolInput::default(),
+                &ToolContext::new(CancellationToken::new()),
+            )
             .await
             .unwrap();
         assert_eq!(result.content(), "Hello from tool!");

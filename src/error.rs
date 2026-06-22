@@ -78,6 +78,7 @@ impl fmt::Display for StreamErrorKind {
 
 /// Top-level crate error
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AgentDriverError {
     #[error(transparent)]
     Config(#[from] ConfigError),
@@ -95,15 +96,31 @@ pub enum AgentDriverError {
 
 /// Configuration-related errors
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConfigError {
     #[error("Missing required field: {field}")]
     MissingField { field: &'static str },
     #[error("Invalid value for {field}: {reason}")]
-    InvalidValue { field: &'static str, reason: String },
+    InvalidValue { field: String, reason: String },
     #[error("Environment variable error: {0}")]
     Env(#[from] std::env::VarError),
     #[error("Unknown provider: {0}")]
     UnknownProvider(String),
+}
+
+impl From<TemperatureError> for ConfigError {
+    fn from(err: TemperatureError) -> Self {
+        Self::InvalidValue {
+            field: "temperature".to_owned(),
+            reason: err.to_string(),
+        }
+    }
+}
+
+impl From<std::convert::Infallible> for ConfigError {
+    fn from(never: std::convert::Infallible) -> Self {
+        match never {}
+    }
 }
 
 /// Provider-related errors
@@ -302,6 +319,7 @@ pub enum McpToolError {
 
 /// Task pool errors.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum TaskPoolError {
     #[error(
         "Task pool has been shut down and is no longer accepting new tasks. Create a new TaskPool to spawn more tasks"
@@ -315,6 +333,7 @@ pub enum TaskPoolError {
 
 /// Session-related errors
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SessionError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
@@ -328,6 +347,7 @@ pub enum SessionError {
 
 /// Agent loop errors
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum AgentLoopError {
     #[error(transparent)]
     Session(#[from] SessionError),
@@ -394,6 +414,7 @@ impl AgentLoopError {
 /// OpenTelemetry errors
 #[cfg(feature = "phoenix")]
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum OtelError {
     #[error("Failed to initialize OTEL tracer: {0}")]
     TracerInit(String),
@@ -435,6 +456,7 @@ pub(crate) fn is_content_policy_message(msg: &str) -> bool {
 
 /// Error when constructing a [`ModelId`](crate::types::ModelId).
 #[derive(Debug, Clone, Error)]
+#[non_exhaustive]
 pub enum ModelIdError {
     #[error(
         "Model ID cannot be empty. Provide a model identifier like \"claude-sonnet-4\" or \"gpt-4o\""
@@ -448,15 +470,19 @@ pub enum ModelIdError {
 
 /// Error when constructing a ToolName
 #[derive(Debug, Clone, Error)]
+#[non_exhaustive]
 pub enum ToolNameError {
     #[error("Tool name cannot be empty")]
     Empty,
     #[error("Tool name has invalid format (must be alphanumeric with _, -, or .)")]
     InvalidFormat,
+    #[error("Tool name is too long")]
+    TooLong,
 }
 
 /// Error when constructing a Temperature
 #[derive(Debug, Clone, Error)]
+#[non_exhaustive]
 pub enum TemperatureError {
     #[error("Temperature {0} out of range [0.0, 2.0]")]
     OutOfRange(f32),

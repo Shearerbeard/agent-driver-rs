@@ -160,10 +160,10 @@ mod tests {
 
     #[test]
     fn model_id_valid() {
-        assert!(ModelId::new("claude-sonnet-4-20250514").is_ok());
-        assert!(ModelId::new("gpt-4o").is_ok());
-        assert!(ModelId::new("anthropic/claude-sonnet-4").is_ok());
-        assert!(ModelId::new("llama3.2:3b").is_ok());
+        ModelId::new("claude-sonnet-4-20250514").unwrap();
+        ModelId::new("gpt-4o").unwrap();
+        ModelId::new("anthropic/claude-sonnet-4").unwrap();
+        ModelId::new("llama3.2:3b").unwrap();
     }
 
     #[test]
@@ -184,10 +184,10 @@ mod tests {
 
     #[test]
     fn temperature_valid() {
-        assert!(Temperature::new(0.0).is_ok());
-        assert!(Temperature::new(1.0).is_ok());
-        assert!(Temperature::new(2.0).is_ok());
-        assert!(Temperature::new(-0.1).is_err());
-        assert!(Temperature::new(2.1).is_err());
+        Temperature::new(0.0).unwrap();
+        Temperature::new(1.0).unwrap();
+        Temperature::new(2.0).unwrap();
+        Temperature::new(-0.1).unwrap_err();
+        Temperature::new(2.1).unwrap_err();
     }
 }

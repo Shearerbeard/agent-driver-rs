@@ -389,16 +389,10 @@ struct StreamState {
     usage: Option<TokenUsage>,
     /// Track tool call IDs per index for parallel tool calls
     tool_call_ids: HashMap<usize, String>,
-    /// Track tool names per index for parallel tool calls
-    tool_call_names: HashMap<usize, String>,
     started: bool,
 }
 
 /// Parse an OpenRouter SSE event (OpenAI-compatible format)
-#[allow(
-    clippy::expect_used,
-    reason = "fallback tool name is a hardcoded valid sentinel"
-)]
 fn parse_openrouter_event(
     data: &str,
     state: &mut StreamState,
@@ -443,7 +437,10 @@ fn parse_openrouter_event(
                 "tool_calls" => StopReason::ToolUse,
                 "content_filter" => StopReason::ContentFilter,
                 "function_call" => StopReason::ToolUse,
-                _ => StopReason::EndTurn,
+                other => {
+                    tracing::warn!(finish_reason = other, "Unknown OpenRouter finish reason");
+                    StopReason::EndTurn
+                }
             });
         }
 
@@ -461,7 +458,12 @@ fn parse_openrouter_event(
             // Tool calls
             if let Some(ref tool_calls) = delta.tool_calls {
                 for tc in tool_calls {
-                    let tc_index = tc.index.unwrap_or(0);
+                    let Some(tc_index) = tc.index else {
+                        return Some(Err(StreamError::Deserialize {
+                            message: "OpenRouter tool call delta missing index".to_owned(),
+                            raw_data: Some(data.to_owned()),
+                        }));
+                    };
 
                     // Tool call start: store ID per index
                     if let Some(ref id) = tc.id {
@@ -471,7 +473,15 @@ fn parse_openrouter_event(
                     if let Some(ref function) = tc.function {
                         // Function name (tool start)
                         if let Some(ref name) = function.name {
-                            state.tool_call_names.insert(tc_index, name.clone());
+                            let name = match ToolName::new(name) {
+                                Ok(name) => name,
+                                Err(e) => {
+                                    return Some(Err(StreamError::Deserialize {
+                                        message: format!("invalid OpenRouter tool name: {e}"),
+                                        raw_data: Some(data.to_owned()),
+                                    }));
+                                }
+                            };
 
                             events.push(StreamEvent::ContentBlockStart {
                                 index: tc_index,
@@ -481,10 +491,7 @@ fn parse_openrouter_event(
                             if let Some(id) = state.tool_call_ids.get(&tc_index) {
                                 events.push(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                     id: ToolCallId::new(id),
-                                    // Safety: "unknown" is a valid tool name (alphanumeric)
-                                    name: ToolName::new(name).unwrap_or_else(|_| {
-                                        ToolName::new("unknown").expect("hardcoded valid tool name")
-                                    }),
+                                    name,
                                 }));
                             }
                         }
@@ -652,5 +659,25 @@ mod tests {
     fn parse_malformed_json_returns_none() {
         let mut state = StreamState::default();
         assert!(parse_openrouter_event("not json", &mut state).is_none());
+    }
+
+    #[test]
+    fn parse_tool_call_without_index_errors() {
+        let data = r#"{"id":"gen-123","model":"anthropic/claude-sonnet-4","choices":[{"index":0,"delta":{"tool_calls":[{"id":"call_abc","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}"#;
+
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let err = parse_openrouter_event(data, &mut state)
+            .unwrap()
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            StreamError::Deserialize { message, raw_data: Some(_) }
+                if message == "OpenRouter tool call delta missing index"
+        ));
     }
 }

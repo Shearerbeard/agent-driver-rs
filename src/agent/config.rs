@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn max_tool_depth_zero() {
-        assert!(MaxToolDepth::new(0).is_err());
+        MaxToolDepth::new(0).unwrap_err();
     }
 
     #[test]

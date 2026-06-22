@@ -121,6 +121,8 @@ pub enum LoopStopReason {
         tool_name: ToolName,
         message: String,
     },
+    /// The loop failed because of a session or provider error
+    LoopFailed { message: String },
 }
 
 impl std::fmt::Display for LoopStopReason {
@@ -134,6 +136,9 @@ impl std::fmt::Display for LoopStopReason {
             Self::Cancelled => write!(f, "cancelled"),
             Self::ToolError { tool_name, message } => {
                 write!(f, "tool_error({tool_name}): {message}")
+            }
+            Self::LoopFailed { message } => {
+                write!(f, "loop_failed: {message}")
             }
         }
     }

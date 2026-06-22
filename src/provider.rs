@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use crate::error::ProviderError;
+use crate::error::{ConfigError, ProviderError};
 use crate::streaming::{CollectedResponse, StreamHandle};
 use crate::tool::ToolDefinition;
 use crate::types::{CorrelationId, MaxTokens, Message, ModelId, SystemPrompt, Temperature};
@@ -144,10 +144,14 @@ impl ProviderContext {
         }
     }
 
-    /// Create a child context for sub-operations
+    /// Create a child context for sub-operations.
+    ///
+    /// Inherits the parent's correlation ID and task tracker, but receives a
+    /// fresh cancellation token so the child can be cancelled independently
+    /// while remaining traceable to the original request.
     pub fn child(&self) -> Self {
         Self {
-            correlation_id: CorrelationId::generate(),
+            correlation_id: self.correlation_id,
             cancellation: self.cancellation.child_token(),
             task_tracker: self.task_tracker.clone(),
         }
@@ -156,16 +160,6 @@ impl ProviderContext {
     /// Check if the context is cancelled
     pub fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
-    }
-}
-
-impl Default for ProviderContext {
-    fn default() -> Self {
-        Self {
-            correlation_id: CorrelationId::generate(),
-            cancellation: CancellationToken::new(),
-            task_tracker: TaskTracker::new(),
-        }
     }
 }
 
@@ -189,12 +183,31 @@ pub struct ProviderCapabilities {
 ///
 /// Replaces stringly-typed `id: &'static str` for type-safe matching and display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ProviderKind {
     Anthropic,
     OpenAi,
     Bedrock,
     OpenRouter,
     Ollama,
+}
+
+/// Error returned when a string cannot be parsed as a [`ProviderKind`].
+#[derive(Debug, Clone)]
+pub struct ParseProviderKindError(String);
+
+impl std::fmt::Display for ParseProviderKindError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown provider: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseProviderKindError {}
+
+impl From<ParseProviderKindError> for ConfigError {
+    fn from(err: ParseProviderKindError) -> Self {
+        Self::UnknownProvider(err.0)
+    }
 }
 
 impl std::fmt::Display for ProviderKind {
@@ -210,7 +223,7 @@ impl std::fmt::Display for ProviderKind {
 }
 
 impl std::str::FromStr for ProviderKind {
-    type Err = String;
+    type Err = ParseProviderKindError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -219,7 +232,7 @@ impl std::str::FromStr for ProviderKind {
             "bedrock" => Ok(Self::Bedrock),
             "openrouter" => Ok(Self::OpenRouter),
             "ollama" => Ok(Self::Ollama),
-            other => Err(format!("unknown provider: {other}")),
+            other => Err(ParseProviderKindError(other.to_owned())),
         }
     }
 }
@@ -361,3 +374,37 @@ pub use openrouter::OpenRouterProvider;
 
 #[cfg(feature = "ollama")]
 pub use ollama::OllamaProvider;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_kind_from_str_accepts_known_values() {
+        for (s, expected) in [
+            ("anthropic", ProviderKind::Anthropic),
+            ("openai", ProviderKind::OpenAi),
+            ("bedrock", ProviderKind::Bedrock),
+            ("openrouter", ProviderKind::OpenRouter),
+            ("ollama", ProviderKind::Ollama),
+        ] {
+            assert_eq!(s.parse::<ProviderKind>().unwrap(), expected);
+            // Case-insensitive
+            assert_eq!(s.to_uppercase().parse::<ProviderKind>().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn provider_kind_from_str_rejects_unknown() {
+        let err = "unknown".parse::<ProviderKind>().unwrap_err();
+        assert!(err.to_string().contains("unknown provider"));
+        assert_eq!(err.0, "unknown");
+    }
+
+    #[test]
+    fn parse_provider_kind_error_converts_to_config_error() {
+        let err = "not-a-provider".parse::<ProviderKind>().unwrap_err();
+        let config_err: ConfigError = err.into();
+        assert!(matches!(config_err, ConfigError::UnknownProvider(s) if s == "not-a-provider"));
+    }
+}

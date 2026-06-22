@@ -26,19 +26,26 @@ pub enum Role {
 
 /// Validated tool name
 ///
-/// Tool names must be non-empty and contain only alphanumeric characters,
-/// underscores, hyphens, and dots (for MCP namespaced tools).
+/// Tool names must be non-empty, at most [`MAX_LEN`](ToolName::MAX_LEN) characters,
+/// and contain only alphanumeric characters, underscores, hyphens, and dots
+/// (for MCP namespaced tools).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct ToolName(String);
 
 impl ToolName {
+    /// Maximum allowed length for a tool name.
+    pub const MAX_LEN: usize = 128;
+
     /// Create a new ToolName with validation
     #[must_use = "this returns a Result that should be checked"]
     pub fn new(name: impl Into<String>) -> Result<Self, ToolNameError> {
         let name = name.into();
         if name.is_empty() {
             return Err(ToolNameError::Empty);
+        }
+        if name.chars().count() > Self::MAX_LEN {
+            return Err(ToolNameError::TooLong);
         }
         // Allow alphanumeric, underscore, hyphen, and dot (for MCP namespaced tools like mcp__filesystem__read)
         if !name
@@ -275,11 +282,6 @@ impl Message {
         }
     }
 
-    /// Create a message with arbitrary content blocks
-    pub fn with_content(role: Role, content: Vec<ContentBlock>) -> Self {
-        Self { role, content }
-    }
-
     /// Create a tool result message
     pub fn tool_result(
         tool_use_id: ToolCallId,
@@ -322,10 +324,10 @@ mod tests {
 
     #[test]
     fn tool_name_valid() {
-        assert!(ToolName::new("read_file").is_ok());
-        assert!(ToolName::new("mcp__filesystem__read").is_ok());
-        assert!(ToolName::new("tool-name").is_ok());
-        assert!(ToolName::new("tool.name").is_ok());
+        ToolName::new("read_file").unwrap();
+        ToolName::new("mcp__filesystem__read").unwrap();
+        ToolName::new("tool-name").unwrap();
+        ToolName::new("tool.name").unwrap();
     }
 
     #[test]
@@ -338,6 +340,10 @@ mod tests {
         assert!(matches!(
             ToolName::new("tool@name"),
             Err(ToolNameError::InvalidFormat)
+        ));
+        assert!(matches!(
+            ToolName::new("a".repeat(ToolName::MAX_LEN + 1)),
+            Err(ToolNameError::TooLong)
         ));
     }
 

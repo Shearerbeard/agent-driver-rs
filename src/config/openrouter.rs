@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ConfigError;
 use crate::types::{MaxTokens, Temperature};
 
-use super::common::ApiKey;
+use super::common::{ApiKey, env_parse_opt, env_parse_or_default};
 
 /// OpenRouter configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -29,8 +29,9 @@ pub struct OpenRouterConfig {
 }
 
 /// OpenRouter model specification
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum OpenRouterModel {
     WellKnown(WellKnownOpenRouterModel),
     Custom(String), // e.g., "anthropic/claude-sonnet-4"
@@ -38,6 +39,7 @@ pub enum OpenRouterModel {
 
 /// Well-known OpenRouter models
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WellKnownOpenRouterModel {
     #[serde(rename = "anthropic/claude-sonnet-4")]
     AnthropicClaudeSonnet4,
@@ -70,6 +72,26 @@ impl Default for OpenRouterModel {
     }
 }
 
+impl std::str::FromStr for OpenRouterModel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "anthropic/claude-sonnet-4" => {
+                Self::WellKnown(WellKnownOpenRouterModel::AnthropicClaudeSonnet4)
+            }
+            "openai/gpt-4o" => Self::WellKnown(WellKnownOpenRouterModel::OpenaiGpt4o),
+            "google/gemini-2.0-flash" => {
+                Self::WellKnown(WellKnownOpenRouterModel::GoogleGemini2Flash)
+            }
+            "meta-llama/llama-3.3-70b" => {
+                Self::WellKnown(WellKnownOpenRouterModel::MetaLlama3_3_70b)
+            }
+            other => Self::Custom(other.to_owned()),
+        })
+    }
+}
+
 /// Provider preferences for routing
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ProviderPreferences {
@@ -91,23 +113,18 @@ impl OpenRouterConfig {
             ConfigError::MissingField {
                 field: "OPENROUTER_API_KEY",
             }
-        })?);
+        })?)?;
 
-        let model = OpenRouterModel::Custom(
-            std::env::var("OPENROUTER_MODEL")
-                .unwrap_or_else(|_| "anthropic/claude-sonnet-4".into()),
-        );
+        let model = std::env::var("OPENROUTER_MODEL")
+            .unwrap_or_else(|_| "anthropic/claude-sonnet-4".into())
+            .parse::<OpenRouterModel>()?;
 
-        let max_tokens = std::env::var("OPENROUTER_MAX_TOKENS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .and_then(MaxTokens::new)
+        let max_tokens = MaxTokens::new(env_parse_or_default::<u32>("OPENROUTER_MAX_TOKENS")?)
             .unwrap_or_default();
 
-        let temperature = std::env::var("OPENROUTER_TEMPERATURE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .and_then(|t| Temperature::new(t).ok());
+        let temperature: Option<Temperature> = env_parse_opt::<f32>("OPENROUTER_TEMPERATURE")?
+            .map(Temperature::new)
+            .transpose()?;
 
         Ok(Self {
             api_key,
@@ -124,13 +141,13 @@ impl OpenRouterConfig {
         if let OpenRouterModel::Custom(ref s) = self.model {
             if s.is_empty() {
                 return Err(ConfigError::InvalidValue {
-                    field: "model",
+                    field: "model".to_owned(),
                     reason: "custom model string must not be empty".into(),
                 });
             }
             if !s.contains('/') {
                 return Err(ConfigError::InvalidValue {
-                    field: "model",
+                    field: "model".to_owned(),
                     reason: format!(
                         "OpenRouter model must be in 'provider/model' format, got: {s}"
                     ),
@@ -143,7 +160,7 @@ impl OpenRouterConfig {
             for entry in &prefs.allow {
                 if entry.is_empty() {
                     return Err(ConfigError::InvalidValue {
-                        field: "provider_preferences.allow",
+                        field: "provider_preferences.allow".to_owned(),
                         reason: "entries must not be empty".into(),
                     });
                 }
@@ -151,7 +168,7 @@ impl OpenRouterConfig {
             for entry in &prefs.deny {
                 if entry.is_empty() {
                     return Err(ConfigError::InvalidValue {
-                        field: "provider_preferences.deny",
+                        field: "provider_preferences.deny".to_owned(),
                         reason: "entries must not be empty".into(),
                     });
                 }
@@ -176,5 +193,17 @@ mod tests {
             OpenRouterModel::Custom("custom/model".into()).as_str(),
             "custom/model"
         );
+    }
+
+    #[test]
+    fn model_from_str_recognizes_well_known() {
+        let parsed: OpenRouterModel = "anthropic/claude-sonnet-4".parse().unwrap();
+        assert_eq!(
+            parsed,
+            OpenRouterModel::WellKnown(WellKnownOpenRouterModel::AnthropicClaudeSonnet4)
+        );
+
+        let parsed: OpenRouterModel = "custom/model".parse().unwrap();
+        assert_eq!(parsed, OpenRouterModel::Custom("custom/model".into()));
     }
 }

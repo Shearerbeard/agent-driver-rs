@@ -3,7 +3,7 @@
 //! This module provides:
 //! - `TaskPool` for tracked task spawning
 //! - `TaskHandle` wrapper with correlation tracking
-//! - `TrackedSpawn` trait for convenient spawning
+//! - `spawn_tracked` free function for convenient spawning
 
 mod handle;
 mod pool;
@@ -11,4 +11,4 @@ mod spawn;
 
 pub use handle::TaskHandle;
 pub use pool::TaskPool;
-pub use spawn::TrackedSpawn;
+pub use spawn::spawn_tracked;

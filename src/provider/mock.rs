@@ -339,7 +339,11 @@ pub fn mock_mixed_text_tool_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::StreamExt;
+    use futures::StreamExt as _;
+    use tokio_util::sync::CancellationToken;
+    use tokio_util::task::TaskTracker;
+
+    use crate::types::CorrelationId;
 
     #[tokio::test]
     async fn mock_provider_returns_queued_responses() {
@@ -347,7 +351,11 @@ mod tests {
             mock_text_response("first"),
             mock_text_response("second"),
         ]);
-        let ctx = ProviderContext::default();
+        let ctx = ProviderContext::new(
+            CorrelationId::generate(),
+            CancellationToken::new(),
+            TaskTracker::new(),
+        );
         let request = CompletionRequest::new(ModelId::new("mock-model").unwrap(), vec![]);
 
         let handle1 = provider

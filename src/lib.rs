@@ -56,7 +56,7 @@ pub use tool::{
     ToolResult, ToolSchema, ToolSource,
 };
 
-pub use task::{TaskHandle, TaskPool, TrackedSpawn};
+pub use task::{TaskHandle, TaskPool, spawn_tracked};
 
 pub use provider::{
     BoxedProvider, CompletionConfig, CompletionRequest, Provider, ProviderCapabilities,

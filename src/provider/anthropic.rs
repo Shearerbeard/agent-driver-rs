@@ -78,9 +78,10 @@ impl AnthropicProvider {
 
         // Add temperature
         if let Some(temp) = request.config.temperature {
-            body["temperature"] = JsonValue::Number(
-                serde_json::Number::from_f64(temp.get() as f64).unwrap_or_else(|| 1.into()),
-            );
+            let Some(number) = serde_json::Number::from_f64(temp.get() as f64) else {
+                unreachable!("validated Temperature is finite")
+            };
+            body["temperature"] = JsonValue::Number(number);
         }
 
         // Add stop sequences
@@ -296,10 +297,6 @@ struct StreamState {
 }
 
 /// Parse an Anthropic SSE event
-#[allow(
-    clippy::expect_used,
-    reason = "fallback tool name is a hardcoded valid sentinel"
-)]
 fn parse_anthropic_event(
     data: &str,
     state: &mut StreamState,
@@ -343,13 +340,19 @@ fn parse_anthropic_event(
             // For tool_use, store the ID and emit the start delta
             if block_type == ContentBlockType::ToolUse {
                 if let (Some(id), Some(name)) = (content_block.id, content_block.name) {
+                    let name = match ToolName::new(name) {
+                        Ok(name) => name,
+                        Err(e) => {
+                            return Some(Err(StreamError::Deserialize {
+                                message: format!("invalid Anthropic tool name: {e}"),
+                                raw_data: Some(data.to_owned()),
+                            }));
+                        }
+                    };
                     state.tool_call_ids.insert(index, id.clone());
                     events.push(StreamEvent::Delta(StreamDelta::ToolUseStart {
                         id: ToolCallId::new(id),
-                        // Safety: "unknown" is a valid tool name (alphanumeric)
-                        name: ToolName::new(name).unwrap_or_else(|_| {
-                            ToolName::new("unknown").expect("hardcoded valid tool name")
-                        }),
+                        name,
                     }));
                 }
             }
@@ -376,11 +379,14 @@ fn parse_anthropic_event(
                     if let Some(partial_json) = delta.partial_json {
                         // Look up the tool call ID stored from the preceding
                         // ContentBlockStart event for this block index.
-                        let id = state
-                            .tool_call_ids
-                            .get(&index)
-                            .map(ToolCallId::new)
-                            .unwrap_or_else(|| ToolCallId::new(""));
+                        let Some(id) = state.tool_call_ids.get(&index).map(ToolCallId::new) else {
+                            return Some(Err(StreamError::Deserialize {
+                                message: format!(
+                                    "Anthropic tool input delta for unknown block index {index}"
+                                ),
+                                raw_data: Some(data.to_owned()),
+                            }));
+                        };
                         vec![StreamEvent::Delta(StreamDelta::ToolInputDelta {
                             id,
                             partial_json,
@@ -537,7 +543,6 @@ mod tests {
         let mut state = StreamState::default();
         let result = parse_anthropic_event(data, &mut state);
 
-        assert!(result.is_some());
         let events = result.unwrap().unwrap();
         assert!(!events.is_empty());
         assert!(matches!(events[0], StreamEvent::Started { .. }));
@@ -550,7 +555,6 @@ mod tests {
         let mut state = StreamState::default();
         let result = parse_anthropic_event(data, &mut state);
 
-        assert!(result.is_some());
         let events = result.unwrap().unwrap();
         assert!(!events.is_empty());
         assert!(matches!(
@@ -587,7 +591,7 @@ mod tests {
     fn parse_tool_input_json_delta() {
         let data = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"partial"}}"#;
         let mut state = StreamState::default();
-        state.tool_call_ids.insert(1, "toolu_01abc".to_string());
+        state.tool_call_ids.insert(1, "toolu_01abc".to_owned());
 
         let result = parse_anthropic_event(data, &mut state);
         let events = result.unwrap().unwrap();
@@ -658,7 +662,7 @@ mod tests {
     fn parse_content_block_stop_cleans_tool_id() {
         let data = r#"{"type":"content_block_stop","index":1}"#;
         let mut state = StreamState::default();
-        state.tool_call_ids.insert(1, "toolu_01abc".to_string());
+        state.tool_call_ids.insert(1, "toolu_01abc".to_owned());
         state.current_block_type = Some(ContentBlockType::ToolUse);
 
         let result = parse_anthropic_event(data, &mut state);

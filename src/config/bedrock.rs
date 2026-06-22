@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ConfigError;
 use crate::types::{MaxTokens, Temperature};
 
-use super::common::AwsRegion;
+use super::common::{AwsRegion, env_parse_opt, env_parse_or_default};
 
 /// AWS Bedrock configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -31,6 +31,7 @@ pub struct BedrockConfig {
 /// Bedrock model specification
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum BedrockModel {
     ClaudeSonnet4,
     #[default]
@@ -60,6 +61,14 @@ impl BedrockModel {
         }
     }
 
+    /// Returns true if the model is a cross-region inference profile model.
+    ///
+    /// Modern Claude models such as `claude-sonnet-4.6` require a
+    /// `BEDROCK_INFERENCE_PROFILE` ARN to be configured.
+    pub fn is_cross_region(&self) -> bool {
+        self.model_id().starts_with("us.")
+    }
+
     /// Get a short display name
     pub fn display_name(&self) -> &str {
         match self {
@@ -75,36 +84,41 @@ impl BedrockModel {
     }
 }
 
+impl std::str::FromStr for BedrockModel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "claude-sonnet-4" => Self::ClaudeSonnet4,
+            "claude-sonnet-4.5" => Self::ClaudeSonnet4_5,
+            "claude-sonnet-4.6" => Self::ClaudeSonnet4_6,
+            "claude-opus-4" => Self::ClaudeOpus4,
+            "claude-opus-4.5" => Self::ClaudeOpus4_5,
+            "claude-haiku-4.5" => Self::ClaudeHaiku4_5,
+            "claude-haiku-3.5" | "claude-3.5-haiku" => Self::ClaudeHaiku3_5,
+            other => Self::Custom(other.to_owned()),
+        })
+    }
+}
+
 impl BedrockConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, ConfigError> {
-        let region = std::env::var("AWS_REGION")
-            .map(AwsRegion::new)
-            .unwrap_or_else(|_| AwsRegion::US_EAST_1);
+        let region = match std::env::var("AWS_REGION") {
+            Ok(s) => AwsRegion::new(s)?,
+            Err(_) => AwsRegion::US_EAST_1,
+        };
 
         let model_str =
             std::env::var("BEDROCK_MODEL").unwrap_or_else(|_| "claude-sonnet-4.5".into());
-        let model = match model_str.as_str() {
-            "claude-sonnet-4" => BedrockModel::ClaudeSonnet4,
-            "claude-sonnet-4.5" => BedrockModel::ClaudeSonnet4_5,
-            "claude-sonnet-4.6" => BedrockModel::ClaudeSonnet4_6,
-            "claude-opus-4" => BedrockModel::ClaudeOpus4,
-            "claude-opus-4.5" => BedrockModel::ClaudeOpus4_5,
-            "claude-haiku-4.5" => BedrockModel::ClaudeHaiku4_5,
-            "claude-haiku-3.5" | "claude-3.5-haiku" => BedrockModel::ClaudeHaiku3_5,
-            other => BedrockModel::Custom(other.to_owned()),
-        };
+        let model = model_str.parse::<BedrockModel>()?;
 
-        let max_tokens = std::env::var("BEDROCK_MAX_TOKENS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .and_then(MaxTokens::new)
-            .unwrap_or_default();
+        let max_tokens =
+            MaxTokens::new(env_parse_or_default::<u32>("BEDROCK_MAX_TOKENS")?).unwrap_or_default();
 
-        let temperature = std::env::var("BEDROCK_TEMPERATURE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .and_then(|t| Temperature::new(t).ok());
+        let temperature: Option<Temperature> = env_parse_opt::<f32>("BEDROCK_TEMPERATURE")?
+            .map(Temperature::new)
+            .transpose()?;
 
         let inference_profile = std::env::var("BEDROCK_INFERENCE_PROFILE").ok();
 
@@ -122,11 +136,22 @@ impl BedrockConfig {
         if let BedrockModel::Custom(ref s) = self.model {
             if s.is_empty() {
                 return Err(ConfigError::InvalidValue {
-                    field: "model",
+                    field: "model".to_owned(),
                     reason: "custom model string must not be empty".into(),
                 });
             }
         }
+
+        if self.model.is_cross_region() && self.inference_profile.is_none() {
+            return Err(ConfigError::InvalidValue {
+                field: "inference_profile".to_owned(),
+                reason: format!(
+                    "model {} requires an inference profile ARN",
+                    self.model.display_name()
+                ),
+            });
+        }
+
         Ok(())
     }
 }
@@ -149,5 +174,47 @@ mod tests {
             BedrockModel::Custom("custom-model".into()).model_id(),
             "custom-model"
         );
+    }
+
+    #[test]
+    fn model_from_str_recognizes_well_known() {
+        let parsed: BedrockModel = "claude-sonnet-4.5".parse().unwrap();
+        assert_eq!(parsed, BedrockModel::ClaudeSonnet4_5);
+
+        let parsed: BedrockModel = "custom-model".parse().unwrap();
+        assert_eq!(parsed, BedrockModel::Custom("custom-model".into()));
+    }
+
+    #[test]
+    fn cross_region_model_requires_inference_profile() {
+        let config = BedrockConfig {
+            region: AwsRegion::US_EAST_1,
+            model: BedrockModel::ClaudeSonnet4_6,
+            max_tokens: crate::types::MaxTokens::new(100).unwrap(),
+            temperature: None,
+            inference_profile: None,
+        };
+        config.validate().unwrap_err();
+
+        let config = BedrockConfig {
+            region: AwsRegion::US_EAST_1,
+            model: BedrockModel::ClaudeSonnet4_6,
+            max_tokens: crate::types::MaxTokens::new(100).unwrap(),
+            temperature: None,
+            inference_profile: Some("arn:aws:bedrock:us-east-1:123:profile/foo".into()),
+        };
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn non_cross_region_model_does_not_require_inference_profile() {
+        let config = BedrockConfig {
+            region: AwsRegion::US_EAST_1,
+            model: BedrockModel::ClaudeSonnet4_5,
+            max_tokens: crate::types::MaxTokens::new(100).unwrap(),
+            temperature: None,
+            inference_profile: None,
+        };
+        config.validate().unwrap();
     }
 }

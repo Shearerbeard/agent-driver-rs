@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ConfigError;
 use crate::types::{MaxTokens, Temperature};
 
-use super::common::ApiKey;
+use super::common::{ApiKey, env_parse_opt, env_parse_or_default};
 
 /// OpenAI API configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -35,6 +35,7 @@ pub struct OpenAiConfig {
 /// OpenAI model specification
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum OpenAiModel {
     // GPT-5 series (reasoning models, no temperature)
     Gpt5,
@@ -103,6 +104,25 @@ impl OpenAiModel {
     }
 }
 
+impl std::str::FromStr for OpenAiModel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "gpt-5" => Self::Gpt5,
+            "gpt-5.1" => Self::Gpt5_1,
+            "gpt-5.2" => Self::Gpt5_2,
+            "gpt-4o" => Self::Gpt4o,
+            "gpt-4o-mini" => Self::Gpt4oMini,
+            "o1" => Self::O1,
+            "o1-mini" => Self::O1Mini,
+            "o3" => Self::O3,
+            "o3-mini" => Self::O3Mini,
+            other => Self::Custom(other.to_owned()),
+        })
+    }
+}
+
 /// Reasoning configuration for reasoning models
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ReasoningConfig {
@@ -143,33 +163,18 @@ impl OpenAiConfig {
             ConfigError::MissingField {
                 field: "OPENAI_API_KEY",
             }
-        })?);
+        })?)?;
 
         let model_str = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
-        let model = match model_str.as_str() {
-            "gpt-5" => OpenAiModel::Gpt5,
-            "gpt-5.1" => OpenAiModel::Gpt5_1,
-            "gpt-5.2" => OpenAiModel::Gpt5_2,
-            "gpt-4o" => OpenAiModel::Gpt4o,
-            "gpt-4o-mini" => OpenAiModel::Gpt4oMini,
-            "o1" => OpenAiModel::O1,
-            "o1-mini" => OpenAiModel::O1Mini,
-            "o3" => OpenAiModel::O3,
-            "o3-mini" => OpenAiModel::O3Mini,
-            other => OpenAiModel::Custom(other.to_owned()),
-        };
+        let model = model_str.parse::<OpenAiModel>()?;
 
-        let max_tokens = std::env::var("OPENAI_MAX_TOKENS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .and_then(MaxTokens::new)
-            .unwrap_or_default();
+        let max_tokens =
+            MaxTokens::new(env_parse_or_default::<u32>("OPENAI_MAX_TOKENS")?).unwrap_or_default();
 
-        let temperature = if model.supports_temperature() {
-            std::env::var("OPENAI_TEMPERATURE")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .and_then(|t| Temperature::new(t).ok())
+        let temperature: Option<Temperature> = if model.supports_temperature() {
+            env_parse_opt::<f32>("OPENAI_TEMPERATURE")?
+                .map(Temperature::new)
+                .transpose()?
         } else {
             None
         };
@@ -210,7 +215,7 @@ impl OpenAiConfig {
         if let OpenAiModel::Custom(ref s) = self.model {
             if s.is_empty() {
                 return Err(ConfigError::InvalidValue {
-                    field: "model",
+                    field: "model".to_owned(),
                     reason: "custom model string must not be empty".into(),
                 });
             }
@@ -219,7 +224,7 @@ impl OpenAiConfig {
         // Temperature not allowed on reasoning models
         if self.temperature.is_some() && !self.model.supports_temperature() {
             return Err(ConfigError::InvalidValue {
-                field: "temperature",
+                field: "temperature".to_owned(),
                 reason: format!("{:?} does not support temperature", self.model),
             });
         }
@@ -253,5 +258,14 @@ mod tests {
         assert_eq!(OpenAiModel::Gpt4o.as_str(), "gpt-4o");
         assert_eq!(OpenAiModel::Gpt5_2.as_str(), "gpt-5.2");
         assert_eq!(OpenAiModel::O3Mini.as_str(), "o3-mini");
+    }
+
+    #[test]
+    fn model_from_str_recognizes_well_known() {
+        let parsed: OpenAiModel = "gpt-4o".parse().unwrap();
+        assert_eq!(parsed, OpenAiModel::Gpt4o);
+
+        let parsed: OpenAiModel = "custom-model".parse().unwrap();
+        assert_eq!(parsed, OpenAiModel::Custom("custom-model".into()));
     }
 }

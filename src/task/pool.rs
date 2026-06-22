@@ -16,8 +16,6 @@ use super::handle::TaskHandle;
 
 /// Internal task registration info
 struct RegisteredTask {
-    #[allow(dead_code, reason = "retained for future abort-on-shutdown support")]
-    abort_handle: tokio::task::AbortHandle,
     cancellation: CancellationToken,
     #[allow(
         dead_code,
@@ -53,6 +51,12 @@ pub struct TaskPool {
     tasks: RwLock<HashMap<CorrelationId, RegisteredTask>>,
     root_token: CancellationToken,
     tracker: TaskTracker,
+    /// Gate flag: true while the pool accepts new tasks.
+    ///
+    /// `TaskTracker` tracks in-flight tasks but has no "closed to new spawns"
+    /// state, so a separate flag is required to reject spawns after
+    /// `shutdown()` has been called. The flag is checked with `Acquire` and
+    /// cleared with `Release` ordering to synchronize with `spawn`.
     accepting: AtomicBool,
 }
 
@@ -118,7 +122,6 @@ impl TaskPool {
         self.tasks.write().insert(
             correlation_id,
             RegisteredTask {
-                abort_handle: handle.abort_handle(),
                 cancellation: task_token.clone(),
                 name,
             },
@@ -192,17 +195,6 @@ impl TaskPool {
     /// Get a clone of the task tracker
     pub fn tracker(&self) -> TaskTracker {
         self.tracker.clone()
-    }
-}
-
-impl Default for TaskPool {
-    fn default() -> Self {
-        Self {
-            tasks: RwLock::new(HashMap::new()),
-            root_token: CancellationToken::new(),
-            tracker: TaskTracker::new(),
-            accepting: AtomicBool::new(true),
-        }
     }
 }
 

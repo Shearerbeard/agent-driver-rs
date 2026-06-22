@@ -383,8 +383,8 @@ struct StreamState {
     block_index: usize,
     /// Whether a text block is currently open
     text_block_open: bool,
-    /// Whether thinking content has been emitted (deduplicate across chunks)
-    thinking_emitted: bool,
+    /// Thinking text already emitted. Ollama may resend cumulative thinking.
+    thinking_seen: String,
     /// Counter for generating synthetic ToolCallIds
     tool_call_counter: u32,
     /// Determined stop reason (ToolUse if tool calls present, else EndTurn)
@@ -400,7 +400,7 @@ impl StreamState {
             usage: None,
             block_index: 0,
             text_block_open: false,
-            thinking_emitted: false,
+            thinking_seen: String::new(),
             tool_call_counter: 0,
             stop_reason: None,
         }
@@ -435,19 +435,25 @@ fn parse_ollama_response(
 
     // Thinking content (arrives in message.thinking)
     if let Some(ref thinking) = response.message.thinking {
-        if !thinking.is_empty() && !state.thinking_emitted {
-            state.thinking_emitted = true;
+        let new_thinking = if let Some(delta) = thinking.strip_prefix(&state.thinking_seen) {
+            delta
+        } else {
+            thinking.as_str()
+        };
+
+        if !new_thinking.is_empty() {
             events.push(Ok(StreamEvent::ContentBlockStart {
                 index: state.block_index,
                 block_type: ContentBlockType::Thinking,
             }));
             events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
-                thinking: thinking.clone(),
+                thinking: new_thinking.to_owned(),
             })));
             events.push(Ok(StreamEvent::ContentBlockStop {
                 index: state.block_index,
             }));
             state.block_index += 1;
+            state.thinking_seen.clone_from(thinking);
         }
     }
 
@@ -477,7 +483,8 @@ fn parse_ollama_response(
         }
 
         for tc in &response.message.tool_calls {
-            let id = ToolCallId::new(format!("ollama_call_{}", state.tool_call_counter));
+            let counter = state.tool_call_counter;
+            let id = ToolCallId::new(format!("ollama_call_{counter}"));
             state.tool_call_counter += 1;
 
             let name = ToolName::new(&tc.function.name)
@@ -527,6 +534,15 @@ fn parse_ollama_response(
         if state.stop_reason.is_none() {
             state.stop_reason = Some(StopReason::EndTurn);
         }
+
+        state.completed = true;
+        events.push(Ok(StreamEvent::Completed {
+            metadata: CompletionMetadata {
+                model: state.model.clone(),
+                stop_reason: state.stop_reason,
+                usage: state.usage,
+            },
+        }));
     }
 
     events
@@ -554,12 +570,12 @@ mod tests {
             "created_at": "2024-01-01T00:00:01Z",
             "message": { "role": "assistant", "content": "" },
             "done": true,
-            "total_duration": 1000000,
-            "load_duration": 500000,
+            "total_duration": 1_000_000,
+            "load_duration": 500_000,
             "prompt_eval_count": 10,
-            "prompt_eval_duration": 100000,
+            "prompt_eval_duration": 100_000,
             "eval_count": 20,
-            "eval_duration": 200000
+            "eval_duration": 200_000
         }))
         .expect("valid final chunk JSON")
     }
@@ -574,12 +590,12 @@ mod tests {
                 "tool_calls": tool_calls
             },
             "done": true,
-            "total_duration": 1000000,
-            "load_duration": 500000,
+            "total_duration": 1_000_000,
+            "load_duration": 500_000,
             "prompt_eval_count": 10,
-            "prompt_eval_duration": 100000,
+            "prompt_eval_duration": 100_000,
             "eval_count": 20,
-            "eval_duration": 200000
+            "eval_duration": 200_000
         }))
         .expect("valid tool call chunk JSON")
     }
@@ -602,7 +618,7 @@ mod tests {
 
     #[test]
     fn parse_text_content() {
-        let mut state = StreamState::new("llama3.2".to_string());
+        let mut state = StreamState::new("llama3.2".to_owned());
         let events = parse_ollama_response(streaming_chunk("Hello"), &mut state);
 
         // First chunk: Started + ContentBlockStart + TextDelta
@@ -615,7 +631,7 @@ mod tests {
 
     #[test]
     fn parse_empty_content_skipped() {
-        let mut state = StreamState::new("llama3.2".to_string());
+        let mut state = StreamState::new("llama3.2".to_owned());
         state.started = true;
 
         let events = parse_ollama_response(streaming_chunk(""), &mut state);
@@ -629,7 +645,7 @@ mod tests {
 
     #[test]
     fn parse_final_chunk_emits_stop() {
-        let mut state = StreamState::new("llama3.2".to_string());
+        let mut state = StreamState::new("llama3.2".to_owned());
         state.started = true;
         // Simulate a text block was opened
         state.text_block_open = true;
@@ -643,13 +659,19 @@ mod tests {
         // Usage should be tracked from final_data
         assert!(state.usage.is_some());
         assert_eq!(state.stop_reason, Some(StopReason::EndTurn));
+        assert!(state.completed);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. })))
+        );
     }
 
     // --- Tool calling tests ---
 
     #[test]
     fn parse_tool_call_response() {
-        let mut state = StreamState::new("llama3.2".to_string());
+        let mut state = StreamState::new("llama3.2".to_owned());
 
         let chunk = tool_call_chunk(vec![json!({
             "function": {
@@ -687,7 +709,7 @@ mod tests {
 
     #[test]
     fn parse_multi_tool_calls() {
-        let mut state = StreamState::new("llama3.2".to_string());
+        let mut state = StreamState::new("llama3.2".to_owned());
 
         let chunk = tool_call_chunk(vec![
             json!({
@@ -707,11 +729,11 @@ mod tests {
         let events = parse_ollama_response(chunk, &mut state);
 
         // Should have two ToolUseStart deltas with different IDs and block indices
-        let tool_starts: Vec<_> = events
+        let tool_starts = events
             .iter()
             .filter(|e| matches!(e, Ok(StreamEvent::Delta(StreamDelta::ToolUseStart { .. }))))
-            .collect();
-        assert_eq!(tool_starts.len(), 2);
+            .count();
+        assert_eq!(tool_starts, 2);
 
         // Verify unique IDs
         assert_eq!(state.tool_call_counter, 2);
@@ -733,7 +755,7 @@ mod tests {
 
     #[test]
     fn synthetic_tool_call_ids_unique() {
-        let mut state = StreamState::new("llama3.2".to_string());
+        let mut state = StreamState::new("llama3.2".to_owned());
 
         let chunk = tool_call_chunk(vec![
             json!({ "function": { "name": "a", "arguments": {} } }),
@@ -748,7 +770,7 @@ mod tests {
 
     #[test]
     fn tool_call_sets_stop_reason() {
-        let mut state = StreamState::new("llama3.2".to_string());
+        let mut state = StreamState::new("llama3.2".to_owned());
 
         let chunk = tool_call_chunk(vec![json!({
             "function": { "name": "test", "arguments": {} }
@@ -785,7 +807,7 @@ mod tests {
     fn convert_messages_preserves_tool_calls() {
         let provider = make_test_provider();
 
-        let msg = Message::with_content(
+        let msg = Message::new(
             Role::Assistant,
             vec![
                 ContentBlock::Text {
@@ -822,7 +844,7 @@ mod tests {
 
     #[test]
     fn parse_thinking_response() {
-        let mut state = StreamState::new("qwen3:14b".to_string());
+        let mut state = StreamState::new("qwen3:14b".to_owned());
 
         let chunk = thinking_chunk("Let me analyze this...", "Here is the answer.");
         let events = parse_ollama_response(chunk, &mut state);
@@ -850,7 +872,7 @@ mod tests {
 
     #[test]
     fn thinking_emitted_once() {
-        let mut state = StreamState::new("qwen3:14b".to_string());
+        let mut state = StreamState::new("qwen3:14b".to_owned());
 
         // First chunk with thinking
         let chunk1 = thinking_chunk("thinking...", "text1");
@@ -869,6 +891,14 @@ mod tests {
             .filter(|e| matches!(e, Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { .. }))))
             .count();
         assert_eq!(thinking_count_2, 0);
+
+        // New cumulative thinking emits only the suffix.
+        let chunk3 = thinking_chunk("thinking... more", "text3");
+        let events3 = parse_ollama_response(chunk3, &mut state);
+        assert!(events3.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking })) if thinking == " more"
+        )));
     }
 
     #[test]

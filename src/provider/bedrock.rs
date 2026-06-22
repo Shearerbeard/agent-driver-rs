@@ -8,6 +8,7 @@
 //! - Parsing `ConverseStreamOutput` events into the library's `StreamEvent` enum
 //! - Inference profile support for cross-region routing
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -450,12 +451,7 @@ impl Provider for BedrockProvider {
 /// State for tracking stream parsing
 #[derive(Default)]
 struct StreamState {
-    current_tool_use_id: Option<String>,
-    #[allow(
-        dead_code,
-        reason = "tracked for diagnostic context during stream parsing"
-    )]
-    current_tool_name: Option<String>,
+    tool_call_ids: HashMap<usize, String>,
     /// Stored from MessageStop, emitted with Metadata for a single Completed event
     stop_reason: Option<StopReason>,
 }
@@ -482,10 +478,6 @@ fn is_tool_result(block: &BedrockContentBlock) -> bool {
 }
 
 /// Parse a Bedrock streaming event
-#[allow(
-    clippy::expect_used,
-    reason = "fallback tool name is a hardcoded valid sentinel"
-)]
 fn parse_bedrock_event(
     event: aws_sdk_bedrockruntime::types::ConverseStreamOutput,
     state: &mut StreamState,
@@ -518,8 +510,19 @@ fn parse_bedrock_event(
                 )]
                 match start {
                     aws_sdk_bedrockruntime::types::ContentBlockStart::ToolUse(tool) => {
-                        state.current_tool_use_id = Some(tool.tool_use_id().to_owned());
-                        state.current_tool_name = Some(tool.name().to_owned());
+                        let name = match ToolName::new(tool.name()) {
+                            Ok(name) => name,
+                            Err(e) => {
+                                return vec![Err(StreamError::Deserialize {
+                                    message: format!("invalid Bedrock tool name: {e}"),
+                                    raw_data: None,
+                                })];
+                            }
+                        };
+
+                        state
+                            .tool_call_ids
+                            .insert(index, tool.tool_use_id().to_owned());
 
                         vec![
                             Ok(StreamEvent::ContentBlockStart {
@@ -528,10 +531,7 @@ fn parse_bedrock_event(
                             }),
                             Ok(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                 id: ToolCallId::new(tool.tool_use_id()),
-                                // Safety: "unknown" is a valid tool name (alphanumeric)
-                                name: ToolName::new(tool.name()).unwrap_or_else(|_| {
-                                    ToolName::new("unknown").expect("hardcoded valid tool name")
-                                }),
+                                name,
                             })),
                         ]
                     }
@@ -561,10 +561,17 @@ fn parse_bedrock_event(
                         }))]
                     }
                     aws_sdk_bedrockruntime::types::ContentBlockDelta::ToolUse(tool) => {
+                        let index = usize::try_from(delta.content_block_index()).unwrap_or(0);
+                        let Some(id) = state.tool_call_ids.get(&index) else {
+                            return vec![Err(StreamError::Deserialize {
+                                message: format!(
+                                    "Bedrock tool input delta for unknown block index {index}"
+                                ),
+                                raw_data: None,
+                            })];
+                        };
                         vec![Ok(StreamEvent::Delta(StreamDelta::ToolInputDelta {
-                            id: ToolCallId::new(
-                                state.current_tool_use_id.clone().unwrap_or_default(),
-                            ),
+                            id: ToolCallId::new(id),
                             partial_json: tool.input().to_owned(),
                         }))]
                     }
@@ -575,9 +582,9 @@ fn parse_bedrock_event(
             }
         }
         ConverseStreamOutput::ContentBlockStop(stop) => {
-            vec![Ok(StreamEvent::ContentBlockStop {
-                index: usize::try_from(stop.content_block_index()).unwrap_or(0),
-            })]
+            let index = usize::try_from(stop.content_block_index()).unwrap_or(0);
+            state.tool_call_ids.remove(&index);
+            vec![Ok(StreamEvent::ContentBlockStop { index })]
         }
         ConverseStreamOutput::MessageStop(stop) => {
             // Store stop_reason in state; emit Completed only from Metadata
@@ -630,6 +637,15 @@ fn parse_bedrock_event(
 mod tests {
     use super::*;
     use crate::types::{Message, Role, ToolResultContent};
+    use aws_sdk_bedrockruntime::types::{
+        ContentBlockDelta as BedrockContentBlockDelta,
+        ContentBlockDeltaEvent as BedrockContentBlockDeltaEvent,
+        ContentBlockStart as BedrockContentBlockStart,
+        ContentBlockStartEvent as BedrockContentBlockStartEvent,
+        ConverseStreamOutput as BedrockConverseStreamOutput,
+        ToolUseBlockDelta as BedrockToolUseBlockDelta,
+        ToolUseBlockStart as BedrockToolUseBlockStart,
+    };
 
     /// Build a simple user text message.
     fn user_msg(text: &str) -> Message {
@@ -658,6 +674,37 @@ mod tests {
                 content: ToolResultContent::Text(output.into()),
                 is_error: false,
             }],
+        )
+    }
+
+    fn bedrock_tool_start(index: i32, id: &str, name: &str) -> BedrockConverseStreamOutput {
+        BedrockConverseStreamOutput::ContentBlockStart(
+            BedrockContentBlockStartEvent::builder()
+                .content_block_index(index)
+                .start(BedrockContentBlockStart::ToolUse(
+                    BedrockToolUseBlockStart::builder()
+                        .tool_use_id(id)
+                        .name(name)
+                        .build()
+                        .unwrap(),
+                ))
+                .build()
+                .unwrap(),
+        )
+    }
+
+    fn bedrock_tool_delta(index: i32, input: &str) -> BedrockConverseStreamOutput {
+        BedrockConverseStreamOutput::ContentBlockDelta(
+            BedrockContentBlockDeltaEvent::builder()
+                .content_block_index(index)
+                .delta(BedrockContentBlockDelta::ToolUse(
+                    BedrockToolUseBlockDelta::builder()
+                        .input(input)
+                        .build()
+                        .unwrap(),
+                ))
+                .build()
+                .unwrap(),
         )
     }
 
@@ -758,32 +805,52 @@ mod tests {
 
         // Positive integer
         match json_to_document(&serde_json::json!(42)) {
-            Document::Number(n) => assert_eq!(n.to_f64_lossy(), 42.0),
-            other => panic!("expected Number, got {:?}", other),
+            Document::Number(n) => assert!((n.to_f64_lossy() - 42.0).abs() < f64::EPSILON),
+            other @ (Document::Object(_)
+            | Document::Array(_)
+            | Document::String(_)
+            | Document::Bool(_)
+            | Document::Null) => panic!("expected Number, got {other:?}"),
         }
 
         // Negative integer
         match json_to_document(&serde_json::json!(-7)) {
-            Document::Number(n) => assert_eq!(n.to_f64_lossy(), -7.0),
-            other => panic!("expected Number, got {:?}", other),
+            Document::Number(n) => assert!((n.to_f64_lossy() - -7.0).abs() < f64::EPSILON),
+            other @ (Document::Object(_)
+            | Document::Array(_)
+            | Document::String(_)
+            | Document::Bool(_)
+            | Document::Null) => panic!("expected Number, got {other:?}"),
         }
 
         // Float
         match json_to_document(&serde_json::json!(2.72)) {
             Document::Number(n) => assert!((n.to_f64_lossy() - 2.72).abs() < f64::EPSILON),
-            other => panic!("expected Number, got {:?}", other),
+            other @ (Document::Object(_)
+            | Document::Array(_)
+            | Document::String(_)
+            | Document::Bool(_)
+            | Document::Null) => panic!("expected Number, got {other:?}"),
         }
 
         // String
         match json_to_document(&serde_json::json!("hello")) {
             Document::String(s) => assert_eq!(s, "hello"),
-            other => panic!("expected String, got {:?}", other),
+            other @ (Document::Object(_)
+            | Document::Array(_)
+            | Document::Number(_)
+            | Document::Bool(_)
+            | Document::Null) => panic!("expected String, got {other:?}"),
         }
 
         // Array
         match json_to_document(&serde_json::json!([1, "two", null])) {
             Document::Array(arr) => assert_eq!(arr.len(), 3),
-            other => panic!("expected Array, got {:?}", other),
+            other @ (Document::Object(_)
+            | Document::Number(_)
+            | Document::String(_)
+            | Document::Bool(_)
+            | Document::Null) => panic!("expected Array, got {other:?}"),
         }
 
         // Nested object
@@ -792,7 +859,11 @@ mod tests {
                 assert!(map.contains_key("key"));
                 assert!(map.contains_key("nested"));
             }
-            other => panic!("expected Object, got {:?}", other),
+            other @ (Document::Array(_)
+            | Document::Number(_)
+            | Document::String(_)
+            | Document::Bool(_)
+            | Document::Null) => panic!("expected Object, got {other:?}"),
         }
     }
 
@@ -807,5 +878,60 @@ mod tests {
         assert_eq!(bedrock.len(), 2);
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
         assert_eq!(bedrock[1].role(), &ConversationRole::User);
+    }
+
+    #[test]
+    fn parser_emits_tool_start_and_tracks_index() {
+        let mut state = StreamState::default();
+
+        let events = parse_bedrock_event(bedrock_tool_start(2, "toolu_1", "get_time"), &mut state);
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            StreamEvent::ContentBlockStart {
+                index: 2,
+                block_type: ContentBlockType::ToolUse,
+            }
+        ));
+        assert!(matches!(
+            events[1].as_ref().unwrap(),
+            StreamEvent::Delta(StreamDelta::ToolUseStart { id, name })
+                if id.as_str() == "toolu_1" && name.as_str() == "get_time"
+        ));
+        assert_eq!(
+            state.tool_call_ids.get(&2).map(String::as_str),
+            Some("toolu_1")
+        );
+    }
+
+    #[test]
+    fn parser_routes_tool_input_delta_by_block_index() {
+        let mut state = StreamState::default();
+        parse_bedrock_event(bedrock_tool_start(0, "toolu_1", "first_tool"), &mut state);
+        parse_bedrock_event(bedrock_tool_start(1, "toolu_2", "second_tool"), &mut state);
+
+        let events = parse_bedrock_event(bedrock_tool_delta(1, "{\"city\":"), &mut state);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            StreamEvent::Delta(StreamDelta::ToolInputDelta { id, partial_json })
+                if id.as_str() == "toolu_2" && partial_json == "{\"city\":"
+        ));
+    }
+
+    #[test]
+    fn parser_rejects_tool_input_delta_for_unknown_index() {
+        let mut state = StreamState::default();
+
+        let events = parse_bedrock_event(bedrock_tool_delta(7, "{}"), &mut state);
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].as_ref().unwrap_err(),
+            StreamError::Deserialize { message, raw_data: None }
+                if message.contains("unknown block index 7")
+        ));
     }
 }

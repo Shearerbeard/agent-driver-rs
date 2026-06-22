@@ -128,7 +128,7 @@ Step by step:
    `CollectedResponse` via `apply_delta()` and `finalize_block()`, tracking
    block types per index in a `HashMap<usize, ContentBlockType>`.
 9. On the non-streaming path (`send()`), Session adds the assistant response
-   as `Message::with_content(Role::Assistant, response.content.clone())` to
+    as `Message::new(Role::Assistant, response.content.clone())` to
    history. On the streaming path (`send_streaming()`), the caller is responsible
    for adding the assistant message (the agent loop handles this).
 

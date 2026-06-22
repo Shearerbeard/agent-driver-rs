@@ -1,7 +1,7 @@
 //! Tool registry for dynamic tool management.
 //!
-//! The [`ToolRegistry`] stores tools by name in a [`RwLock<HashMap>`] for
-//! async-safe concurrent access. Tools can be added and removed at runtime
+//! The [`ToolRegistry`] stores tools by name in a [`parking_lot::RwLock<HashMap>`]
+//! for synchronous concurrent access. Tools can be added and removed at runtime
 //! without restarting the session.
 //!
 //! ## Thread safety
@@ -51,7 +51,7 @@
 
 use std::collections::HashMap;
 
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use crate::types::ToolName;
 
@@ -60,8 +60,8 @@ use super::executor::DynTool;
 
 /// Registry for dynamic tool management.
 ///
-/// Tools can be added and removed at runtime. Uses tokio's `RwLock`
-/// for async-safe concurrent access. The agent loop re-reads the registry
+/// Tools can be added and removed at runtime. Uses `parking_lot::RwLock`
+/// for synchronous concurrent access. The agent loop re-reads the registry
 /// each turn, so tools added/removed between turns are picked up automatically.
 ///
 /// # Example
@@ -80,6 +80,10 @@ pub struct ToolRegistry {
     tools: RwLock<HashMap<ToolName, DynTool>>,
 }
 
+#[allow(
+    clippy::unused_async,
+    reason = "parking_lot::RwLock is sync; async signatures are preserved for API stability"
+)]
 impl ToolRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
@@ -93,31 +97,30 @@ impl ToolRegistry {
     /// Returns the previously registered tool with the same name, if any.
     pub async fn register(&self, tool: DynTool) -> Option<DynTool> {
         let name = tool.definition().name.clone();
-        self.tools.write().await.insert(name, tool)
+        self.tools.write().insert(name, tool)
     }
 
     /// Unregister a tool by name
     ///
     /// Returns the tool if it was registered.
     pub async fn unregister(&self, name: &ToolName) -> Option<DynTool> {
-        self.tools.write().await.remove(name)
+        self.tools.write().remove(name)
     }
 
     /// Get a tool by name
     pub async fn get(&self, name: &ToolName) -> Option<DynTool> {
-        self.tools.read().await.get(name).cloned()
+        self.tools.read().get(name).cloned()
     }
 
     /// Check if a tool is registered
     pub async fn contains(&self, name: &ToolName) -> bool {
-        self.tools.read().await.contains_key(name)
+        self.tools.read().contains_key(name)
     }
 
     /// List all registered tool definitions
     pub async fn list(&self) -> Vec<ToolDefinition> {
         self.tools
             .read()
-            .await
             .values()
             .map(|t| t.definition().clone())
             .collect()
@@ -125,27 +128,27 @@ impl ToolRegistry {
 
     /// List all registered tool names
     pub async fn names(&self) -> Vec<ToolName> {
-        self.tools.read().await.keys().cloned().collect()
+        self.tools.read().keys().cloned().collect()
     }
 
     /// Get the number of registered tools
     pub async fn len(&self) -> usize {
-        self.tools.read().await.len()
+        self.tools.read().len()
     }
 
     /// Check if the registry is empty
     pub async fn is_empty(&self) -> bool {
-        self.tools.read().await.is_empty()
+        self.tools.read().is_empty()
     }
 
     /// Clear all registered tools
     pub async fn clear(&self) {
-        self.tools.write().await.clear();
+        self.tools.write().clear();
     }
 
     /// Register multiple tools at once
     pub async fn register_all(&self, tools: impl IntoIterator<Item = DynTool>) {
-        let mut guard = self.tools.write().await;
+        let mut guard = self.tools.write();
         for tool in tools {
             let name = tool.definition().name.clone();
             guard.insert(name, tool);
@@ -189,7 +192,7 @@ mod tests {
         Arc::new(TestTool {
             definition: ToolDefinition::new(
                 ToolName::new(name).unwrap(),
-                format!("Test tool: {}", name),
+                format!("Test tool: {name}"),
                 ToolSchema::empty(),
             ),
         })
@@ -200,7 +203,7 @@ mod tests {
         let registry = ToolRegistry::new();
         let tool = make_test_tool("test_tool");
 
-        registry.register(tool.clone()).await;
+        registry.register(Arc::clone(&tool)).await;
 
         let name = ToolName::new("test_tool").unwrap();
         let retrieved = registry.get(&name).await;

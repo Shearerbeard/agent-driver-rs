@@ -6,6 +6,8 @@ use std::num::NonZeroU32;
 use crate::error::ConfigError;
 use crate::types::{MaxTokens, Temperature};
 
+use super::common::env_parse_opt;
+
 fn default_ollama_url() -> url::Url {
     let Ok(url) = url::Url::parse("http://localhost:11434") else {
         unreachable!("default Ollama URL is valid")
@@ -54,7 +56,7 @@ impl NumCtx {
         NonZeroU32::new(ctx)
             .map(Self)
             .ok_or_else(|| ConfigError::InvalidValue {
-                field: "num_ctx",
+                field: "num_ctx".to_owned(),
                 reason: "context window size must be greater than 0".into(),
             })
     }
@@ -82,8 +84,9 @@ impl<'de> Deserialize<'de> for NumCtx {
 }
 
 /// Ollama model specification
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum OllamaModel {
     WellKnown(WellKnownOllamaModel),
     Custom(String),
@@ -92,6 +95,7 @@ pub enum OllamaModel {
 /// Well-known Ollama models
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum WellKnownOllamaModel {
     // Llama models
     #[serde(rename = "llama3.2")]
@@ -137,14 +141,36 @@ impl Default for OllamaModel {
     }
 }
 
+impl std::str::FromStr for OllamaModel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "llama3.2" => Self::WellKnown(WellKnownOllamaModel::Llama3_2),
+            "llama3.2:3b" => Self::WellKnown(WellKnownOllamaModel::Llama3_2_3b),
+            "qwen3:30b" => Self::WellKnown(WellKnownOllamaModel::Qwen3_30b),
+            "qwen3:14b" => Self::WellKnown(WellKnownOllamaModel::Qwen3_14b),
+            "qwen3-coder:14b" => Self::WellKnown(WellKnownOllamaModel::Qwen3Coder14b),
+            "deepseek-r1" => Self::WellKnown(WellKnownOllamaModel::DeepseekR1),
+            "mistral" => Self::WellKnown(WellKnownOllamaModel::Mistral),
+            other => Self::Custom(other.to_owned()),
+        })
+    }
+}
+
 /// Keep-alive configuration
+///
+/// `Minutes` wraps a [`NonZeroU32`] so that `0` (unload) is unrepresentable in
+/// that variant, making `Unload` the only valid way to request immediate
+/// unloading.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum KeepAlive {
     /// Keep model loaded indefinitely (-1)
     Indefinite,
     /// Keep model loaded for specified minutes
-    Minutes(u32),
+    Minutes(NonZeroU32),
     /// Unload model immediately after request (0)
     Unload,
 }
@@ -167,13 +193,13 @@ impl OllamaConfig {
             .unwrap_or_else(|_| "http://localhost:11434".into())
             .parse()
             .map_err(|_| ConfigError::InvalidValue {
-                field: "OLLAMA_BASE_URL",
+                field: "OLLAMA_BASE_URL".to_owned(),
                 reason: "Invalid URL".into(),
             })?;
 
-        let model = OllamaModel::Custom(
-            std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".into()),
-        );
+        let model = std::env::var("OLLAMA_MODEL")
+            .unwrap_or_else(|_| "llama3.2".into())
+            .parse::<OllamaModel>()?;
 
         // num_ctx is critical for Ollama - require it
         let num_ctx_str =
@@ -181,27 +207,27 @@ impl OllamaConfig {
                 field: "OLLAMA_NUM_CTX",
             })?;
         let num_ctx_val: u32 = num_ctx_str.parse().map_err(|_| ConfigError::InvalidValue {
-            field: "OLLAMA_NUM_CTX",
+            field: "OLLAMA_NUM_CTX".to_owned(),
             reason: "must be a positive integer".into(),
         })?;
         let num_ctx = NumCtx::new(num_ctx_val)?;
 
-        let max_tokens = std::env::var("OLLAMA_MAX_TOKENS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .and_then(MaxTokens::new);
+        let max_tokens = env_parse_opt::<u32>("OLLAMA_MAX_TOKENS")?.and_then(MaxTokens::new);
 
-        let temperature = std::env::var("OLLAMA_TEMPERATURE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .and_then(|t| Temperature::new(t).ok());
+        let temperature: Option<Temperature> = env_parse_opt::<f32>("OLLAMA_TEMPERATURE")?
+            .map(Temperature::new)
+            .transpose()?;
 
         let keep_alive = std::env::var("OLLAMA_KEEP_ALIVE")
             .ok()
             .and_then(|s| match s.as_str() {
                 "indefinite" | "-1" => Some(KeepAlive::Indefinite),
                 "unload" | "0" => Some(KeepAlive::Unload),
-                _ => s.parse().ok().map(KeepAlive::Minutes),
+                _ => s
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(NonZeroU32::new)
+                    .map(KeepAlive::Minutes),
             });
 
         let think =
@@ -229,7 +255,7 @@ impl OllamaConfig {
         if let OllamaModel::Custom(ref s) = self.model {
             if s.is_empty() {
                 return Err(ConfigError::InvalidValue {
-                    field: "model",
+                    field: "model".to_owned(),
                     reason: "custom model string must not be empty".into(),
                 });
             }
@@ -244,16 +270,24 @@ mod tests {
 
     #[test]
     fn num_ctx_validation() {
-        assert!(NumCtx::new(8192).is_ok());
-        assert!(NumCtx::new(1).is_ok());
-        assert!(NumCtx::new(0).is_err());
+        NumCtx::new(8192).unwrap();
+        NumCtx::new(1).unwrap();
+        NumCtx::new(0).unwrap_err();
     }
 
     #[test]
     fn keep_alive_api_value() {
         assert_eq!(KeepAlive::Indefinite.as_api_value(), "-1");
-        assert_eq!(KeepAlive::Minutes(30).as_api_value(), "30m");
+        assert_eq!(
+            KeepAlive::Minutes(NonZeroU32::new(30).unwrap()).as_api_value(),
+            "30m"
+        );
         assert_eq!(KeepAlive::Unload.as_api_value(), "0");
+    }
+
+    #[test]
+    fn keep_alive_minutes_rejects_zero() {
+        assert!(NonZeroU32::new(0).is_none());
     }
 
     #[test]
@@ -266,5 +300,17 @@ mod tests {
             OllamaModel::Custom("custom:latest".into()).as_str(),
             "custom:latest"
         );
+    }
+
+    #[test]
+    fn model_from_str_recognizes_well_known() {
+        let parsed: OllamaModel = "llama3.2".parse().unwrap();
+        assert_eq!(
+            parsed,
+            OllamaModel::WellKnown(WellKnownOllamaModel::Llama3_2)
+        );
+
+        let parsed: OllamaModel = "custom:latest".parse().unwrap();
+        assert_eq!(parsed, OllamaModel::Custom("custom:latest".into()));
     }
 }

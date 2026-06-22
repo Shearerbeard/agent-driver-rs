@@ -29,7 +29,13 @@
 pub mod instrumentation;
 
 #[cfg(feature = "phoenix")]
+use opentelemetry::global;
+#[cfg(feature = "phoenix")]
 use opentelemetry::trace::TracerProvider as _;
+#[cfg(feature = "phoenix")]
+use opentelemetry_sdk::Resource;
+#[cfg(feature = "phoenix")]
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 #[cfg(feature = "phoenix")]
 use opentelemetry_sdk::trace::SdkTracerProvider;
 
@@ -60,10 +66,16 @@ pub fn get_tracer(name: &str) -> Result<opentelemetry_sdk::trace::Tracer, String
 /// Initialize Phoenix tracing with OTLP gRPC exporter.
 ///
 /// Reads `PHOENIX_ENDPOINT` env var (defaults to `http://localhost:4317`).
-/// Must be called from within a Tokio runtime.
+/// Must be called from within a Tokio runtime. Registers the provider both in
+/// the global OpenTelemetry registry and in the crate-local static so that
+/// `get_tracer` and `global::tracer` return the same implementation.
 #[cfg(feature = "phoenix")]
 pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>, String> {
     use opentelemetry_otlp::WithExportConfig as _;
+
+    if let Some(provider) = get_tracer_provider() {
+        return Ok(std::sync::Arc::new(provider.tracer("agent-driver-rs")));
+    }
 
     let endpoint =
         std::env::var("PHOENIX_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_owned());
@@ -74,13 +86,23 @@ pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>
         .build()
         .map_err(|e| format!("Failed to build OTLP exporter: {e}"))?;
 
+    let resource = Resource::builder()
+        .with_service_name("agent-driver-rs")
+        .build();
+
     let provider = SdkTracerProvider::builder()
+        .with_resource(resource)
         .with_batch_exporter(exporter)
         .build();
 
-    let tracer = provider.tracer("agent-driver-rs");
+    let provider_arc = std::sync::Arc::new(provider.clone());
+    let tracer = provider_arc.tracer("agent-driver-rs");
     let tracer_arc = std::sync::Arc::new(tracer);
-    init_tracer_provider(std::sync::Arc::new(provider));
+
+    global::set_tracer_provider(provider);
+    global::set_text_map_propagator(TraceContextPropagator::new());
+    init_tracer_provider(provider_arc);
+
     Ok(tracer_arc)
 }
 
@@ -88,6 +110,7 @@ pub fn init_phoenix() -> Result<std::sync::Arc<opentelemetry_sdk::trace::Tracer>
 #[cfg(feature = "phoenix")]
 pub fn shutdown_phoenix() {
     if let Some(provider) = get_tracer_provider() {
-        let _shutdown = provider.shutdown();
+        let _unused = provider.force_flush();
+        let _unused = provider.shutdown();
     }
 }

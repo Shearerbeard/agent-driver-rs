@@ -5,6 +5,7 @@
 //! - Reasoning effort configuration for models that support it
 //! - Non-streaming fallback for o3/o3-mini models
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -69,7 +70,11 @@ impl OpenAiProvider {
         })
     }
 
-    /// Convert our messages to OpenAI format
+    /// Convert our messages to OpenAI format.
+    ///
+    /// System messages are excluded because OpenAI only accepts a single system
+    /// message. The caller is responsible for extracting the system prompt from
+    /// `request.system` or from a `Role::System` message and adding it once.
     fn convert_messages(
         &self,
         messages: &[Message],
@@ -79,31 +84,8 @@ impl OpenAiProvider {
         for msg in messages {
             match msg.role {
                 Role::System => {
-                    // Extract text from content blocks
-                    let text = msg
-                        .content
-                        .iter()
-                        .filter_map(|b| match b {
-                            ContentBlock::Text { text } => Some(text.as_str()),
-                            ContentBlock::Thinking { .. }
-                            | ContentBlock::ToolUse { .. }
-                            | ContentBlock::ToolResult { .. } => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-
-                    if !text.is_empty() {
-                        openai_messages.push(
-                            ChatCompletionRequestSystemMessageArgs::default()
-                                .content(text)
-                                .build()
-                                .map_err(|e| ProviderError::InvalidRequest {
-                                    provider: super::ProviderKind::OpenAi,
-                                    message: format!("Failed to build system message: {e}"),
-                                })?
-                                .into(),
-                        );
-                    }
+                    // System messages are handled separately in `complete_stream`
+                    // to enforce a single system message.
                 }
                 Role::User => {
                     let text = msg
@@ -224,6 +206,68 @@ impl OpenAiProvider {
         Ok(openai_messages)
     }
 
+    /// Build the complete OpenAI message list, including a single system message.
+    ///
+    /// OpenAI only accepts one system message. We use `request.system` when it is
+    /// set, otherwise fall back to the first `Role::System` message in the
+    /// conversation. Any remaining system messages are dropped so they are not
+    /// duplicated.
+    fn build_messages(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<Vec<ChatCompletionRequestMessage>, ProviderError> {
+        let mut messages = Vec::new();
+
+        let system_text = request
+            .system
+            .as_ref()
+            .filter(|s| !s.as_str().is_empty())
+            .map(|s| s.as_str().to_owned())
+            .or_else(|| {
+                request
+                    .messages
+                    .iter()
+                    .find(|m| m.role == Role::System)
+                    .and_then(|m| {
+                        let text = m
+                            .content
+                            .iter()
+                            .filter_map(|b| match b {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                ContentBlock::Thinking { .. }
+                                | ContentBlock::ToolUse { .. }
+                                | ContentBlock::ToolResult { .. } => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if text.is_empty() { None } else { Some(text) }
+                    })
+            });
+
+        if let Some(system) = system_text {
+            messages.push(
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system)
+                    .build()
+                    .map_err(|e| ProviderError::InvalidRequest {
+                        provider: super::ProviderKind::OpenAi,
+                        message: format!("Failed to build system message: {e}"),
+                    })?
+                    .into(),
+            );
+        }
+
+        let conversation_messages: Vec<_> = request
+            .messages
+            .iter()
+            .filter(|m| m.role != Role::System)
+            .cloned()
+            .collect();
+        messages.extend(self.convert_messages(&conversation_messages)?);
+
+        Ok(messages)
+    }
+
     /// Convert our tools to OpenAI format
     fn convert_tools(
         &self,
@@ -271,27 +315,7 @@ impl Provider for OpenAiProvider {
 
             let model = self.config.model.as_str();
 
-            // Convert messages
-            let mut messages = Vec::new();
-
-            // Add system prompt if present
-            if let Some(ref system) = request.system {
-                if !system.as_str().is_empty() {
-                    messages.push(
-                        ChatCompletionRequestSystemMessageArgs::default()
-                            .content(system.as_str())
-                            .build()
-                            .map_err(|e| ProviderError::InvalidRequest {
-                                provider: super::ProviderKind::OpenAi,
-                                message: format!("Failed to build system message: {e}"),
-                            })?
-                            .into(),
-                    );
-                }
-            }
-
-            // Add conversation messages
-            messages.extend(self.convert_messages(&request.messages)?);
+            let messages = self.build_messages(&request)?;
 
             // Build request
             let mut req_builder = CreateChatCompletionRequestArgs::default();
@@ -449,17 +473,12 @@ struct StreamState {
     model: Option<ModelId>,
     stop_reason: Option<StopReason>,
     usage: Option<TokenUsage>,
-    current_tool_call_id: Option<String>,
-    current_tool_name: Option<String>,
+    tool_call_ids: HashMap<usize, String>,
     started: bool,
     completed: bool,
 }
 
 /// Parse an OpenAI streaming chunk
-#[allow(
-    clippy::expect_used,
-    reason = "fallback tool name is a hardcoded valid sentinel"
-)]
 fn parse_openai_chunk(
     response: CreateChatCompletionStreamResponse,
     state: &mut StreamState,
@@ -500,7 +519,6 @@ fn parse_openai_chunk(
                 FinishReason::ToolCalls => StopReason::ToolUse,
                 FinishReason::ContentFilter => StopReason::ContentFilter,
                 FinishReason::FunctionCall => StopReason::ToolUse,
-                _ => StopReason::EndTurn,
             };
             state.stop_reason = Some(reason);
         }
@@ -520,28 +538,36 @@ fn parse_openai_chunk(
         // Tool calls
         if let Some(ref tool_calls) = delta.tool_calls {
             for tc in tool_calls {
+                let tc_index = tc.index as usize;
+
                 // Tool call start
                 if let Some(ref id) = tc.id {
-                    state.current_tool_call_id = Some(id.clone());
+                    state.tool_call_ids.insert(tc_index, id.clone());
                 }
 
                 if let Some(ref function) = tc.function {
                     // Function name (tool start)
                     if let Some(ref name) = function.name {
-                        state.current_tool_name = Some(name.clone());
+                        let name = match ToolName::new(name) {
+                            Ok(name) => name,
+                            Err(e) => {
+                                events.push(Err(StreamError::Deserialize {
+                                    message: format!("invalid OpenAI tool name: {e}"),
+                                    raw_data: None,
+                                }));
+                                continue;
+                            }
+                        };
 
                         events.push(Ok(StreamEvent::ContentBlockStart {
-                            index: tc.index as usize,
+                            index: tc_index,
                             block_type: ContentBlockType::ToolUse,
                         }));
 
-                        if let Some(ref id) = state.current_tool_call_id {
+                        if let Some(id) = state.tool_call_ids.get(&tc_index) {
                             events.push(Ok(StreamEvent::Delta(StreamDelta::ToolUseStart {
                                 id: ToolCallId::new(id),
-                                // Safety: "unknown" is a valid tool name (alphanumeric)
-                                name: ToolName::new(name).unwrap_or_else(|_| {
-                                    ToolName::new("unknown").expect("hardcoded valid tool name")
-                                }),
+                                name,
                             })));
                         }
                     }
@@ -549,7 +575,7 @@ fn parse_openai_chunk(
                     // Function arguments (tool input delta)
                     if let Some(ref args) = function.arguments {
                         if !args.is_empty() {
-                            if let Some(ref id) = state.current_tool_call_id {
+                            if let Some(id) = state.tool_call_ids.get(&tc_index) {
                                 events.push(Ok(StreamEvent::Delta(StreamDelta::ToolInputDelta {
                                     id: ToolCallId::new(id),
                                     partial_json: args.clone(),
@@ -581,7 +607,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
-            "created": 1234567890_u64,
+            "created": 1_234_567_890_u64,
             "model": "gpt-4o",
             "choices": [{
                 "index": 0,
@@ -596,7 +622,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
-            "created": 1234567890_u64,
+            "created": 1_234_567_890_u64,
             "model": "gpt-4o",
             "choices": [{
                 "index": 0,
@@ -611,7 +637,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
-            "created": 1234567890_u64,
+            "created": 1_234_567_890_u64,
             "model": "gpt-4o",
             "choices": [{
                 "index": 0,
@@ -685,5 +711,48 @@ mod tests {
             Ok(StreamEvent::Delta(StreamDelta::ToolInputDelta { partial_json, .. }))
                 if partial_json == r#"{"path":"/tmp"}"#
         )));
+    }
+
+    /// OpenAI only accepts one system message. If both `request.system` and a
+    /// `Role::System` message are supplied, we must not emit a duplicate.
+    #[test]
+    fn no_duplicate_system_message() {
+        let config = OpenAiConfig {
+            api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            model: crate::config::OpenAiModel::Gpt4o,
+            max_tokens: crate::types::MaxTokens::new(100).unwrap(),
+            temperature: None,
+            reasoning: None,
+            structured_output: false,
+        };
+        let provider = OpenAiProvider::new(config).unwrap();
+
+        let request = CompletionRequest::new(
+            crate::types::ModelId::new("gpt-4o").unwrap(),
+            vec![Message::new(
+                Role::System,
+                vec![ContentBlock::Text {
+                    text: "from message".into(),
+                }],
+            )],
+        )
+        .with_system(crate::types::SystemPrompt::new("from request"));
+
+        let messages = provider.build_messages(&request).unwrap();
+
+        let system_count = messages
+            .iter()
+            .filter(|m| matches!(m, ChatCompletionRequestMessage::System(_)))
+            .count();
+        assert_eq!(system_count, 1, "expected exactly one system message");
+
+        let user_count = messages
+            .iter()
+            .filter(|m| matches!(m, ChatCompletionRequestMessage::User(_)))
+            .count();
+        assert_eq!(
+            user_count, 0,
+            "system message should not be converted to user"
+        );
     }
 }

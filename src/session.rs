@@ -46,8 +46,6 @@ pub struct SessionConfig {
     /// JSON Schema compliance.
     #[cfg(feature = "schema-sanitize")]
     pub sanitize_schemas: bool,
-    #[cfg(feature = "phoenix")]
-    pub otel_tracer: Option<std::sync::Arc<Tracer>>,
 }
 
 /// A conversation session with an LLM.
@@ -193,16 +191,14 @@ impl Session {
     // Completions
 
     /// Send a message and get a streaming response
+    #[must_use = "ignoring this result can silently drop session errors"]
     pub async fn send_streaming(
         &self,
         msg: impl Into<String>,
     ) -> Result<StreamHandle, SessionError> {
         let user_msg = Message::user(msg);
         self.add_message(user_msg).await;
-
-        let request = self.build_completion_request().await;
-        let ctx = self.new_provider_context();
-        Ok(self.provider.complete_stream(request, ctx).await?)
+        self.start_completion_stream().await
     }
 
     /// Continue a streaming conversation without adding a new user message
@@ -210,7 +206,13 @@ impl Session {
     /// Use this after processing tool calls: the assistant's tool_use message and
     /// the tool result messages are already in history, so we just need to send
     /// the current history back to the provider for the next turn.
+    #[must_use = "ignoring this result can silently drop session errors"]
     pub async fn continue_streaming(&self) -> Result<StreamHandle, SessionError> {
+        self.start_completion_stream().await
+    }
+
+    /// Start a completion stream from the current session state.
+    async fn start_completion_stream(&self) -> Result<StreamHandle, SessionError> {
         let request = self.build_completion_request().await;
         let ctx = self.new_provider_context();
         Ok(self.provider.complete_stream(request, ctx).await?)
@@ -256,23 +258,22 @@ impl Session {
     }
 
     /// Send a message and collect the full response
+    #[must_use = "ignoring this result can silently drop session errors"]
     pub async fn send(&self, msg: impl Into<String>) -> Result<CollectedResponse, SessionError> {
         let handle = self.send_streaming(msg).await?;
         let response = handle.collect().await?;
 
         // Add assistant response to history
         if !response.content.is_empty() {
-            self.add_message(Message::with_content(
-                Role::Assistant,
-                response.content.clone(),
-            ))
-            .await;
+            self.add_message(Message::new(Role::Assistant, response.content.clone()))
+                .await;
         }
 
         Ok(response)
     }
 
     /// Send a completion request with explicit messages (doesn't add to history)
+    #[must_use = "ignoring this result can silently drop session errors"]
     pub async fn complete(
         &self,
         request: CompletionRequest,
@@ -285,6 +286,7 @@ impl Session {
     // Tool execution
 
     /// Execute a tool and add the result to history
+    #[must_use = "ignoring this result can silently drop session errors"]
     pub async fn execute_tool(
         &self,
         id: ToolCallId,
@@ -316,6 +318,7 @@ impl Session {
     ///
     /// Executes each tool call and adds results to history.
     /// Returns the tool results.
+    #[must_use = "ignoring this result can silently drop session errors"]
     pub async fn process_tool_calls(
         &self,
         response: &CollectedResponse,
@@ -523,8 +526,6 @@ impl SessionBuilder {
             request_timeout: self.request_timeout,
             #[cfg(feature = "schema-sanitize")]
             sanitize_schemas: self.sanitize_schemas,
-            #[cfg(feature = "phoenix")]
-            otel_tracer: self.otel_tracer.clone(),
         };
 
         // Register initial tools
@@ -560,7 +561,7 @@ mod tests {
     use super::*;
     use crate::provider::{MockProvider, mock_text_response};
     use crate::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
-    use futures::FutureExt;
+    use futures::FutureExt as _;
     use std::sync::Arc;
 
     fn model() -> ModelId {
@@ -680,8 +681,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             matches!(&err, SessionError::Tool(ToolError::NotFound(_))),
-            "expected NotFound, got: {:?}",
-            err
+            "expected NotFound, got: {err:?}"
         );
     }
 

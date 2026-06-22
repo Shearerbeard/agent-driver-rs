@@ -17,6 +17,7 @@ use super::{AnthropicConfig, BedrockConfig, OllamaConfig, OpenAiConfig, OpenRout
 /// Use `from_env()` to load from environment variables with PROVIDER as discriminator.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "provider", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ProviderConfig {
     Anthropic(AnthropicConfig),
     OpenAi(OpenAiConfig),
@@ -36,9 +37,7 @@ impl ProviderConfig {
         let provider_str = std::env::var("PROVIDER")
             .map_err(|_| ConfigError::MissingField { field: "PROVIDER" })?;
 
-        let kind: ProviderKind = provider_str
-            .parse()
-            .map_err(|_| ConfigError::UnknownProvider(provider_str))?;
+        let kind: ProviderKind = provider_str.parse()?;
 
         match kind {
             ProviderKind::Anthropic => Ok(Self::Anthropic(AnthropicConfig::from_env()?)),

@@ -6,6 +6,8 @@
 
 use std::time::Duration;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::error::ProviderError;
 
 /// Configuration for retry behavior
@@ -80,10 +82,16 @@ impl RetryConfig {
     }
 }
 
-/// Execute an async operation with retry logic
+/// Execute an async operation with retry logic.
 ///
 /// Only retries on rate limit errors. Other errors are returned immediately.
-pub async fn with_retry<F, Fut, T>(config: &RetryConfig, mut f: F) -> Result<T, ProviderError>
+/// Retry sleeps are cancellation-aware: if the token is cancelled during the
+/// backoff sleep, the function returns `ProviderError::Cancelled`.
+pub async fn with_retry<F, Fut, T>(
+    config: &RetryConfig,
+    cancellation: CancellationToken,
+    mut f: F,
+) -> Result<T, ProviderError>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, ProviderError>>,
@@ -110,7 +118,11 @@ where
                     "Rate limited, retrying after delay"
                 );
 
-                tokio::time::sleep(delay).await;
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
+                    _ = tokio::time::sleep(delay) => {}
+                }
             }
             Err(e) => return Err(e), // Don't retry other errors
         }
@@ -126,7 +138,10 @@ mod tests {
     #[tokio::test]
     async fn success_on_first_try() {
         let config = RetryConfig::default();
-        let result = with_retry(&config, || async { Ok::<_, ProviderError>(42) }).await;
+        let result = with_retry(&config, CancellationToken::new(), || async {
+            Ok::<_, ProviderError>(42)
+        })
+        .await;
         assert_eq!(result.unwrap(), 42);
     }
 
@@ -137,10 +152,9 @@ mod tests {
             .initial_interval(Duration::from_millis(10));
 
         let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = attempts.clone();
 
-        let result = with_retry(&config, || {
-            let attempts = attempts_clone.clone();
+        let result = with_retry(&config, CancellationToken::new(), || {
+            let attempts = Arc::clone(&attempts);
             async move {
                 let n = attempts.fetch_add(1, Ordering::SeqCst);
                 if n < 2 {
@@ -166,10 +180,9 @@ mod tests {
             .initial_interval(Duration::from_millis(10));
 
         let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = attempts.clone();
 
-        let result = with_retry(&config, || {
-            let attempts = attempts_clone.clone();
+        let result = with_retry(&config, CancellationToken::new(), || {
+            let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
                 Err::<i32, _>(ProviderError::RateLimited {
@@ -188,10 +201,9 @@ mod tests {
     async fn no_retry_on_other_errors() {
         let config = RetryConfig::default();
         let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = attempts.clone();
 
-        let result = with_retry(&config, || {
-            let attempts = attempts_clone.clone();
+        let result = with_retry(&config, CancellationToken::new(), || {
+            let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
                 Err::<i32, _>(ProviderError::Auth {
@@ -205,5 +217,42 @@ mod tests {
 
         assert!(matches!(result, Err(ProviderError::Auth { .. })));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    /// If the cancellation token fires during the retry backoff sleep,
+    /// with_retry should return ProviderError::Cancelled promptly.
+    #[tokio::test]
+    async fn cancellation_aborts_retry_sleep() {
+        let config = RetryConfig::new()
+            .max_retries(3)
+            .initial_interval(Duration::from_secs(60));
+
+        let cancellation = CancellationToken::new();
+
+        let start = tokio::time::Instant::now();
+        let retry_handle = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move {
+                with_retry(&config, cancellation, || async {
+                    Err::<i32, _>(ProviderError::RateLimited {
+                        provider: crate::provider::ProviderKind::Anthropic,
+                        retry_after: None,
+                    })
+                })
+                .await
+            }
+        });
+
+        // Cancel shortly after the first attempt has entered the backoff sleep.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+
+        let result = retry_handle.await.unwrap();
+
+        assert!(matches!(result, Err(ProviderError::Cancelled)));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "cancellation should abort the 60s sleep"
+        );
     }
 }

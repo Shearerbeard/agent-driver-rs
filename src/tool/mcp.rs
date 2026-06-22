@@ -47,24 +47,28 @@ use super::types::{McpServerName, ToolSchema, ToolSource};
 /// # }
 /// ```
 pub struct McpConnection {
-    name: String,
+    name: McpServerName,
     service: rmcp::service::RunningService<rmcp::RoleClient, ()>,
 }
 
 impl McpConnection {
     /// Connect to an MCP server via stdio transport
     pub async fn connect_stdio(
-        name: impl Into<String>,
+        name: impl AsRef<str>,
         command: impl AsRef<str>,
         args: &[&str],
     ) -> Result<Self, McpToolError> {
-        let name = name.into();
+        let name =
+            McpServerName::new(name.as_ref()).map_err(|reason| McpToolError::ConnectionFailed {
+                server_name: name.as_ref().to_owned(),
+                message: reason.to_owned(),
+            })?;
         let mut cmd = tokio::process::Command::new(command.as_ref());
         cmd.args(args);
 
         let transport = rmcp::transport::TokioChildProcess::new(cmd).map_err(|e| {
             McpToolError::ConnectionFailed {
-                server_name: name.clone(),
+                server_name: name.as_str().to_owned(),
                 message: e.to_string(),
             }
         })?;
@@ -74,7 +78,7 @@ impl McpConnection {
             ().serve(transport)
                 .await
                 .map_err(|e| McpToolError::ConnectionFailed {
-                    server_name: name.clone(),
+                    server_name: name.as_str().to_owned(),
                     message: e.to_string(),
                 })?;
 
@@ -86,18 +90,22 @@ impl McpConnection {
     /// Connect to an MCP server via Streamable HTTP transport
     #[cfg(feature = "mcp-http")]
     pub async fn connect_http(
-        name: impl Into<String>,
-        uri: impl Into<std::sync::Arc<str>>,
+        name: impl AsRef<str>,
+        uri: impl AsRef<str>,
     ) -> Result<Self, McpToolError> {
-        let name = name.into();
-        let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(uri);
+        let name =
+            McpServerName::new(name.as_ref()).map_err(|reason| McpToolError::ConnectionFailed {
+                server_name: name.as_ref().to_owned(),
+                message: reason.to_owned(),
+            })?;
+        let transport = rmcp::transport::StreamableHttpClientTransport::from_uri(uri.as_ref());
 
         use rmcp::ServiceExt as _;
         let service =
             ().serve(transport)
                 .await
                 .map_err(|e| McpToolError::ConnectionFailed {
-                    server_name: name.clone(),
+                    server_name: name.as_str().to_owned(),
                     message: e.to_string(),
                 })?;
 
@@ -107,17 +115,13 @@ impl McpConnection {
     }
 
     /// Discover available tools from the MCP server
-    #[allow(
-        clippy::expect_used,
-        reason = "MCP connection name is validated before discovery and reused as tool source metadata"
-    )]
     pub async fn discover_tools(&self) -> Result<Vec<DynTool>, McpToolError> {
         let mcp_tools =
             self.service
                 .list_all_tools()
                 .await
                 .map_err(|e| McpToolError::ToolDiscoveryFailed {
-                    server_name: self.name.clone(),
+                    server_name: self.name.as_str().to_owned(),
                     message: e.to_string(),
                 })?;
 
@@ -145,8 +149,7 @@ impl McpConnection {
                 schema,
             )
             .with_source(ToolSource::Mcp {
-                server_name: McpServerName::new(self.name.clone())
-                    .expect("MCP connection name is always non-empty"),
+                server_name: self.name.clone(),
             });
 
             let wrapper = McpToolWrapper {
@@ -177,7 +180,7 @@ impl McpConnection {
             .list_all_tools()
             .await
             .map_err(|e| McpToolError::ToolDiscoveryFailed {
-                server_name: self.name.clone(),
+                server_name: self.name.as_str().to_owned(),
                 message: e.to_string(),
             })
     }
@@ -194,7 +197,7 @@ impl McpConnection {
 
     /// Get the server name
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Disconnect from the MCP server
@@ -352,7 +355,7 @@ impl McpManager {
     /// Connect to an MCP server via stdio and add it to the manager
     pub async fn connect_stdio(
         &mut self,
-        name: impl Into<String>,
+        name: impl AsRef<str>,
         command: impl AsRef<str>,
         args: &[&str],
     ) -> Result<(), McpToolError> {
@@ -365,8 +368,8 @@ impl McpManager {
     #[cfg(feature = "mcp-http")]
     pub async fn connect_http(
         &mut self,
-        name: impl Into<String>,
-        uri: impl Into<std::sync::Arc<str>>,
+        name: impl AsRef<str>,
+        uri: impl AsRef<str>,
     ) -> Result<(), McpToolError> {
         let conn = McpConnection::connect_http(name, uri).await?;
         self.connections.push(conn);
@@ -522,6 +525,21 @@ mod tests {
     fn mcp_manager_default() {
         let manager = McpManager::new();
         assert_eq!(manager.server_count(), 0);
+    }
+
+    /// Empty MCP server names must be rejected at the API boundary rather than
+    /// reaching the `.expect()` in `discover_tools`.
+    #[tokio::test]
+    async fn connect_stdio_rejects_empty_name() {
+        let result = McpConnection::connect_stdio("", "nonexistent-command", &[]).await;
+        assert!(
+            matches!(
+                result,
+                Err(McpToolError::ConnectionFailed { server_name, message })
+                    if server_name.is_empty() && message == "MCP server name cannot be empty"
+            ),
+            "expected empty name error"
+        );
     }
 
     /// Verify that empty ToolInput produces `Some({})`, not `None`.

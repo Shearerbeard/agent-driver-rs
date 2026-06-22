@@ -217,7 +217,6 @@ where
 mod tests {
     use super::*;
     use crate::streaming::{CompletionMetadata, ContentBlockType, StreamDelta};
-    use futures::StreamExt;
 
     #[tokio::test]
     async fn sdk_stream_emits_events_and_on_end() {
@@ -231,7 +230,7 @@ mod tests {
             |item: &str, state: &mut u32| {
                 *state += 1;
                 vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
-                    text: item.to_string(),
+                    text: item.to_owned(),
                 }))]
             },
             |_state| {
@@ -266,7 +265,7 @@ mod tests {
             (),
             |item: &str, _: &mut ()| {
                 vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
-                    text: item.to_string(),
+                    text: item.to_owned(),
                 }))]
             },
             |_| {
@@ -296,7 +295,7 @@ mod tests {
                         block_type: ContentBlockType::Text,
                     }),
                     Ok(StreamEvent::Delta(StreamDelta::TextDelta {
-                        text: "hello".to_string(),
+                        text: "hello".to_owned(),
                     })),
                     Ok(StreamEvent::ContentBlockStop { index: 0 }),
                 ]
@@ -328,7 +327,7 @@ mod tests {
             (),
             |item: &str, _: &mut ()| {
                 vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
-                    text: item.to_string(),
+                    text: item.to_owned(),
                 }))]
             },
             |_| None, // No final event
@@ -352,7 +351,7 @@ mod tests {
             |item: &str, state: &mut u32| {
                 *state += 1;
                 vec![Ok(StreamEvent::Delta(StreamDelta::TextDelta {
-                    text: item.to_string(),
+                    text: item.to_owned(),
                 }))]
             },
             |_state| {

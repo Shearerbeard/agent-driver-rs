@@ -2,8 +2,11 @@
 
 > See also: [thinking-reasoning-status.md](thinking-reasoning-status.md) — per-provider architecture map and prioritized todo (2026-05-26)
 
-> **Created:** May 2026
+> **Created:** May 2026. **Staleness pass:** 2026-07-18.
 > **Context:** Cross-repo evaluation for replacing rig.rs in Aura orchestration mode
+>
+> Priorities here are longer-range phase mapping only. `TODO.md` is the
+> canonical active roadmap; where the two disagree, `TODO.md` wins.
 
 ## Current Status
 
@@ -35,7 +38,7 @@ The evaluation identified agent-driver-rs as **architecturally sound but early-s
 |----------|------|--------|-------|-----|
 | P0 | Fix thinking multi-turn bug (signature loss) | 1-2 days | **ADR-0002 Wave 1** — ContentBlock::Signature + RedactedThinking | ADR-0002 |
 | P0 | Bedrock thinking support | 1 day | additionalModelRequestFields.thinking, ReasoningContentBlockDelta | ADR-0002 |
-| P0 | Agent loop unit tests (Milestone 2) | 1-2 days | See test-plan.md for detailed cases | — |
+| P0 | Agent loop unit tests (Milestone 2) | Done | `tests/agent_loop.rs` on master | — |
 | P0 | MCP unit tests (Milestone 2) | 1 day | Schema conversion, content type handling | — |
 | P0 | `flush_pending()` tests (Milestone 2) | 0.5 days | Text, thinking, tool_use pending state | — |
 | P1 | Anthropic adaptive mode + effort + display | 0.5 days | Current config only covers deprecated manual mode | ADR-0002 |
@@ -46,9 +49,9 @@ The evaluation identified agent-driver-rs as **architecturally sound but early-s
 
 **Completion criteria:**
 - All existing TODO.md Milestone 1-2 items checked off
-- `cargo test --all-features` passes (215 tests at the 2026-06-20 docs audit)
+- `cargo test --all-features` passes (239 tests at the 2026-07-18 docs audit: 182 unit, 38 integration, 19 doc)
 - All 5 providers verified working with agent loop + MCP
-- Bedrock tool loop bug fixed and regression-tested
+- Bedrock tool loop bug fixed and regression-tested (done; see Milestone table M1)
 - Multi-turn conversations with extended thinking work (signature round-trip)
 
 ### Phase 1: Aura Compatibility Layer (5-7 days)
@@ -93,13 +96,16 @@ The evaluation identified agent-driver-rs as **architecturally sound but early-s
 
 | Task | Effort | Notes | ADR |
 |------|--------|-------|-----|
-| Bedrock OTel tracer integration | 1 day | Already partially planned in PLAN_NEXT_SESSION.md | — |
+| Bedrock OTel tracer integration | 1 day | Landed with the OTel/Phoenix integration (see CHANGELOG) | — |
 | Ollama OTel tracer integration | 1 day | Already partially planned | — |
 | Agent loop span creation | 1 day | Iteration + tool execution spans | — |
 | End-to-end mock provider test | 1 day | Full agent loop without live API keys | — |
 | Mock MCP server test | 0.5 days | Validate MCP ↔ agent loop wiring | — |
 
-**Note:** This work is already planned in `PLAN_NEXT_SESSION.md`. The Aura integration analysis does not change this priority.
+**Note (2026-07-18):** Most of this phase landed with the OTel/Phoenix
+integration on master (OpenInference spans, `tests/phoenix_openinference.rs`
+conformance tests). The planning doc it originally referenced
+(`PLAN_NEXT_SESSION.md`) no longer exists.
 
 ### Phase 3.5: Unified Claude Provider (2-3 days)
 
@@ -280,13 +286,13 @@ Phase 9 (Production) ◄── All previous phases
 | Milestone | Status | Target | ADR |
 |-----------|--------|--------|-----|
 | M0: Code quality review | Not started | TBD | — |
-| M1: Bedrock tool loop bug | In progress | Phase 0 | ADR-0002 |
-| M2: Agent loop tests + ADR | In progress | Phase 0 | — |
+| M1: Bedrock tool loop bug | Done (fix on master; Bedrock MCP smoke passes) | Phase 0 | ADR-0002 |
+| M2: Agent loop tests + ADR | Done (`tests/agent_loop.rs`) | Phase 0 | — |
 | M3: Unified Claude provider | Not started | Phase 3.5 | — |
-| M4: Integration tests (OTel) | In progress | Phase 3 | — |
+| M4: Integration tests (OTel) | Done (`tests/phoenix_openinference.rs`) | Phase 3 | — |
 | M5: Aura compatibility | Not started | Phase 1 | — |
 | M6: Production readiness | Not started | Phase 9 | — |
-| M7: Unit test coverage | Not started | Phase 2 | ADR-0003 |
+| M7: Unit test coverage | Partial (3 Bedrock + 1 OpenAI tests; below ADR-0003 targets) | Phase 2 | ADR-0003 |
 | M8: Live provider tests | Not started | Phase 4 | ADR-0004 |
 | M9: Prompt caching | Not started | Phase 5 | ADR-0005 |
 | M10: Multi-agent traces | Not started | Phase 7 | ADR-0006 |
@@ -297,7 +303,7 @@ Phase 9 (Production) ◄── All previous phases
 
 2. **Gemini provider priority:** Is Gemini support required for the initial Aura integration spike? Recommendation: no — use OpenRouter as fallback for the spike.
 
-3. **MCP rmcp version:** agent-driver-rs uses rmcp 0.14, Aura uses 0.12. Version drift may cause compatibility issues. Recommendation: align on latest (0.14) and update Aura.
+3. **MCP rmcp version:** Resolved for this repo: agent-driver-rs is on rmcp 1.7 (bumped 2026-06-22). Remaining question is whether Aura (last known on 0.12) aligns before integration.
 
 4. **Public API surface for 1.0:** What constitutes the stable public API? Recommendation: Provider trait, Session, SessionBuilder, AgentLoop, AgentObserver, Tool trait, ToolRegistry, StreamHandle, CollectedResponse.
 

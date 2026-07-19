@@ -12,11 +12,16 @@ A test audit (May 2026) revealed uneven unit test coverage across provider imple
 
 ### Current Coverage
 
+Counts updated 2026-07-18. The May 2026 audit found Bedrock parse and OpenAI
+`convert_messages` at zero; the June quality-audit added 3 Bedrock parser tests
+(tool-use paths only) and 1 OpenAI system-dedup test. Both remain below the
+targets in the Decision.
+
 | Provider | Parse Function | Tests | Convert Messages | Tests | Build Request | Tests |
 |----------|---------------|-------|-----------------|-------|---------------|-------|
 | Anthropic | `parse_anthropic_event` | **10** | `serialize_message` | 0 | `build_request_body` | 0 |
-| Bedrock | `parse_bedrock_event` | **0** | `convert_messages` | 4 | N/A (SDK) | — |
-| OpenAI | `parse_openai_chunk` | **4** | `convert_messages` | 0 | N/A (SDK) | — |
+| Bedrock | `parse_bedrock_event` | **3** | `convert_messages` | 4 | N/A (SDK) | — |
+| OpenAI | `parse_openai_chunk` | **4** | `convert_messages` | 1 | N/A (SDK) | — |
 | Ollama | `parse_ollama_response` | **10** | `convert_messages` | 2 | N/A (SDK) | — |
 | OpenRouter | `parse_openrouter_event` | **6** | `serialize_message` | 0 | `build_request_body` | 0 |
 
@@ -77,8 +82,8 @@ Bedrock tests require constructing AWS SDK types (`ConverseStreamOutput` variant
 
 ### 4. Test Count Targets
 
-| Provider | Current | Target | Delta |
-|----------|---------|--------|-------|
+| Provider | Current (at decision, May 2026) | Target | Delta |
+|----------|---------------------------------|--------|-------|
 | Bedrock parse | 0 | 8+ | +8 |
 | buffered_sse_stream | 0 | 4+ | +4 |
 | OpenAI convert_messages | 0 | 4+ | +4 |

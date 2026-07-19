@@ -4,7 +4,7 @@ A Rust library providing a unified abstraction over multiple LLM providers with 
 
 ## Features
 
-- **5-provider support**: Anthropic Claude, OpenAI (GPT-4o, o3), AWS Bedrock, OpenRouter, Ollama
+- **5-provider support**: Anthropic Claude, OpenAI (GPT-4o, GPT-5.x, o-series), AWS Bedrock, OpenRouter, Ollama
 - **Streaming-first**: All providers emit standard `StreamEvent` types
 - **Tool calling**: Dynamic tool registration, JSON Schema input validation, native + MCP tools
 - **Agent loop**: Typed infrastructure for multi-turn tool-calling conversations with observer pattern

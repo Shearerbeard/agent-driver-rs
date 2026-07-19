@@ -54,6 +54,12 @@ lib.rs
   |   +-- handle.rs           (TaskHandle -- JoinHandle wrapper with cancellation)
   |   +-- spawn.rs            (TrackedSpawn -- extension trait for CorrelationId)
   |
+  +-- otel/                   (depends on: nothing internal) [feature = "phoenix"]
+  |   +-- mod.rs              (init_phoenix, shutdown_phoenix, tracer registry;
+  |   |                        reads PHOENIX_ENDPOINT, default http://localhost:4317)
+  |   +-- instrumentation.rs  (OpenInference spans: AgentLoopSpan, ToolSpan,
+  |                            SessionOperationSpan, SpanKind, attr constants)
+  |
   +-- session.rs              (depends on: provider, streaming, tool, types, error)
   |   Session, SessionBuilder, SessionConfig
   |

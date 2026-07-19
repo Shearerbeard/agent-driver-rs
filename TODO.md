@@ -33,12 +33,12 @@ echo "What is 2+2? Think about it first." | PROVIDER=anthropic cargo run --featu
 
 **Status:** Proposed — test foundation, must precede live tests.
 
-### P0: Critical gaps (zero coverage)
-- [ ] **Bedrock `parse_bedrock_event`** (8+ tests) — MessageStart, ContentBlockStart (text vs tool_use), ContentBlockDelta, ContentBlockStop, MessageStop, Metadata, malformed input, parallel tool calls
+### P0: Critical gaps
+- [ ] **Bedrock `parse_bedrock_event`** (3 of 8+ done; tool-use paths only, via the June quality audit) — still missing MessageStart, ContentBlockStart text, ContentBlockStop, MessageStop, Metadata, malformed input, parallel tool calls
 - [ ] **`buffered_sse_stream`** (4+ tests) — SSE framing, partial events, reconnection, malformed data
 
 ### P1: Format divergence risk
-- [ ] **OpenAI `convert_messages`** (4+ tests) — role mapping, tool_use blocks, tool result blocks, empty messages
+- [ ] **OpenAI `convert_messages`** (1 of 4+ done: system-dedup) — still missing role mapping, tool_use blocks, tool result blocks, empty messages
 - [ ] **OpenRouter `serialize_message`** (3+ tests) — shares Anthropic SSE path but own serialization
 - [ ] **Anthropic `serialize_message` / `build_request_body`** (3+ tests) — lowest risk, well-exercised via examples
 
@@ -124,6 +124,12 @@ These can run alongside any wave:
 - [x] Add minimal CI compile workflow for the public-dependency feature set (excludes `schema-sanitize` private git dependency)
 - [x] Add ADR-0007 clippy, cargo-deny, and cargo-shear gates
 
+### Rust Quality Audit (2026-06-21, completed)
+Stages 1-5 of the quality audit are done; P0/P1 fixes (HashMap tool-delta
+accumulation, `ProviderContext::default()` removal, `#[non_exhaustive]`,
+Bedrock parser tests) landed on master. Full logs:
+`docs/rust-quality-audit-plan.md` and `docs/rust-quality-audit-checklist.md`.
+
 ### Tier 1: ADR-0007 — Codex-Style Lint & Tooling Adoption
 - [x] Layer A: `clippy.toml` (`await-holding-invalid-types`, test-only unwrap/expect allowances, anti-slop methods)
 - [x] Layer B: promote codex core clippy set to `deny`, one lint per commit
@@ -159,7 +165,7 @@ These can run alongside any wave:
 - [x] ADR-0004: Live Provider Integration Tests (Proposed)
 - [x] ADR-0005: Prompt Caching Support (Proposed)
 - [x] ADR-0006: Multi-Agent Trace Composition (Proposed)
-- [x] ADR-0007: Codex-Style Lint & Tooling Adoption (Proposed)
+- [x] ADR-0007: Codex-Style Lint & Tooling Adoption (Accepted 2026-07-18; Dylint and stricter waves deferred)
 
 ### Core Infrastructure
 - [x] Core types with validation (ModelId, ToolName, etc.)

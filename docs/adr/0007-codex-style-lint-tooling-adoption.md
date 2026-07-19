@@ -1,7 +1,14 @@
 # ADR-0007: Codex-Style Lint & Tooling Adoption
 
-**Status:** Proposed
-**Date:** 2026-06-20
+**Status:** Accepted
+**Date:** 2026-06-20 (accepted 2026-07-18)
+
+**Implementation note (2026-07-18):** Layers A-D are in-tree (`clippy.toml`,
+`Cargo.toml` `[lints]`, `deny.toml` + `make deny`, `make unused-deps` via
+cargo-shear). Deviations from the text below: `[bans] multiple-versions` shipped
+as `"allow"` rather than `"warn"`, and `[advisories] ignore` is empty (the scan
+is clean, so no reviewed-ignore entries were needed). `disallowed-methods` and
+the `println!`/`eprintln!` ban remain deferred follow-ups as planned.
 **Context tags:** [linting] [tooling] [quality] [ci]
 
 ## Context

@@ -45,7 +45,7 @@ What becomes easier or harder as a result?
 | [0004](0004-live-provider-integration-tests.md) | Live Provider Integration Tests | Proposed | testing, provider, integration, ci | **Wave 3** (live validation) |
 | [0005](0005-prompt-caching-support.md) | Prompt Caching Support Across Providers | Proposed | caching, provider, performance, telemetry | **Wave 4** (performance) |
 | [0006](0006-multi-agent-trace-composition.md) | Multi-Agent Trace Composition with OpenInference | Proposed | otel, phoenix, multi-agent, tracing, architecture | **Wave 5** (observability) |
-| [0007](0007-codex-style-lint-tooling-adoption.md) | Codex-Style Lint & Tooling Adoption | Proposed | linting, tooling, quality, ci | **Parallel track** (Tier 1 iterative) |
+| [0007](0007-codex-style-lint-tooling-adoption.md) | Codex-Style Lint & Tooling Adoption | Accepted | linting, tooling, quality, ci | **Parallel track** (Tier 1 done; follow-ups deferred) |
 
 ## Implementation Order
 

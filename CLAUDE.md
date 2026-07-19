@@ -176,7 +176,7 @@ Design decisions are documented in `docs/adr/`. Read these before making archite
 - **ADR-0004:** Live Provider Integration Tests (Proposed)
 - **ADR-0005:** Prompt Caching Support Across Providers (Proposed)
 - **ADR-0006:** Multi-Agent Trace Composition with OpenInference (Proposed)
-- **ADR-0007:** Codex-Style Lint & Tooling Adoption (Proposed)
+- **ADR-0007:** Codex-Style Lint & Tooling Adoption (Accepted)
 - See `docs/adr/README.md` for the full index and ADR format
 
 When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on _context and consequences_, not implementation details.
@@ -190,7 +190,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 **Current Priorities (in order):**
 
 1. **ADR-0002** (Wave 1): Fix thinking/reasoning — signature loss (multi-turn broken), Bedrock thinking, Anthropic adaptive mode, OpenAI dead config
-2. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (0 tests), SSE adapter (0 tests), OpenAI convert_messages
+2. **ADR-0003** (Wave 2): Unit test coverage — Bedrock parse (3 tests, tool-use paths only), SSE adapter (0 tests), OpenAI convert_messages (1 test)
 3. **ADR-0004** (Wave 3): Live integration tests — parameterized `tests/live_provider.rs`, Ollama + Bedrock P0
 4. **ADR-0005** (Wave 4): Prompt caching support — `PromptCacheConfig`, `TokenUsage` cache fields, provider headers
 5. **ADR-0006** (Wave 5): Multi-agent trace composition — `AgentTopology` enum, W3C context propagation, `graph.node.*` spans

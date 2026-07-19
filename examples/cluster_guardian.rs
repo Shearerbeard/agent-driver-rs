@@ -18,7 +18,7 @@
 //!   cargo run --example cluster_guardian --features "ollama mcp-http schema-sanitize"
 //! ```
 //!
-//! Set `OLLAMA_HOST` to point at a remote Ollama instance (default: `http://localhost:11434`).
+//! Set `OLLAMA_BASE_URL` to point at a remote Ollama instance (default: `http://localhost:11434`).
 //! Requires a running Ollama instance and the 3 MCP servers to be reachable.
 
 use std::io::{self, Read};
@@ -133,7 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // ── 1. Ollama provider ───────────────────────────────────────────────
-    let base_url: url::Url = std::env::var("OLLAMA_HOST")
+    let base_url: url::Url = std::env::var("OLLAMA_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:11434".into())
         .parse()?;
     let max_tokens = MaxTokens::new(2000).expect("2000 is non-zero");

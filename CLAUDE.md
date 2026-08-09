@@ -183,7 +183,9 @@ When proposing a significant architectural change (new subsystem, protocol integ
 
 ## Task Tracking
 
-- **TODO.md**: Canonical active roadmap and next actions
+- **`.boardkit/boards/adr/`**: Canonical library board (boardkit; created
+  2026-08-09). Start at its generated `docs/board/cards/INDEX.md` /
+  `board.md` views; `TODO.md` is a pointer header into it.
 - **docs/internal/agent-driver-roadmap.md**: Longer-range phase mapping
 - **docs/adr/README.md**: ADR index with implementation order
 

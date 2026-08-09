@@ -15,3 +15,6 @@
 
 # Claude Code local settings
 .claude/
+
+# Boardkit machine-local overlay (the manifest is committed; paths are not)
+.boardkit/local.toml

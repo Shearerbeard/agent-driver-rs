@@ -23,6 +23,7 @@ commit history.
   credentials and `BEDROCK_INFERENCE_PROFILE`.
 - Added a README run/test cheat sheet and marked `TODO.md` as the canonical
   active roadmap.
+- Added a minimal CI compile workflow for the public feature set.
 - Replaced the private `mcp-openai-bridge` git dependency behind `schema-sanitize`
   with a local port of the two sanitizer functions from `mezmo/aura` (Apache-2.0,
   attribution in `src/tool/schema_sanitize.rs` and `NOTICE`); every `cargo`

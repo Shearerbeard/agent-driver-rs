@@ -1,6 +1,6 @@
 # Phoenix/OTel + MCP infrastructure for agent-driver-rs tracing and tool testing
 #
-# Remote Phoenix instance: your-phoenix-host
+# Remote Phoenix instance: point PHOENIX_ENDPOINT at your own host
 #   export PHOENIX_ENDPOINT=http://your-phoenix-host:4317
 #
 # This compose file is for local development when the remote instance is unavailable.

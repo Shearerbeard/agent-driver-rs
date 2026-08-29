@@ -40,9 +40,15 @@ where
     env_parse_opt(var).map(Option::unwrap_or_default)
 }
 
-/// API key newtype (redacted in Debug output)
-#[derive(Clone, Serialize)]
-#[serde(transparent)]
+/// Placeholder written in place of the key whenever an `ApiKey` is rendered.
+///
+/// Serialization deliberately does not round-trip: a config written out and
+/// read back would otherwise install this sentinel as a live key, so
+/// `Deserialize` rejects it explicitly rather than failing later at auth time.
+const REDACTED: &str = "[REDACTED]";
+
+/// API key newtype (redacted in both `Debug` and `Serialize` output)
+#[derive(Clone)]
 pub struct ApiKey(String);
 
 impl ApiKey {
@@ -67,19 +73,35 @@ impl ApiKey {
     }
 }
 
+/// Emits [`REDACTED`] rather than the key, so serializing a provider config
+/// into logs, telemetry, or an on-disk snapshot cannot leak key material.
+impl Serialize for ApiKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(REDACTED)
+    }
+}
+
 impl<'de> Deserialize<'de> for ApiKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
+        if s == REDACTED {
+            return Err(serde::de::Error::custom(
+                "API key is the redaction placeholder; serialized configs carry no key material",
+            ));
+        }
         Self::new(s).map_err(serde::de::Error::custom)
     }
 }
 
 impl std::fmt::Debug for ApiKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ApiKey([REDACTED])")
+        write!(f, "ApiKey({REDACTED})")
     }
 }
 
@@ -160,6 +182,21 @@ mod tests {
     #[test]
     fn api_key_rejects_empty() {
         ApiKey::new("").unwrap_err();
+    }
+
+    #[test]
+    fn api_key_redacted_in_serialize() {
+        let key = ApiKey::new("sk-secret-key").unwrap();
+        let json = serde_json::to_string(&key).unwrap();
+        assert!(!json.contains("sk-secret"));
+        assert!(json.contains("REDACTED"));
+    }
+
+    #[test]
+    fn api_key_rejects_redaction_placeholder() {
+        // A serialized config must not silently round-trip into a bogus key.
+        let json = serde_json::to_string(&ApiKey::new("sk-secret-key").unwrap()).unwrap();
+        serde_json::from_str::<ApiKey>(&json).unwrap_err();
     }
 
     #[test]

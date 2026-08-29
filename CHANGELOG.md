@@ -36,6 +36,7 @@ commit history.
 
 ## 2026-02-09
 
-- Recorded benchmark results comparing agent-driver-rs against rig.rs for
-  cold start, time-to-first-token, tool round trip, MCP discovery, and MCP
-  round trip. See `TODO.md` for current investigation items.
+- Added a standalone benchmark harness in `bench/` covering cold start,
+  time-to-first-token, tool round trip, MCP discovery, and MCP round trip.
+  Run it yourself; published figures are not carried here, since results
+  depend heavily on provider, network, and machine.

@@ -19,6 +19,8 @@
 //! ```
 //!
 //! Set `OLLAMA_BASE_URL` to point at a remote Ollama instance (default: `http://localhost:11434`).
+//! Set `K8S_MCP_URL`, `MEMORY_MCP_URL`, and `HITL_MCP_URL` to point at the MCP
+//! servers; each defaults to a bare service name on its standard port.
 //! Requires a running Ollama instance and the 3 MCP servers to be reachable.
 
 use std::io::{self, Read};
@@ -164,20 +166,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // ── 3. MCP HTTP servers (parallel connect) ───────────────────────────
+    // Endpoints are deployment-specific: the defaults below assume the three
+    // servers resolve by bare service name. Override per environment.
+    let mcp_uri =
+        |var: &str, default: &str| std::env::var(var).unwrap_or_else(|_| default.to_owned());
+
     let mut manager = McpManager::new();
     let errors = manager
         .connect_all_http(vec![
             McpHttpSpec {
                 name: "kubernetes".into(),
-                uri: "http://kubernetes-mcp-server.example:8080/mcp".into(),
+                uri: mcp_uri("K8S_MCP_URL", "http://kubernetes-mcp-server:8080/mcp"),
             },
             McpHttpSpec {
                 name: "memory".into(),
-                uri: "http://basic-memory.example:8000/mcp".into(),
+                uri: mcp_uri("MEMORY_MCP_URL", "http://basic-memory:8000/mcp"),
             },
             McpHttpSpec {
                 name: "hitl".into(),
-                uri: "http://hitl-mcp-server.example:8080/mcp".into(),
+                uri: mcp_uri("HITL_MCP_URL", "http://hitl-mcp-server:8080/mcp"),
             },
         ])
         .await;

@@ -183,9 +183,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 
 ## Task Tracking
 
-- **`.boardkit/boards/adr/`**: Canonical library board (boardkit; created
-  2026-08-09). Start at its generated `docs/board/cards/INDEX.md` /
-  `board.md` views; `TODO.md` is a pointer header into it.
+- **TODO.md**: Wave-by-wave work items for the library
 - **docs/internal/agent-driver-roadmap.md**: Longer-range phase mapping
 - **docs/adr/README.md**: ADR index with implementation order
 
@@ -203,7 +201,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 - Toolchain modernization — MSRV 1.91.1, edition 2024, `rust-toolchain.toml` pinning stable
 - Dependency modernization — `async-openai` 0.41, AWS SDK 1.135, `thiserror` 2, `backoff` removed, OTel 0.32; cargo-deny exceptions 6 → 0
 - OTel/Phoenix integration — OpenInference-compliant spans (AGENT/CHAIN/TOOL), 7 conformance tests
-- Phoenix: `your-phoenix-host` (port 4317 OTLP, port 6006 UI)
+- Phoenix: self-hosted, set via `PHOENIX_ENDPOINT` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`
 - ADR-0001: Tool System & MCP Integration (Accepted)
 - ADR-0002 through ADR-0007: All written and reviewed

@@ -1,8 +1,20 @@
 /target
 /bench/target
 
-# Environment file with secrets
+# Environment files with secrets
 .env
+.env.*
+!.env.example
+.envrc
+.direnv/
+
+# Credential material
+*.pem
+*.key
+*.p12
+*.pfx
+credentials
+credentials.*
 
 # IDE
 .idea/
@@ -16,5 +28,5 @@
 # Claude Code local settings
 .claude/
 
-# Boardkit machine-local overlay (the manifest is committed; paths are not)
-.boardkit/local.toml
+# Local board / planning state, kept outside this repo
+.boardkit/

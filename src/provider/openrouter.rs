@@ -266,7 +266,7 @@ impl OpenRouterProvider {
         // OpenRouter recommended headers
         headers.insert(
             "HTTP-Referer",
-            HeaderValue::from_static("https://github.com/agent-driver-rs"),
+            HeaderValue::from_static("https://github.com/Shearerbeard/agent-driver-rs"),
         );
         headers.insert("X-Title", HeaderValue::from_static("agent-driver-rs"));
 

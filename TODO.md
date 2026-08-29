@@ -121,7 +121,7 @@ These can run alongside any wave:
 - [x] Add README run/test cheat sheet
 - [x] Mark `TODO.md` as canonical active roadmap and demote `docs/next-session.md` to historical handoff snapshot
 - [x] Add `CHANGELOG.md`
-- [x] Add minimal CI compile workflow for the public-dependency feature set (excludes `schema-sanitize` private git dependency)
+- [x] Add minimal CI compile workflow for the public feature set (`schema-sanitize` joined it once its private git dependency was replaced by a local port)
 - [x] Add ADR-0007 clippy, cargo-deny, and cargo-shear gates
 
 ### Rust Quality Audit (2026-06-21, completed)

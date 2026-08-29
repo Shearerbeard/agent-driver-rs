@@ -11,7 +11,7 @@ jobs:
     name: public feature compile
     runs-on: ubuntu-latest
     env:
-      PUBLIC_FEATURES: anthropic openai openrouter bedrock ollama mcp mcp-http phoenix test-support
+      PUBLIC_FEATURES: anthropic openai openrouter bedrock ollama mcp mcp-http phoenix test-support schema-sanitize
     steps:
       - name: Checkout
         uses: actions/checkout@v4

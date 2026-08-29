@@ -34,6 +34,7 @@ lib.rs
   |   +-- executor.rs         (Tool trait, ToolContext, ToolInput, ToolResult, DynTool, FnTool)
   |   +-- registry.rs         (ToolRegistry -- RwLock<HashMap<ToolName, DynTool>>)
   |   +-- serializer.rs       (ToolFormat -- Claude/OpenAI serialization)
+  |   +-- schema_sanitize.rs  (OpenAI strict-mode schema rewrites) [feature = "schema-sanitize"]
   |   +-- mcp.rs              (McpConnection, McpManager) [feature = "mcp"]
   |
   +-- provider/               (depends on: types, error, streaming, tool)

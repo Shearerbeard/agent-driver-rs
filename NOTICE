@@ -1,0 +1,8 @@
+agent-driver-rs
+
+This product includes code derived from the `aura` crate in
+https://github.com/mezmo/aura (Apache License, Version 2.0), file
+crates/aura/src/schema_sanitize.rs at commit
+8b114b9f0f4cea589a1c50b868d06fe04fb96042, carried in
+src/tool/schema_sanitize.rs with the changes listed in that file's header.
+Copyright Mezmo and the aura contributors.

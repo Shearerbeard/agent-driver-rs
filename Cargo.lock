@@ -15,7 +15,6 @@ dependencies = [
  "clap",
  "dotenvy",
  "futures",
- "mcp-openai-bridge",
  "ollama-rs",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -1778,18 +1777,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
-]
-
-[[package]]
-name = "mcp-openai-bridge"
-version = "0.1.0"
-source = "git+ssh://git@github.com/example-org/mcp-openai-bridge.git?rev=b505bfe2da648b02b598ea2b29e466ccb27cfd83#b505bfe2da648b02b598ea2b29e466ccb27cfd83"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]

@@ -69,8 +69,8 @@ impl ToolSchema {
         }
 
         let mut val = self.to_value();
-        mcp_openai_bridge::fix_empty_root_required(&mut val);
-        mcp_openai_bridge::recursive_set_additional_properties_false(&mut val);
+        super::schema_sanitize::fix_empty_root_required(&mut val);
+        super::schema_sanitize::recursive_set_additional_properties_false(&mut val);
         Self::from_value(val).unwrap_or_default()
     }
 }

@@ -35,6 +35,3 @@ unknown-registry = "deny"
 unknown-git = "deny"
 required-git-spec = "rev"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = [
-    "ssh://git@github.com/example-org/mcp-openai-bridge.git",
-]

@@ -9,6 +9,8 @@
 mod definition;
 mod executor;
 mod registry;
+#[cfg(feature = "schema-sanitize")]
+mod schema_sanitize;
 mod serializer;
 mod types;
 

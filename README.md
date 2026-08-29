@@ -77,7 +77,7 @@ gotchas, see `docs/manual-testing.md`.
 | `ollama` | Ollama local models | `ollama-rs` |
 | `mcp` | MCP tool integration | `rmcp` |
 | `mcp-http` | MCP streamable HTTP transport | `mcp`, `rmcp/transport-streamable-http-client-reqwest` |
-| `schema-sanitize` | OpenAI strict schema sanitization | `mcp-openai-bridge` |
+| `schema-sanitize` | OpenAI strict schema sanitization | — |
 | `phoenix` | OpenTelemetry/Phoenix tracing | `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` |
 | `test-support` | Expose `MockProvider` for integration tests | — |
 

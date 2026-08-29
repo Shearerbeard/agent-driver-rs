@@ -14,7 +14,7 @@ openrouter = []
 ollama = ["dep:ollama-rs"]
 mcp = ["dep:rmcp"]
 mcp-http = ["mcp", "rmcp/transport-streamable-http-client-reqwest"]
-schema-sanitize = ["dep:mcp-openai-bridge"]
+schema-sanitize = []
 phoenix = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 test-support = []
 
@@ -56,7 +56,6 @@ aws-config = { version = "1", default-features = false, features = ["default-htt
 aws-smithy-types = { version = "1", optional = true }
 ollama-rs = { version = "0.3", features = ["stream"], optional = true }
 rmcp = { version = "1.7", features = ["client", "transport-child-process"], optional = true }
-mcp-openai-bridge = { git = "ssh://git@github.com/example-org/mcp-openai-bridge.git", rev = "b505bfe2da648b02b598ea2b29e466ccb27cfd83", default-features = false, optional = true }
 
 # OpenTelemetry for Phoenix (optional)
 opentelemetry = { version = "0.32", features = ["trace"], optional = true }

@@ -154,6 +154,7 @@ At minimum set `PROVIDER` to one of `anthropic`, `openai`, `bedrock`,
 - `docs/PROVIDERS.md` — provider comparison and configuration
 - `docs/adr/` — architecture decision records
 - `docs/manual-testing.md` — testing checklist
+- Internal planning docs (roadmap, test plans, session notes) live in the `boards/agent-driver-rs-adr` board of the `aura-session-docs` wiki and are intentionally not tracked in this repo.
 
 ## Benchmarks
 

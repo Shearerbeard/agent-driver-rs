@@ -164,6 +164,10 @@ A standalone benchmark harness lives in `bench/`. It compares agent-driver-rs ag
 cd bench && cargo run --release -- -n 20 -w 3 --json
 ```
 
+## Known issues
+
+- Four bugs — the cancellation no-op, correlation-id collisions, the retry panic, and the Anthropic zero-token bug — are fixed on the `worktree-audit-rust-standards-2026-07` branch, which lands as the first public PR ahead of external review; this snapshot does not yet include those fixes.
+
 ## License
 
 Licensed under either of
@@ -174,6 +178,8 @@ Licensed under either of
 at your option.
 
 ### Contribution
+
+Enable the local pre-commit secret scan with `git config core.hooksPath .githooks` (requires [gitleaks](https://github.com/gitleaks/gitleaks) on your `PATH`).
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be

@@ -201,6 +201,12 @@ impl BedrockConfig {
         }
 
         if let Some(thinking) = &self.thinking {
+            if thinking.budget_tokens() < BedrockThinkingConfig::MIN_BUDGET {
+                return Err(ConfigError::InvalidValue {
+                    field: "thinking.budget_tokens".to_owned(),
+                    reason: format!("must be >= {}", BedrockThinkingConfig::MIN_BUDGET),
+                });
+            }
             if thinking.budget_tokens() >= self.max_tokens.get() {
                 return Err(ConfigError::InvalidValue {
                     field: "thinking.budget_tokens".to_owned(),
@@ -276,5 +282,29 @@ mod tests {
             thinking: None,
         };
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn thinking_budget_boundary() {
+        assert!(BedrockThinkingConfig::new(1023).is_err());
+        assert!(BedrockThinkingConfig::new(1024).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_a_deserialized_budget_below_the_minimum() {
+        // serde construction bypasses BedrockThinkingConfig::new, so
+        // validate() is the backstop for the floor.
+        let config = BedrockConfig {
+            region: AwsRegion::US_EAST_1,
+            model: BedrockModel::ClaudeSonnet4_5,
+            max_tokens: crate::types::MaxTokens::new(4096).unwrap(),
+            temperature: None,
+            inference_profile: None,
+            thinking: Some({
+                let raw = r#"{"budget_tokens": 1023}"#;
+                serde_json::from_str(raw).unwrap()
+            }),
+        };
+        assert!(config.validate().is_err());
     }
 }

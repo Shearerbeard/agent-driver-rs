@@ -133,9 +133,7 @@ impl BedrockProvider {
 /// Replayed `Thinking` blocks take the wire shape the configured mode
 /// expects: with thinking configured they replay as `ReasoningContent`
 /// blocks (Claude's round-trip shape); without it they flatten to
-/// `<thinking>` text, preserving the historical behavior for models that
-/// do not accept reasoning input. The reasoning text replays without its
-/// signature until the message type carries one (A2's signature work).
+/// `<thinking>` text for models that do not accept reasoning input.
 fn convert_messages(
     messages: &[crate::types::Message],
     thinking_enabled: bool,
@@ -491,10 +489,10 @@ fn blocks_compatible(existing: &[BedrockContentBlock], new: &[BedrockContentBloc
 /// Build the wire shape for one replayed `Thinking` block.
 ///
 /// With thinking configured, the block replays as a `ReasoningContent`
-/// block (Claude's round-trip shape). Without it, the block flattens to
-/// `<thinking>` text so models that reject reasoning input still receive
-/// the context. An empty reasoning text returns `None`: Bedrock rejects a
-/// `ReasoningContent` block with no content.
+/// block. Without it, the block flattens to `<thinking>` text so models
+/// that reject reasoning input still receive the context. An empty
+/// reasoning text returns `None`: Bedrock rejects a `ReasoningContent`
+/// block with no content.
 fn replay_thinking_block(text: &str, thinking_enabled: bool) -> Option<BedrockContentBlock> {
     if !thinking_enabled {
         return Some(BedrockContentBlock::Text(format!(
@@ -1061,8 +1059,7 @@ mod tests {
     }
 
     /// A reasoning signature delta surfaces as SignatureDelta: the stream
-    /// vocabulary carries it so downstream accumulation (A2's signature
-    /// work) can retain it, even though the message type cannot yet.
+    /// vocabulary carries it so downstream accumulation can retain it.
     #[test]
     fn reasoning_signature_delta_surfaces_as_signature_delta() {
         let mut state = StreamState::default();
@@ -1080,7 +1077,7 @@ mod tests {
     }
 
     /// Redacted reasoning produces no event: the library has no
-    /// redacted-thinking vocabulary yet (A2's item owns it).
+    /// redacted-thinking vocabulary yet.
     #[test]
     fn redacted_reasoning_delta_produces_no_event() {
         let mut state = StreamState::default();

@@ -6,6 +6,14 @@ commit history.
 
 ## Unreleased
 
+- Bedrock extended thinking support: `BedrockConfig.thinking`
+  (`BEDROCK_THINKING_BUDGET`) sends the `additionalModelRequestFields`
+  thinking block for Claude-family models; `reasoningContent` deltas from
+  `converse_stream` surface as `ThinkingDelta` (text) and `SignatureDelta`
+  (signature) instead of being dropped; replayed `Thinking` blocks take the
+  `ReasoningContent` wire shape when thinking is configured and keep the
+  `<thinking>` text flattening otherwise. The reasoning signature is
+  emitted on the stream but not yet retained on the message type.
 - Toolchain modernization: MSRV 1.91.1 declared, `rust-toolchain.toml` pins
   stable, migrated to edition 2024.
 - Dependency modernization: `async-openai` 0.28→0.41 (removes transitive

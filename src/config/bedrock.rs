@@ -26,6 +26,49 @@ pub struct BedrockConfig {
     /// Inference profile ARN (for cross-region inference)
     #[serde(default)]
     pub inference_profile: Option<String>,
+
+    /// Extended thinking configuration (Claude family). When set, the
+    /// request carries the `additionalModelRequestFields` thinking block
+    /// and reasoning deltas flow as `ThinkingDelta`/`SignatureDelta`.
+    /// Models that reason by default (DeepSeek class) return
+    /// `reasoningContent` with no request field; leave this `None` for
+    /// them.
+    #[serde(default)]
+    pub thinking: Option<BedrockThinkingConfig>,
+}
+
+/// Extended thinking configuration for Bedrock (mirrors the direct
+/// Anthropic `ThinkingConfig` budget semantics).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub struct BedrockThinkingConfig {
+    budget_tokens: u32,
+}
+
+impl BedrockThinkingConfig {
+    /// Minimum allowed thinking budget tokens (per the Bedrock Converse
+    /// API requirements, same floor as Anthropic's).
+    pub const MIN_BUDGET: u32 = 1024;
+
+    /// Create a thinking config with validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::InvalidValue`] when the budget is below
+    /// [`Self::MIN_BUDGET`].
+    pub fn new(budget_tokens: u32) -> Result<Self, ConfigError> {
+        if budget_tokens < Self::MIN_BUDGET {
+            return Err(ConfigError::InvalidValue {
+                field: "budget_tokens".to_owned(),
+                reason: format!("must be >= {}", Self::MIN_BUDGET),
+            });
+        }
+        Ok(Self { budget_tokens })
+    }
+
+    /// The thinking budget token count.
+    pub fn budget_tokens(self) -> u32 {
+        self.budget_tokens
+    }
 }
 
 /// Bedrock model specification
@@ -122,12 +165,17 @@ impl BedrockConfig {
 
         let inference_profile = std::env::var("BEDROCK_INFERENCE_PROFILE").ok();
 
+        let thinking = env_parse_opt::<u32>("BEDROCK_THINKING_BUDGET")?
+            .map(BedrockThinkingConfig::new)
+            .transpose()?;
+
         Ok(Self {
             region,
             model,
             max_tokens,
             temperature,
             inference_profile,
+            thinking,
         })
     }
 
@@ -150,6 +198,15 @@ impl BedrockConfig {
                     self.model.display_name()
                 ),
             });
+        }
+
+        if let Some(thinking) = &self.thinking {
+            if thinking.budget_tokens() >= self.max_tokens.get() {
+                return Err(ConfigError::InvalidValue {
+                    field: "thinking.budget_tokens".to_owned(),
+                    reason: "must be < max_tokens".into(),
+                });
+            }
         }
 
         Ok(())
@@ -193,6 +250,7 @@ mod tests {
             max_tokens: crate::types::MaxTokens::new(100).unwrap(),
             temperature: None,
             inference_profile: None,
+            thinking: None,
         };
         config.validate().unwrap_err();
 
@@ -202,6 +260,7 @@ mod tests {
             max_tokens: crate::types::MaxTokens::new(100).unwrap(),
             temperature: None,
             inference_profile: Some("arn:aws:bedrock:us-east-1:123:profile/foo".into()),
+            thinking: None,
         };
         config.validate().unwrap();
     }
@@ -214,6 +273,7 @@ mod tests {
             max_tokens: crate::types::MaxTokens::new(100).unwrap(),
             temperature: None,
             inference_profile: None,
+            thinking: None,
         };
         config.validate().unwrap();
     }

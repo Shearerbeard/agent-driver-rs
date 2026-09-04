@@ -1016,7 +1016,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // A19: reasoning capture, replay shape, and the thinking request field
+    // Reasoning capture, replay shape, and the thinking request field
     // -------------------------------------------------------------------
 
     use aws_sdk_bedrockruntime::types::ReasoningContentBlockDelta as BedrockReasoningContentBlockDelta;
@@ -1110,7 +1110,11 @@ mod tests {
             BedrockContentBlock::ReasoningContent(reasoning) => {
                 let text = reasoning.as_reasoning_text().unwrap();
                 assert_eq!(text.text(), "7 times 13");
-                assert_eq!(text.signature(), None, "no signature in the type yet (A2)");
+                assert_eq!(
+                    text.signature(),
+                    None,
+                    "signature is not stored on Thinking content blocks"
+                );
             }
             other => panic!("expected ReasoningContent, got {other:?}"),
         }

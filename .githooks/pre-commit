@@ -1,0 +1,13 @@
+#!/bin/sh
+# Pre-commit secret scan (gitleaks).
+# Activate once per clone:  git config core.hooksPath .githooks
+# Requires gitleaks on PATH: https://github.com/gitleaks/gitleaks
+
+# Warn-and-skip for contributors who have not installed gitleaks;
+# CI-level scanning, not this hook, is the enforcement backstop.
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks not found on PATH; skipping secret scan" >&2
+    exit 0
+fi
+
+gitleaks protect --staged --redact

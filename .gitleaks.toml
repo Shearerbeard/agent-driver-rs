@@ -1,0 +1,17 @@
+# Extends the default gitleaks rule set; adds allowlists for known false positives only.
+# Config docs: https://github.com/gitleaks/gitleaks#configuration
+title = "agent-driver-rs gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+# Default rule inherited; only allowlists are added below.
+
+[[rules.allowlists]]
+description = "token-count prose in planning docs: '... 3921 -> 2113 est tokens, card-name 3077 -> 2064'"
+condition = "AND"
+regexTarget = "line"
+regexes = ['''est tokens, [\w-]+ \d+ -> \d+''']
+paths = ['''^docs/''']

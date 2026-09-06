@@ -71,10 +71,6 @@ name = "chat"
 path = "src/bin/chat.rs"
 
 [[example]]
-name = "cluster_guardian"
-required-features = ["ollama", "mcp-http", "schema-sanitize"]
-
-[[example]]
 name = "phoenix_demo"
 required-features = ["phoenix"]
 

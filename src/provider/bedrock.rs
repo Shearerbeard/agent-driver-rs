@@ -63,7 +63,7 @@ impl BedrockProvider {
                 streaming: true,
                 tools: true,
                 vision: true,
-                extended_thinking: false,
+                extended_thinking: config.thinking.is_some(),
                 max_context_tokens: Some(200_000),
             },
         };
@@ -80,7 +80,8 @@ impl BedrockProvider {
         &self,
         messages: &[crate::types::Message],
     ) -> Result<Vec<BedrockMessage>, ProviderError> {
-        convert_messages(messages)
+        let thinking_enabled = self.config.thinking.is_some();
+        convert_messages(messages, thinking_enabled)
     }
 
     /// Convert our tools to Bedrock format
@@ -128,8 +129,14 @@ impl BedrockProvider {
 /// appends a separate `Role::Tool` message per result. Since `Role::Tool` maps
 /// to `ConversationRole::User`, consecutive tool-result messages must be merged
 /// into a single Bedrock User message to satisfy the alternation constraint.
+///
+/// Replayed `Thinking` blocks take the wire shape the configured mode
+/// expects: with thinking configured they replay as `ReasoningContent`
+/// blocks (Claude's round-trip shape); without it they flatten to
+/// `<thinking>` text for models that do not accept reasoning input.
 fn convert_messages(
     messages: &[crate::types::Message],
+    thinking_enabled: bool,
 ) -> Result<Vec<BedrockMessage>, ProviderError> {
     // Phase 1: Convert content blocks, merging consecutive same-role entries.
     let mut pairs: Vec<(ConversationRole, Vec<BedrockContentBlock>)> = Vec::new();
@@ -150,10 +157,10 @@ fn convert_messages(
                     content_blocks.push(BedrockContentBlock::Text(text.clone()));
                 }
                 ContentBlock::Thinking { text } => {
-                    // Bedrock doesn't have a thinking block, include as text
-                    content_blocks.push(BedrockContentBlock::Text(format!(
-                        "<thinking>{text}</thinking>"
-                    )));
+                    match replay_thinking_block(text, thinking_enabled) {
+                        Some(block) => content_blocks.push(block),
+                        None => continue,
+                    }
                 }
                 ContentBlock::ToolUse { id, name, input } => {
                     content_blocks.push(BedrockContentBlock::ToolUse(
@@ -315,6 +322,14 @@ impl Provider for BedrockProvider {
                 req = req.tool_config(tool_config);
             }
 
+            // Add the thinking block when extended thinking is configured
+            // (Claude family; default-reasoning models need no field).
+            if let Some(thinking) = &self.config.thinking {
+                req = req.additional_model_request_fields(thinking_request_fields(
+                    thinking.budget_tokens(),
+                ));
+            }
+
             // ── Send request and classify errors ────────────────────────
             let response = req.send().await.map_err(|e| {
                 let msg = e.to_string();
@@ -471,6 +486,49 @@ fn blocks_compatible(existing: &[BedrockContentBlock], new: &[BedrockContentBloc
     existing_has_tool_result == new_has_tool_result
 }
 
+/// Build the wire shape for one replayed `Thinking` block.
+///
+/// With thinking configured, the block replays as a `ReasoningContent`
+/// block. Without it, the block flattens to `<thinking>` text so models
+/// that reject reasoning input still receive the context. An empty
+/// reasoning text returns `None`: Bedrock rejects a `ReasoningContent`
+/// block with no content.
+fn replay_thinking_block(text: &str, thinking_enabled: bool) -> Option<BedrockContentBlock> {
+    if !thinking_enabled {
+        return Some(BedrockContentBlock::Text(format!(
+            "<thinking>{text}</thinking>"
+        )));
+    }
+    if text.is_empty() {
+        return None;
+    }
+    #[allow(
+        clippy::expect_used,
+        reason = "text is non-empty, the only required ReasoningTextBlock field"
+    )]
+    let reasoning = aws_sdk_bedrockruntime::types::ReasoningTextBlock::builder()
+        .text(text)
+        .build()
+        .expect("text is set, the only required field");
+    Some(BedrockContentBlock::ReasoningContent(
+        aws_sdk_bedrockruntime::types::ReasoningContentBlock::ReasoningText(reasoning),
+    ))
+}
+
+/// Build the `additionalModelRequestFields` document for a configured
+/// thinking budget (Claude family).
+fn thinking_request_fields(budget_tokens: u32) -> Document {
+    let mut thinking = std::collections::HashMap::new();
+    thinking.insert("type".to_owned(), Document::String("enabled".to_owned()));
+    thinking.insert(
+        "budget_tokens".to_owned(),
+        Document::Number(aws_smithy_types::Number::PosInt(u64::from(budget_tokens))),
+    );
+    let mut fields = std::collections::HashMap::new();
+    fields.insert("thinking".to_owned(), Document::Object(thinking));
+    Document::Object(fields)
+}
+
 /// Check if a `BedrockContentBlock` is a `ToolResult` variant (for test assertions).
 #[cfg(test)]
 fn is_tool_result(block: &BedrockContentBlock) -> bool {
@@ -574,6 +632,28 @@ fn parse_bedrock_event(
                             id: ToolCallId::new(id),
                             partial_json: tool.input().to_owned(),
                         }))]
+                    }
+                    aws_sdk_bedrockruntime::types::ContentBlockDelta::ReasoningContent(
+                        reasoning,
+                    ) => {
+                        // ReasoningContentBlockDelta is #[non_exhaustive] in the AWS SDK
+                        #[allow(
+                            clippy::wildcard_enum_match_arm,
+                            reason = "AWS SDK enum is #[non_exhaustive]"
+                        )]
+                        match reasoning {
+                            aws_sdk_bedrockruntime::types::ReasoningContentBlockDelta::Text(
+                                text,
+                            ) => vec![Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
+                                thinking: text.clone(),
+                            }))],
+                            aws_sdk_bedrockruntime::types::ReasoningContentBlockDelta::Signature(
+                                signature,
+                            ) => vec![Ok(StreamEvent::Delta(StreamDelta::SignatureDelta {
+                                signature: signature.clone(),
+                            }))],
+                            _ => vec![],
+                        }
                     }
                     _ => vec![],
                 }
@@ -721,7 +801,7 @@ mod tests {
             tool_result("tu2", "file1.txt\nfile2.txt"),
         ];
 
-        let bedrock = convert_messages(&messages).unwrap();
+        let bedrock = convert_messages(&messages, false).unwrap();
 
         // Should be 3 messages: User, Assistant, User (merged tool results)
         assert_eq!(
@@ -754,7 +834,7 @@ mod tests {
             tool_result("tu1", "12:00"),
         ];
 
-        let bedrock = convert_messages(&messages).unwrap();
+        let bedrock = convert_messages(&messages, false).unwrap();
 
         assert_eq!(bedrock.len(), 3);
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
@@ -777,7 +857,7 @@ mod tests {
             user_msg("Hello"),
         ];
 
-        let bedrock = convert_messages(&messages).unwrap();
+        let bedrock = convert_messages(&messages, false).unwrap();
 
         assert_eq!(bedrock.len(), 1);
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
@@ -873,7 +953,7 @@ mod tests {
         // in practice, but guard against it), they must NOT be merged because
         // Bedrock rejects messages mixing conversation and tool result blocks.
         let messages = vec![user_msg("Hello"), tool_result("tu1", "result")];
-        let bedrock = convert_messages(&messages).unwrap();
+        let bedrock = convert_messages(&messages, false).unwrap();
         // Should be 2 separate messages, not merged
         assert_eq!(bedrock.len(), 2);
         assert_eq!(bedrock[0].role(), &ConversationRole::User);
@@ -933,5 +1013,150 @@ mod tests {
             StreamError::Deserialize { message, raw_data: None }
                 if message.contains("unknown block index 7")
         ));
+    }
+
+    // -------------------------------------------------------------------
+    // Reasoning capture, replay shape, and the thinking request field
+    // -------------------------------------------------------------------
+
+    use aws_sdk_bedrockruntime::types::ReasoningContentBlockDelta as BedrockReasoningContentBlockDelta;
+
+    fn bedrock_reasoning_delta(
+        delta: BedrockReasoningContentBlockDelta,
+    ) -> BedrockConverseStreamOutput {
+        BedrockConverseStreamOutput::ContentBlockDelta(
+            BedrockContentBlockDeltaEvent::builder()
+                .content_block_index(0)
+                .delta(BedrockContentBlockDelta::ReasoningContent(delta))
+                .build()
+                .unwrap(),
+        )
+    }
+
+    fn reasoning_text_delta(text: &str) -> BedrockReasoningContentBlockDelta {
+        BedrockReasoningContentBlockDelta::Text(text.to_owned())
+    }
+
+    fn reasoning_signature_delta(signature: &str) -> BedrockReasoningContentBlockDelta {
+        BedrockReasoningContentBlockDelta::Signature(signature.to_owned())
+    }
+
+    /// A reasoning text delta surfaces as ThinkingDelta.
+    #[test]
+    fn reasoning_text_delta_surfaces_as_thinking_delta() {
+        let mut state = StreamState::default();
+        let events = parse_bedrock_event(
+            bedrock_reasoning_delta(reasoning_text_delta("91 is not prime")),
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        match events.into_iter().next().unwrap().unwrap() {
+            StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }) => {
+                assert_eq!(thinking, "91 is not prime");
+            }
+            other => panic!("expected ThinkingDelta, got {other:?}"),
+        }
+    }
+
+    /// A reasoning signature delta surfaces as SignatureDelta: the stream
+    /// vocabulary carries it so downstream accumulation can retain it.
+    #[test]
+    fn reasoning_signature_delta_surfaces_as_signature_delta() {
+        let mut state = StreamState::default();
+        let events = parse_bedrock_event(
+            bedrock_reasoning_delta(reasoning_signature_delta("sig-1")),
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        match events.into_iter().next().unwrap().unwrap() {
+            StreamEvent::Delta(StreamDelta::SignatureDelta { signature }) => {
+                assert_eq!(signature, "sig-1");
+            }
+            other => panic!("expected SignatureDelta, got {other:?}"),
+        }
+    }
+
+    /// Redacted reasoning produces no event: the library has no
+    /// redacted-thinking vocabulary yet.
+    #[test]
+    fn redacted_reasoning_delta_produces_no_event() {
+        let mut state = StreamState::default();
+        let events = parse_bedrock_event(
+            bedrock_reasoning_delta(BedrockReasoningContentBlockDelta::RedactedContent(
+                aws_smithy_types::Blob::new(b"redacted"),
+            )),
+            &mut state,
+        );
+        assert!(
+            events.is_empty(),
+            "redacted reasoning is skipped, got {events:?}"
+        );
+    }
+
+    /// With thinking configured, a replayed Thinking block becomes a
+    /// ReasoningContent block carrying the text.
+    #[test]
+    fn thinking_replays_as_reasoning_content_when_configured() {
+        let messages = vec![Message::new(
+            Role::Assistant,
+            vec![ContentBlock::Thinking {
+                text: "7 times 13".to_owned(),
+            }],
+        )];
+
+        let bedrock = convert_messages(&messages, true).unwrap();
+        let block = &bedrock[0].content()[0];
+        match block {
+            BedrockContentBlock::ReasoningContent(reasoning) => {
+                let text = reasoning.as_reasoning_text().unwrap();
+                assert_eq!(text.text(), "7 times 13");
+                assert_eq!(
+                    text.signature(),
+                    None,
+                    "signature is not stored on Thinking content blocks"
+                );
+            }
+            other => panic!("expected ReasoningContent, got {other:?}"),
+        }
+    }
+
+    /// Without thinking configured, a replayed Thinking block keeps the
+    /// historical text flattening.
+    #[test]
+    fn thinking_replays_as_text_flattening_when_not_configured() {
+        let messages = vec![Message::new(
+            Role::Assistant,
+            vec![ContentBlock::Thinking {
+                text: "7 times 13".to_owned(),
+            }],
+        )];
+
+        let bedrock = convert_messages(&messages, false).unwrap();
+        let block = &bedrock[0].content()[0];
+        match block {
+            BedrockContentBlock::Text(text) => {
+                assert_eq!(text, "<thinking>7 times 13</thinking>");
+            }
+            other => panic!("expected flattened text, got {other:?}"),
+        }
+    }
+
+    /// The thinking request document carries the enabled type and budget.
+    #[test]
+    fn thinking_request_fields_shape() {
+        let Document::Object(fields) = thinking_request_fields(2048) else {
+            panic!("expected an object document");
+        };
+        let Document::Object(thinking) = fields.get("thinking").unwrap() else {
+            panic!("expected a thinking object");
+        };
+        assert_eq!(
+            thinking.get("type"),
+            Some(&Document::String("enabled".to_owned()))
+        );
+        assert_eq!(
+            thinking.get("budget_tokens"),
+            Some(&Document::Number(aws_smithy_types::Number::PosInt(2048)))
+        );
     }
 }

@@ -171,9 +171,11 @@ impl OpenAiConfig {
             }
         })?)?;
 
-        let base_url = std::env::var("OPENAI_BASE_URL")
-            .ok()
-            .filter(|v| !v.is_empty());
+        let base_url = match std::env::var("OPENAI_BASE_URL") {
+            Ok(v) => Some(v.trim().to_owned()).filter(|v| !v.is_empty()),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(e) => return Err(ConfigError::from(e)),
+        };
 
         let model_str = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
         let model = model_str.parse::<OpenAiModel>()?;
@@ -223,6 +225,20 @@ impl OpenAiConfig {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if let Some(base) = &self.base_url {
+            if base.trim().is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    field: "base_url".to_owned(),
+                    reason: "base_url must not be empty".into(),
+                });
+            }
+            if !base.starts_with("http://") && !base.starts_with("https://") {
+                return Err(ConfigError::InvalidValue {
+                    field: "base_url".to_owned(),
+                    reason: format!("base_url must start with http:// or https://, got {base}"),
+                });
+            }
+        }
         if let OpenAiModel::Custom(ref s) = self.model {
             if s.is_empty() {
                 return Err(ConfigError::InvalidValue {

@@ -54,6 +54,7 @@ pub struct OpenAiProvider {
 pub struct ReasoningAwareChunk {
     /// The model that produced the chunk (drives the Started metadata)
     pub model: String,
+    /// The per-choice payloads; OpenAI-compatible servers stream one
     pub choices: Vec<ReasoningAwareChoice>,
     /// Only present when the request sets `stream_options.include_usage`
     #[serde(default)]
@@ -63,7 +64,9 @@ pub struct ReasoningAwareChunk {
 /// One streamed choice: spec fields plus the reasoning capture.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ReasoningAwareChoice {
+    /// The streamed content for this choice
     pub delta: ReasoningAwareDelta,
+    /// The terminal reason, present only on the final chunk of a choice
     #[serde(default)]
     pub finish_reason: Option<FinishReason>,
 }
@@ -72,10 +75,10 @@ pub struct ReasoningAwareChoice {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ReasoningAwareDelta {
     /// Chain-of-thought text (vLLM / DeepSeek convention)
-    #[serde(default, rename = "reasoning_content")]
+    #[serde(default)]
     pub reasoning_content: Option<String>,
     /// Alternate reasoning spelling (OpenRouter convention)
-    #[serde(default, rename = "reasoning")]
+    #[serde(default)]
     pub reasoning: Option<String>,
     #[serde(flatten)]
     pub inner: ChatCompletionStreamResponseDelta,
@@ -583,19 +586,17 @@ fn parse_openai_chunk(
         // `reasoning`). Mapped to the driver's ThinkingDelta so the agent
         // loop folds them as thinking blocks; they never surface as
         // answer text.
-        if let Some(ref rc) = delta.reasoning_content {
-            if !rc.is_empty() {
-                events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
-                    thinking: rc.clone(),
-                })));
-            }
-        }
-        if let Some(ref r) = delta.reasoning {
-            if !r.is_empty() {
-                events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
-                    thinking: r.clone(),
-                })));
-            }
+        // Both spellings in one delta is pathological; emit one delta,
+        // preferring the vLLM-canonical field.
+        let reasoning_text = match (&delta.reasoning_content, &delta.reasoning) {
+            (Some(rc), _) if !rc.is_empty() => Some(rc),
+            (_, Some(r)) if !r.is_empty() => Some(r),
+            _ => None,
+        };
+        if let Some(rc) = reasoning_text {
+            events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
+                thinking: rc.clone(),
+            })));
         }
 
         // Text content
@@ -883,6 +884,161 @@ mod tests {
             e,
             Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "Answer"
         )));
+    }
+
+    /// The usage-only final chunk (vLLM sends `stream_options.include_usage`
+    /// this way): empty choices, usage present. Locks in the wrapper's
+    /// leniency on both the default `usage` and the empty-choices path.
+    #[test]
+    fn parse_usage_only_chunk() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "gpt-4o",
+            "choices": [],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120 }
+        }))
+        .expect("valid usage-only chunk JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+        assert_eq!(
+            state.usage.map(|u| (u.input_tokens, u.output_tokens)),
+            Some((100, 20))
+        );
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, Ok(StreamEvent::Delta(..))))
+        );
+    }
+
+    /// A choice that omits `finish_reason` entirely must parse (the
+    /// wrapper's `#[serde(default)]` is new surface).
+    #[test]
+    fn parse_chunk_with_missing_finish_reason() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": { "content": "hi" }
+            }]
+        }))
+        .expect("valid chunk without finish_reason JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+        assert_eq!(state.stop_reason, None);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "hi"
+        )));
+    }
+
+    /// Empty reasoning strings are guarded: no ThinkingDelta fires.
+    #[test]
+    fn parse_empty_reasoning_string_is_silent() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": { "reasoning_content": "" },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid empty-reasoning chunk JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { .. }))))
+        );
+    }
+
+    /// Third-party extension keys on the delta must stay tolerated — the
+    /// BYOT switch exists so servers richer than the spec still work, and
+    /// a future `deny_unknown_fields` would break them.
+    #[test]
+    fn parse_chunk_tolerates_extension_fields() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": { "content": "ok", "rejected_prediction_ids": [1] },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid extension-field chunk JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "ok"
+        )));
+    }
+
+    /// A server sending both reasoning spellings yields ONE ThinkingDelta,
+    /// preferring the vLLM-canonical field (Gate A round 1, finding 4).
+    #[test]
+    fn parse_both_reasoning_spellings_emit_one_delta() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": { "reasoning_content": "vllm text", "reasoning": "alt text" },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid dual-spelling chunk JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+        let thinking: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking })) => {
+                    Some(thinking.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, ["vllm text"]);
     }
 
     /// OpenAI only accepts one system message. If both `request.system` and a

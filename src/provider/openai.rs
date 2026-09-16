@@ -9,17 +9,6 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use async_openai::Client;
-use async_openai::config::OpenAIConfig;
-use async_openai::types::chat::{
-    ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
-    ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
-    ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
-    ChatCompletionRequestUserMessageArgs, ChatCompletionStreamResponseDelta, ChatCompletionTool,
-    ChatCompletionTools, CompletionUsage, CreateChatCompletionRequestArgs, FinishReason,
-    FunctionCall, FunctionObjectArgs, StopConfiguration,
-};
-
 use crate::config::OpenAiConfig;
 use crate::error::{
     AuthErrorKind, ProviderError, StreamError, StreamErrorKind, is_content_policy_message,
@@ -30,6 +19,17 @@ use crate::streaming::{
     TokenUsage,
 };
 use crate::types::{ContentBlock, Message, ModelId, Role, ToolCallId, ToolName};
+use async_openai::Client;
+use async_openai::config::OpenAIConfig;
+use async_openai::types::chat::{
+    ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
+    ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+    ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
+    ChatCompletionRequestUserMessageArgs, ChatCompletionStreamOptions,
+    ChatCompletionStreamResponseDelta, ChatCompletionTool, ChatCompletionTools, CompletionUsage,
+    CreateChatCompletionRequestArgs, FinishReason, FunctionCall, FunctionObjectArgs,
+    StopConfiguration,
+};
 
 use super::{
     CompletionRequest, ModelInfo, Provider, ProviderCapabilities, ProviderContext, ProviderInfo,
@@ -373,7 +373,14 @@ impl Provider for OpenAiProvider {
                 .model(model)
                 .messages(messages)
                 .max_completion_tokens(request.config.max_tokens.get())
-                .stream(true);
+                .stream(true)
+                // OpenAI-compatible servers (vLLM, BaseTen) stream the
+                // token-usage chunk only when this is set; without it the
+                // shim's context-usage metering would read zeros.
+                .stream_options(ChatCompletionStreamOptions {
+                    include_usage: Some(true),
+                    include_obfuscation: Some(false),
+                });
 
             // Add temperature if supported
             if let Some(temp) = request.config.temperature {

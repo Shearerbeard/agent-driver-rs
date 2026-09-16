@@ -15,8 +15,8 @@ use async_openai::types::chat::{
     ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
     ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
-    ChatCompletionRequestUserMessageArgs, ChatCompletionTool, ChatCompletionTools,
-    CreateChatCompletionRequestArgs, CreateChatCompletionStreamResponse, FinishReason,
+    ChatCompletionRequestUserMessageArgs, ChatCompletionStreamResponseDelta, ChatCompletionTool,
+    ChatCompletionTools, CompletionUsage, CreateChatCompletionRequestArgs, FinishReason,
     FunctionCall, FunctionObjectArgs, StopConfiguration,
 };
 
@@ -42,13 +42,60 @@ pub struct OpenAiProvider {
     info: ProviderInfo,
 }
 
+/// A streamed chat-completion chunk that also carries reasoning deltas.
+///
+/// The OpenAI-spec delta struct has no `reasoning_content` field, so the
+/// typed parse silently drops the field vLLM-compatible servers (BaseTen,
+/// OpenRouter, local vLLM) stream for reasoning models. This wrapper keeps
+/// the spec fields via `#[serde(flatten)]` and captures both reasoning
+/// spellings seen in the wild: `reasoning_content` (vLLM, DeepSeek) and
+/// `reasoning` (OpenRouter).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ReasoningAwareChunk {
+    /// The model that produced the chunk (drives the Started metadata)
+    pub model: String,
+    pub choices: Vec<ReasoningAwareChoice>,
+    /// Only present when the request sets `stream_options.include_usage`
+    #[serde(default)]
+    pub usage: Option<CompletionUsage>,
+}
+
+/// One streamed choice: spec fields plus the reasoning capture.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ReasoningAwareChoice {
+    pub delta: ReasoningAwareDelta,
+    #[serde(default)]
+    pub finish_reason: Option<FinishReason>,
+}
+
+/// The streamed delta: reasoning capture plus the flattened spec struct.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ReasoningAwareDelta {
+    /// Chain-of-thought text (vLLM / DeepSeek convention)
+    #[serde(default, rename = "reasoning_content")]
+    pub reasoning_content: Option<String>,
+    /// Alternate reasoning spelling (OpenRouter convention)
+    #[serde(default, rename = "reasoning")]
+    pub reasoning: Option<String>,
+    #[serde(flatten)]
+    pub inner: ChatCompletionStreamResponseDelta,
+}
+
 impl OpenAiProvider {
-    /// Create a new OpenAI provider
+    /// Create a new OpenAI-compatible provider.
+    ///
+    /// `config.base_url` points the client at any OpenAI-compatible
+    /// endpoint (BaseTen Model APIs, OpenRouter, a local vLLM server);
+    /// unset means the official OpenAI base.
     pub fn new(config: OpenAiConfig) -> Result<Self, ProviderError> {
         let supports_streaming = config.model.supports_streaming();
 
-        // Create async-openai client with API key
-        let openai_config = OpenAIConfig::new().with_api_key(config.api_key.as_str());
+        // Create async-openai client with API key, and the configured
+        // base URL when one is set.
+        let mut openai_config = OpenAIConfig::new().with_api_key(config.api_key.as_str());
+        if let Some(base) = &config.base_url {
+            openai_config = openai_config.with_api_base(base);
+        }
         let client = Client::with_config(openai_config);
 
         let info = ProviderInfo {
@@ -353,11 +400,17 @@ impl Provider for OpenAiProvider {
                         message: format!("Failed to build request: {e}"),
                     })?;
 
-            // Create stream
+            // Create stream. The BYOT form is what keeps reasoning alive:
+            // the spec-typed `create_stream` would deserialize each chunk
+            // into `CreateChatCompletionStreamResponse`, whose delta struct
+            // has no `reasoning_content` field, and serde would silently
+            // drop it. `create_stream_byot` deserializes into
+            // [`ReasoningAwareChunk`] instead; the request is the same
+            // spec type (stream(true) is already set on the builder).
             let stream = self
                 .client
                 .chat()
-                .create_stream(openai_request)
+                .create_stream_byot::<_, ReasoningAwareChunk>(openai_request)
                 .await
                 .map_err(|e| {
                     let msg = e.to_string();
@@ -480,7 +533,7 @@ struct StreamState {
 
 /// Parse an OpenAI streaming chunk
 fn parse_openai_chunk(
-    response: CreateChatCompletionStreamResponse,
+    response: ReasoningAwareChunk,
     state: &mut StreamState,
 ) -> Vec<Result<StreamEvent, StreamError>> {
     let mut events = Vec::new();
@@ -526,8 +579,27 @@ fn parse_openai_chunk(
         // Process delta
         let delta = &choice.delta;
 
+        // Reasoning deltas (vLLM `reasoning_content`, OpenRouter
+        // `reasoning`). Mapped to the driver's ThinkingDelta so the agent
+        // loop folds them as thinking blocks; they never surface as
+        // answer text.
+        if let Some(ref rc) = delta.reasoning_content {
+            if !rc.is_empty() {
+                events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
+                    thinking: rc.clone(),
+                })));
+            }
+        }
+        if let Some(ref r) = delta.reasoning {
+            if !r.is_empty() {
+                events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
+                    thinking: r.clone(),
+                })));
+            }
+        }
+
         // Text content
-        if let Some(ref content) = delta.content {
+        if let Some(ref content) = delta.inner.content {
             if !content.is_empty() {
                 events.push(Ok(StreamEvent::Delta(StreamDelta::TextDelta {
                     text: content.clone(),
@@ -536,7 +608,7 @@ fn parse_openai_chunk(
         }
 
         // Tool calls
-        if let Some(ref tool_calls) = delta.tool_calls {
+        if let Some(ref tool_calls) = delta.inner.tool_calls {
             for tc in tool_calls {
                 let tc_index = tc.index as usize;
 
@@ -603,7 +675,7 @@ fn parse_openai_chunk(
 mod tests {
     use super::*;
 
-    fn text_chunk(content: &str) -> CreateChatCompletionStreamResponse {
+    fn text_chunk(content: &str) -> ReasoningAwareChunk {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
@@ -618,7 +690,7 @@ mod tests {
         .expect("valid text chunk JSON")
     }
 
-    fn finish_chunk(reason: &str) -> CreateChatCompletionStreamResponse {
+    fn finish_chunk(reason: &str) -> ReasoningAwareChunk {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
@@ -633,7 +705,7 @@ mod tests {
         .expect("valid finish chunk JSON")
     }
 
-    fn tool_call_chunk(id: &str, name: &str, args: &str) -> CreateChatCompletionStreamResponse {
+    fn tool_call_chunk(id: &str, name: &str, args: &str) -> ReasoningAwareChunk {
         serde_json::from_value(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion.chunk",
@@ -713,12 +785,113 @@ mod tests {
         )));
     }
 
+    /// vLLM-style reasoning deltas (`reasoning_content`) surface as
+    /// ThinkingDelta and never as answer text.
+    #[test]
+    fn parse_reasoning_content_deltas() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "deepseek-ai/DeepSeek-V4-Pro",
+            "choices": [{
+                "index": 0,
+                "delta": { "reasoning_content": "Let me think step by step" },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid reasoning chunk JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }))
+                if thinking == "Let me think step by step"
+        )));
+        // The reasoning must not surface as answer text.
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, Ok(StreamEvent::Delta(StreamDelta::TextDelta { .. }))))
+        );
+    }
+
+    /// OpenRouter-style spelling (`reasoning`) maps the same way.
+    #[test]
+    fn parse_reasoning_alt_spelling() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "zai-org/GLM-5.2",
+            "choices": [{
+                "index": 0,
+                "delta": { "reasoning": "Consider the constraints" },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid reasoning chunk JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }))
+                if thinking == "Consider the constraints"
+        )));
+    }
+
+    /// A reasoning chunk may also carry text in the same delta; both
+    /// mappings fire and keep their own channels.
+    #[test]
+    fn parse_reasoning_and_text_coexist() {
+        let mut state = StreamState {
+            started: true,
+            ..Default::default()
+        };
+
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "zai-org/GLM-5.2",
+            "choices": [{
+                "index": 0,
+                "delta": { "reasoning_content": "hmm", "content": "Answer" },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid mixed chunk JSON");
+
+        let events = parse_openai_chunk(chunk, &mut state);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }))
+                if thinking == "hmm"
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text })) if text == "Answer"
+        )));
+    }
+
     /// OpenAI only accepts one system message. If both `request.system` and a
     /// `Role::System` message are supplied, we must not emit a duplicate.
     #[test]
     fn no_duplicate_system_message() {
         let config = OpenAiConfig {
             api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            base_url: None,
             model: crate::config::OpenAiModel::Gpt4o,
             max_tokens: crate::types::MaxTokens::new(100).unwrap(),
             temperature: None,

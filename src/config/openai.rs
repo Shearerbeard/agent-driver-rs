@@ -13,6 +13,12 @@ pub struct OpenAiConfig {
     /// API key (required)
     pub api_key: ApiKey,
 
+    /// Base URL for OpenAI-compatible endpoints (BaseTen, OpenRouter,
+    /// vLLM servers). When unset, the official `api.openai.com` base
+    /// applies.
+    #[serde(default)]
+    pub base_url: Option<String>,
+
     /// Model to use
     pub model: OpenAiModel,
 
@@ -165,6 +171,10 @@ impl OpenAiConfig {
             }
         })?)?;
 
+        let base_url = std::env::var("OPENAI_BASE_URL")
+            .ok()
+            .filter(|v| !v.is_empty());
+
         let model_str = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
         let model = model_str.parse::<OpenAiModel>()?;
 
@@ -202,6 +212,7 @@ impl OpenAiConfig {
 
         Ok(Self {
             api_key,
+            base_url,
             model,
             max_tokens,
             temperature,

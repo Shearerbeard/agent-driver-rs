@@ -50,7 +50,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 
 # Provider SDKs (optional)
-async-openai = { version = "0.41", features = ["chat-completion"], optional = true }
+async-openai = { version = "0.41", features = ["chat-completion", "byot"], optional = true }
 aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"], optional = true }
 aws-config = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "sso"], optional = true }
 aws-smithy-types = { version = "1", optional = true }

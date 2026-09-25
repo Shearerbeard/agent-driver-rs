@@ -377,9 +377,13 @@ impl Provider for OpenAiProvider {
                 // OpenAI-compatible servers (vLLM, BaseTen) stream the
                 // token-usage chunk only when this is set; without it the
                 // shim's context-usage metering would read zeros.
+                // `include_obfuscation` stays unset: it is OpenAI-dialect
+                // only, and compatible endpoints (Fireworks, BaseTen BYOT,
+                // vLLM) reject the unknown field with a 400 before the
+                // model runs (adr/A19; live-verified 2026-09-25).
                 .stream_options(ChatCompletionStreamOptions {
                     include_usage: Some(true),
-                    include_obfuscation: Some(false),
+                    include_obfuscation: None,
                 });
 
             // Add temperature if supported
@@ -1089,6 +1093,26 @@ mod tests {
         assert_eq!(
             user_count, 0,
             "system message should not be converted to user"
+        );
+    }
+
+    /// A19: the stream options this provider sends must not carry
+    /// `include_obfuscation` — it is OpenAI-dialect only, and compatible
+    /// endpoints (Fireworks, BaseTen BYOT, vLLM) reject the unknown field
+    /// with a 400 before the model runs. Live-verified 2026-09-25: with
+    /// the field absent and `max_completion_tokens` kept, Fireworks
+    /// answered 200 and a full orchestrated DAG completed.
+    #[test]
+    fn stream_options_carry_usage_without_the_obfuscation_dialect() {
+        let options = ChatCompletionStreamOptions {
+            include_usage: Some(true),
+            include_obfuscation: None,
+        };
+        let wire = serde_json::to_value(options).expect("stream options serialize");
+        assert_eq!(wire["include_usage"], true);
+        assert!(
+            wire.get("include_obfuscation").is_none(),
+            "the wire body must not name include_obfuscation, got: {wire}"
         );
     }
 }

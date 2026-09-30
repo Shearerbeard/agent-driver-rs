@@ -135,7 +135,9 @@ impl OpenRouterProvider {
 
         // Add conversation messages
         for msg in &request.messages {
-            messages.push(self.serialize_message(msg));
+            if let Some(message) = self.serialize_message(msg) {
+                messages.push(message);
+            }
         }
 
         body["messages"] = JsonValue::Array(messages);
@@ -143,7 +145,7 @@ impl OpenRouterProvider {
     }
 
     /// Serialize a message for the OpenAI-compatible API
-    fn serialize_message(&self, msg: &crate::types::Message) -> JsonValue {
+    fn serialize_message(&self, msg: &crate::types::Message) -> Option<JsonValue> {
         let role = match msg.role {
             crate::types::Role::User => "user",
             crate::types::Role::Assistant => "assistant",
@@ -176,11 +178,11 @@ impl OpenRouterProvider {
                     let content_str = match content {
                         crate::types::ToolResultContent::Text(s) => s.clone(),
                     };
-                    return serde_json::json!({
+                    return Some(serde_json::json!({
                         "role": "tool",
                         "tool_call_id": tool_use_id.as_str(),
                         "content": content_str
-                    });
+                    }));
                 }
             }
         }
@@ -226,7 +228,13 @@ impl OpenRouterProvider {
             if !tool_calls.is_empty() {
                 message["tool_calls"] = JsonValue::Array(tool_calls);
             }
-            return message;
+            // An assistant message with neither content nor tool calls
+            // (every block dropped in serialization) is omitted: the
+            // API rejects it.
+            if message.get("content").is_none() && message.get("tool_calls").is_none() {
+                return None;
+            }
+            return Some(message);
         }
 
         // Regular user/system messages
@@ -243,10 +251,10 @@ impl OpenRouterProvider {
             .collect::<Vec<_>>()
             .join("");
 
-        serde_json::json!({
+        Some(serde_json::json!({
             "role": role,
             "content": content
-        })
+        }))
     }
 
     /// Build headers for the API request.

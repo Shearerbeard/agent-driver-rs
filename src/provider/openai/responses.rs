@@ -204,27 +204,33 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                 }
             }
             DriverRole::Assistant => {
-                let text = msg
-                    .content
-                    .iter()
-                    .filter_map(|b| match b {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        ContentBlock::Thinking { .. }
-                        | ContentBlock::EncryptedReasoning { .. }
-                        | ContentBlock::ToolUse { .. }
-                        | ContentBlock::ToolResult { .. } => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !text.is_empty() {
-                    items.push(InputItem::EasyMessage(easy_message(Role::Assistant, text)));
-                }
+                // Single ordered pass: the aggregated assistant text
+                // flushes as an easy message before the first non-text
+                // item that follows it, so items replay in content
+                // order (reasoning items precede the text they
+                // produced, matching how the API emitted them).
+                let mut text = String::new();
+                let mut flush_text = |items: &mut Vec<InputItem>, text: &mut String| {
+                    if !text.is_empty() {
+                        items.push(InputItem::EasyMessage(easy_message(
+                            Role::Assistant,
+                            std::mem::take(text),
+                        )));
+                    }
+                };
                 for block in &msg.content {
                     match block {
+                        ContentBlock::Text { text: block_text } => {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(block_text);
+                        }
                         // Replayable reasoning state: round-trips as the
                         // reasoning item it came from (summaries are not
                         // resent; the encrypted payload carries them).
                         ContentBlock::EncryptedReasoning { id, encrypted } => {
+                            flush_text(&mut items, &mut text);
                             items.push(InputItem::Item(Item::Reasoning(ReasoningItem {
                                 id: Some(id.clone()),
                                 summary: Vec::new(),
@@ -234,6 +240,7 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                             })));
                         }
                         ContentBlock::ToolUse { id, name, input } => {
+                            flush_text(&mut items, &mut text);
                             items.push(InputItem::Item(Item::FunctionCall(FunctionToolCall {
                                 arguments: serde_json::to_string(input).unwrap_or_default(),
                                 call_id: id.as_str().to_owned(),
@@ -243,11 +250,10 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                                 status: None,
                             })));
                         }
-                        ContentBlock::Text { .. }
-                        | ContentBlock::Thinking { .. }
-                        | ContentBlock::ToolResult { .. } => {}
+                        ContentBlock::Thinking { .. } | ContentBlock::ToolResult { .. } => {}
                     }
                 }
+                flush_text(&mut items, &mut text);
             }
             DriverRole::Tool => {
                 for block in &msg.content {
@@ -955,7 +961,8 @@ mod tests {
     }
 
     /// Encrypted reasoning items replay verbatim as reasoning input
-    /// items; thinking summaries do not replay.
+    /// items in content order (reasoning before the text it produced);
+    /// thinking summaries do not replay.
     #[test]
     fn encrypted_reasoning_round_trips_as_reasoning_item() {
         let request = CompletionRequest::new(
@@ -963,12 +970,12 @@ mod tests {
             vec![Message::new(
                 DriverRole::Assistant,
                 vec![
-                    ContentBlock::Thinking {
-                        text: "summary text".into(),
-                    },
                     ContentBlock::EncryptedReasoning {
                         id: "rs_abc".into(),
                         encrypted: "gAAAAA...".into(),
+                    },
+                    ContentBlock::Text {
+                        text: "the answer".into(),
                     },
                 ],
             )],
@@ -976,10 +983,12 @@ mod tests {
 
         let wire = serde_json::to_value(build_input_items(&request)).unwrap();
         let items = wire.as_array().expect("input items serialize to an array");
-        assert_eq!(items.len(), 1, "only the reasoning item replays: {wire}");
+        assert_eq!(items.len(), 2, "reasoning item then assistant text: {wire}");
         assert_eq!(items[0]["type"], "reasoning");
         assert_eq!(items[0]["id"], "rs_abc");
         assert_eq!(items[0]["encrypted_content"], "gAAAAA...");
+        assert_eq!(items[1]["role"], "assistant");
+        assert_eq!(items[1]["content"], "the answer");
     }
 
     /// A completed reasoning item carrying encrypted content emits a
@@ -1031,20 +1040,30 @@ mod tests {
         )));
     }
 
-    /// Collected responses keep the replayable item: ReasoningItemDelta
-    /// accumulates into an EncryptedReasoning content block.
+    /// Collected responses keep the replayable item and the flush
+    /// order is deterministic: reasoning lands ahead of the answer
+    /// text it precedes, regardless of delta timing.
     #[test]
     fn reasoning_item_delta_accumulates_into_content() {
         let mut response = crate::streaming::CollectedResponse::new();
+        response.apply_delta(StreamDelta::TextDelta {
+            text: "the answer".into(),
+        });
         response.apply_delta(StreamDelta::ReasoningItemDelta {
             id: "rs_abc".into(),
             encrypted: "gAAAAA...".into(),
         });
-        assert!(response.content.iter().any(|b| matches!(
-            b,
-            ContentBlock::EncryptedReasoning { id, encrypted }
-                if id == "rs_abc" && encrypted == "gAAAAA..."
-        )));
+        response.flush_pending();
+
+        assert_eq!(response.content.len(), 2, "{:?}", response.content);
+        assert!(matches!(
+            response.content[0],
+            ContentBlock::EncryptedReasoning { ref id, .. } if id == "rs_abc"
+        ));
+        assert!(matches!(
+            response.content[1],
+            ContentBlock::Text { ref text } if text == "the answer"
+        ));
     }
 
     /// The reasoning request asks for the encrypted payload so replay

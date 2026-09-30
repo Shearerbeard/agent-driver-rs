@@ -158,6 +158,10 @@ pub struct CollectedResponse {
     // Internal: accumulation state for streaming
     pending_text: String,
     pending_thinking: String,
+    /// Replayable reasoning items, buffered so the flushed order is
+    /// deterministic (reasoning precedes its message content, matching
+    /// how reasoning streams arrive before the answer).
+    pending_reasoning: Vec<ContentBlock>,
     pending_tool_uses: HashMap<ToolCallId, PendingToolUse>,
     pending_tool_index: Option<usize>,
     tool_block_indices: HashMap<usize, ToolCallId>,
@@ -223,9 +227,9 @@ impl CollectedResponse {
                 // Signatures are metadata, not content - ignore for collection
             }
             StreamDelta::ReasoningItemDelta { id, encrypted } => {
-                // Atomic replayable reasoning item: carried whole into
-                // the collected content, never rendered.
-                self.content
+                // Atomic replayable reasoning item: buffered whole, and
+                // flushed ahead of the message text it precedes.
+                self.pending_reasoning
                     .push(ContentBlock::EncryptedReasoning { id, encrypted });
             }
         }
@@ -270,6 +274,7 @@ impl CollectedResponse {
     /// any accumulated content that wasn't explicitly closed with `ContentBlockStop`
     /// is captured. Some providers (e.g., OpenRouter) don't emit `ContentBlockStop`.
     pub fn flush_pending(&mut self) {
+        self.content.append(&mut self.pending_reasoning);
         if !self.pending_text.is_empty() {
             self.content.push(ContentBlock::Text {
                 text: std::mem::take(&mut self.pending_text),

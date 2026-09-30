@@ -101,11 +101,13 @@ impl AnthropicProvider {
             body["tools"] = ToolFormat::claude().serialize_tools(&request.tools);
         }
 
-        // Add messages
+        // Add messages. A message whose blocks all drop in serialization
+        // (e.g. an OpenAI encrypted-reasoning-only assistant turn) is
+        // omitted: the API rejects empty content arrays.
         let messages: Vec<JsonValue> = request
             .messages
             .iter()
-            .map(|msg| self.serialize_message(msg))
+            .filter_map(|msg| self.serialize_message(msg))
             .collect();
         body["messages"] = JsonValue::Array(messages);
 
@@ -120,8 +122,9 @@ impl AnthropicProvider {
         body
     }
 
-    /// Serialize a message for the API
-    fn serialize_message(&self, msg: &crate::types::Message) -> JsonValue {
+    /// Serialize a message for the API. Returns `None` when every block
+    /// is dropped and the message would serialize to empty content.
+    fn serialize_message(&self, msg: &crate::types::Message) -> Option<JsonValue> {
         let role = match msg.role {
             crate::types::Role::User => "user",
             crate::types::Role::Assistant => "assistant",
@@ -168,10 +171,14 @@ impl AnthropicProvider {
             })
             .collect();
 
-        serde_json::json!({
+        if content.is_empty() {
+            return None;
+        }
+
+        Some(serde_json::json!({
             "role": role,
             "content": content
-        })
+        }))
     }
 
     /// Build headers for the API request.

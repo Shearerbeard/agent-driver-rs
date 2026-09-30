@@ -5,7 +5,7 @@
 //! - Reasoning effort configuration for models that support it
 //! - Non-streaming fallback for o3/o3-mini models
 
-pub mod chat;
+mod chat;
 
 pub use chat::{ReasoningAwareChoice, ReasoningAwareChunk, ReasoningAwareDelta};
 

@@ -206,6 +206,12 @@ pub enum ContentBlock {
     /// Reasoning/thinking content (from extended thinking, o1, GPT-5.x)
     Thinking { text: String },
 
+    /// Replayable reasoning payload (OpenAI Responses API). Carries the
+    /// reasoning item id and its encrypted content so multi-turn
+    /// conversations can round-trip reasoning statelessly
+    /// (`store: false`); not human-readable content.
+    EncryptedReasoning { id: String, encrypted: String },
+
     /// Tool invocation request from model
     ToolUse {
         id: ToolCallId,
@@ -239,7 +245,10 @@ impl ContentBlock {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text { text } => Some(text),
-            Self::Thinking { .. } | Self::ToolUse { .. } | Self::ToolResult { .. } => None,
+            Self::Thinking { .. }
+            | Self::EncryptedReasoning { .. }
+            | Self::ToolUse { .. }
+            | Self::ToolResult { .. } => None,
         }
     }
 
@@ -248,7 +257,10 @@ impl ContentBlock {
     pub fn as_tool_use(&self) -> Option<(&ToolCallId, &ToolName, &JsonValue)> {
         match self {
             Self::ToolUse { id, name, input } => Some((id, name, input)),
-            Self::Text { .. } | Self::Thinking { .. } | Self::ToolResult { .. } => None,
+            Self::Text { .. }
+            | Self::Thinking { .. }
+            | Self::EncryptedReasoning { .. }
+            | Self::ToolResult { .. } => None,
         }
     }
 }

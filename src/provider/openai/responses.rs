@@ -11,10 +11,10 @@ use std::pin::Pin;
 
 use async_openai::types::responses::{
     CreateResponseArgs, EasyInputContent, EasyInputMessage, FunctionCallOutput,
-    FunctionCallOutputItemParam, FunctionTool, FunctionToolCall, InputItem, InputParam, Item,
-    MessageType, OutputItem, Reasoning, ReasoningEffort as SdkReasoningEffort,
-    ReasoningSummary as SdkReasoningSummary, ResponseStreamEvent, ResponseUsage, Role, Status,
-    Tool,
+    FunctionCallOutputItemParam, FunctionTool, FunctionToolCall, IncludeEnum, InputItem,
+    InputParam, Item, MessageType, OutputItem, Reasoning, ReasoningEffort as SdkReasoningEffort,
+    ReasoningItem, ReasoningSummary as SdkReasoningSummary, ResponseStreamEvent, ResponseUsage,
+    Role, Status, Tool,
 };
 
 use crate::config::{ReasoningEffort, ReasoningSummary};
@@ -128,6 +128,9 @@ impl OpenAiProvider {
 
         if let Some(reasoning) = &self.config.reasoning {
             builder.reasoning(to_sdk_reasoning(reasoning));
+            // Ask for the encrypted reasoning payload so multi-turn
+            // replay works statelessly (store: false).
+            builder.include(vec![IncludeEnum::ReasoningEncryptedContent]);
         }
 
         builder.build().map_err(|e| ProviderError::InvalidRequest {
@@ -156,6 +159,7 @@ fn system_text(request: &CompletionRequest) -> Option<String> {
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
                             ContentBlock::Thinking { .. }
+                            | ContentBlock::EncryptedReasoning { .. }
                             | ContentBlock::ToolUse { .. }
                             | ContentBlock::ToolResult { .. } => None,
                         })
@@ -189,6 +193,7 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                     .filter_map(|b| match b {
                         ContentBlock::Text { text } => Some(text.as_str()),
                         ContentBlock::Thinking { .. }
+                        | ContentBlock::EncryptedReasoning { .. }
                         | ContentBlock::ToolUse { .. }
                         | ContentBlock::ToolResult { .. } => None,
                     })
@@ -205,6 +210,7 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                     .filter_map(|b| match b {
                         ContentBlock::Text { text } => Some(text.as_str()),
                         ContentBlock::Thinking { .. }
+                        | ContentBlock::EncryptedReasoning { .. }
                         | ContentBlock::ToolUse { .. }
                         | ContentBlock::ToolResult { .. } => None,
                     })
@@ -214,15 +220,32 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                     items.push(InputItem::EasyMessage(easy_message(Role::Assistant, text)));
                 }
                 for block in &msg.content {
-                    if let ContentBlock::ToolUse { id, name, input } = block {
-                        items.push(InputItem::Item(Item::FunctionCall(FunctionToolCall {
-                            arguments: serde_json::to_string(input).unwrap_or_default(),
-                            call_id: id.as_str().to_owned(),
-                            name: name.as_str().to_owned(),
-                            namespace: None,
-                            id: None,
-                            status: None,
-                        })));
+                    match block {
+                        // Replayable reasoning state: round-trips as the
+                        // reasoning item it came from (summaries are not
+                        // resent; the encrypted payload carries them).
+                        ContentBlock::EncryptedReasoning { id, encrypted } => {
+                            items.push(InputItem::Item(Item::Reasoning(ReasoningItem {
+                                id: Some(id.clone()),
+                                summary: Vec::new(),
+                                content: None,
+                                encrypted_content: Some(encrypted.clone()),
+                                status: None,
+                            })));
+                        }
+                        ContentBlock::ToolUse { id, name, input } => {
+                            items.push(InputItem::Item(Item::FunctionCall(FunctionToolCall {
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
+                                call_id: id.as_str().to_owned(),
+                                name: name.as_str().to_owned(),
+                                namespace: None,
+                                id: None,
+                                status: None,
+                            })));
+                        }
+                        ContentBlock::Text { .. }
+                        | ContentBlock::Thinking { .. }
+                        | ContentBlock::ToolResult { .. } => {}
                     }
                 }
             }
@@ -458,9 +481,21 @@ fn parse_responses_event(
                 .unwrap_or_else(|| "responses stream failed".to_owned());
             record_terminal_failure(message, state, &mut events);
         }
+        // A completed reasoning item carries the encrypted payload the
+        // request asked for; without id or encrypted content (include
+        // not requested) there is nothing replayable to emit.
+        ResponseStreamEvent::ResponseOutputItemDone(done) => {
+            if let OutputItem::Reasoning(item) = done.item {
+                if let (Some(id), Some(encrypted)) = (item.id, item.encrypted_content) {
+                    events.push(Ok(StreamEvent::Delta(StreamDelta::ReasoningItemDelta {
+                        id,
+                        encrypted,
+                    })));
+                }
+            }
+        }
         // Terminal bookkeeping events without driver-facing payloads.
-        ResponseStreamEvent::ResponseOutputItemDone(_)
-        | ResponseStreamEvent::ResponseContentPartAdded(_)
+        ResponseStreamEvent::ResponseContentPartAdded(_)
         | ResponseStreamEvent::ResponseContentPartDone(_)
         | ResponseStreamEvent::ResponseOutputTextDone(_)
         | ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_)
@@ -916,6 +951,133 @@ mod tests {
         assert!(
             wire.get("temperature").is_none(),
             "reasoning models take no temperature"
+        );
+    }
+
+    /// Encrypted reasoning items replay verbatim as reasoning input
+    /// items; thinking summaries do not replay.
+    #[test]
+    fn encrypted_reasoning_round_trips_as_reasoning_item() {
+        let request = CompletionRequest::new(
+            ModelId::new("gpt-5.2").unwrap(),
+            vec![Message::new(
+                DriverRole::Assistant,
+                vec![
+                    ContentBlock::Thinking {
+                        text: "summary text".into(),
+                    },
+                    ContentBlock::EncryptedReasoning {
+                        id: "rs_abc".into(),
+                        encrypted: "gAAAAA...".into(),
+                    },
+                ],
+            )],
+        );
+
+        let wire = serde_json::to_value(build_input_items(&request)).unwrap();
+        let items = wire.as_array().expect("input items serialize to an array");
+        assert_eq!(items.len(), 1, "only the reasoning item replays: {wire}");
+        assert_eq!(items[0]["type"], "reasoning");
+        assert_eq!(items[0]["id"], "rs_abc");
+        assert_eq!(items[0]["encrypted_content"], "gAAAAA...");
+    }
+
+    /// A completed reasoning item carrying encrypted content emits a
+    /// ReasoningItemDelta; without the encrypted payload there is
+    /// nothing replayable and the event is silent.
+    #[test]
+    fn reasoning_item_done_emits_reasoning_item_delta() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.output_item.done",
+            "sequence_number": 6,
+            "output_index": 0,
+            "item": {
+                "type": "reasoning",
+                "id": "rs_abc",
+                "summary": [],
+                "encrypted_content": "gAAAAA..."
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ReasoningItemDelta { id, encrypted }))
+                if id == "rs_abc" && encrypted == "gAAAAA..."
+        )));
+
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let plain = stream_event(serde_json::json!({
+            "type": "response.output_item.done",
+            "sequence_number": 7,
+            "output_index": 0,
+            "item": {
+                "type": "reasoning",
+                "id": "rs_def",
+                "summary": []
+            }
+        }));
+        let events = parse_responses_event(plain, &mut state);
+        assert!(events.iter().all(|e| !matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ReasoningItemDelta { .. }))
+        )));
+    }
+
+    /// Collected responses keep the replayable item: ReasoningItemDelta
+    /// accumulates into an EncryptedReasoning content block.
+    #[test]
+    fn reasoning_item_delta_accumulates_into_content() {
+        let mut response = crate::streaming::CollectedResponse::new();
+        response.apply_delta(StreamDelta::ReasoningItemDelta {
+            id: "rs_abc".into(),
+            encrypted: "gAAAAA...".into(),
+        });
+        assert!(response.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::EncryptedReasoning { id, encrypted }
+                if id == "rs_abc" && encrypted == "gAAAAA..."
+        )));
+    }
+
+    /// The reasoning request asks for the encrypted payload so replay
+    /// works statelessly.
+    #[test]
+    fn reasoning_request_asks_for_encrypted_content() {
+        let config = crate::config::OpenAiConfig {
+            api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            api: crate::config::OpenAiApi::Responses,
+            base_url: None,
+            model: crate::config::OpenAiModel::Gpt5,
+            max_tokens: crate::types::MaxTokens::new(512).unwrap(),
+            temperature: None,
+            reasoning: Some(crate::config::ReasoningConfig {
+                effort: ReasoningEffort::High,
+                summary: ReasoningSummary::Auto,
+            }),
+            structured_output: false,
+        };
+        let provider = OpenAiProvider::new(config).unwrap();
+        let request = CompletionRequest::new(
+            ModelId::new("gpt-5").unwrap(),
+            vec![Message::new(
+                DriverRole::User,
+                vec![ContentBlock::Text { text: "hi".into() }],
+            )],
+        );
+
+        let wire =
+            serde_json::to_value(provider.build_responses_request(&request).unwrap()).unwrap();
+        assert_eq!(
+            wire["include"],
+            serde_json::json!(["reasoning.encrypted_content"])
         );
     }
 

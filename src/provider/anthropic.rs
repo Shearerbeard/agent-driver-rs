@@ -132,21 +132,24 @@ impl AnthropicProvider {
         let content: Vec<JsonValue> = msg
             .content
             .iter()
-            .map(|block| match block {
-                ContentBlock::Text { text } => serde_json::json!({
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(serde_json::json!({
                     "type": "text",
                     "text": text
-                }),
-                ContentBlock::Thinking { text } => serde_json::json!({
+                })),
+                ContentBlock::Thinking { text } => Some(serde_json::json!({
                     "type": "thinking",
                     "thinking": text
-                }),
-                ContentBlock::ToolUse { id, name, input } => serde_json::json!({
+                })),
+                ContentBlock::ToolUse { id, name, input } => Some(serde_json::json!({
                     "type": "tool_use",
                     "id": id.as_str(),
                     "name": name.as_str(),
                     "input": input
-                }),
+                })),
+                // OpenAI Responses replay token: no Anthropic wire
+                // equivalent, dropped rather than guessed at.
+                ContentBlock::EncryptedReasoning { .. } => None,
                 ContentBlock::ToolResult {
                     tool_use_id,
                     content,
@@ -155,12 +158,12 @@ impl AnthropicProvider {
                     let content_str = match content {
                         crate::types::ToolResultContent::Text(s) => s.clone(),
                     };
-                    serde_json::json!({
+                    Some(serde_json::json!({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id.as_str(),
                         "content": content_str,
                         "is_error": is_error
-                    })
+                    }))
                 }
             })
             .collect();

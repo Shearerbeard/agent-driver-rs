@@ -97,6 +97,7 @@ impl OpenAiProvider {
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
                             ContentBlock::Thinking { .. }
+                            | ContentBlock::EncryptedReasoning { .. }
                             | ContentBlock::ToolUse { .. }
                             | ContentBlock::ToolResult { .. } => None,
                         })
@@ -123,7 +124,9 @@ impl OpenAiProvider {
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
                             ContentBlock::Thinking { text } => Some(text.as_str()),
-                            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
+                            ContentBlock::EncryptedReasoning { .. }
+                            | ContentBlock::ToolUse { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -138,6 +141,7 @@ impl OpenAiProvider {
                             }
                             ContentBlock::Text { .. }
                             | ContentBlock::Thinking { .. }
+                            | ContentBlock::EncryptedReasoning { .. }
                             | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect();
@@ -238,6 +242,7 @@ impl OpenAiProvider {
                             .filter_map(|b| match b {
                                 ContentBlock::Text { text } => Some(text.as_str()),
                                 ContentBlock::Thinking { .. }
+                                | ContentBlock::EncryptedReasoning { .. }
                                 | ContentBlock::ToolUse { .. }
                                 | ContentBlock::ToolResult { .. } => None,
                             })

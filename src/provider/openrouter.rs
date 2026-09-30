@@ -193,7 +193,9 @@ impl OpenRouterProvider {
                 .filter_map(|b| match b {
                     ContentBlock::Text { text } => Some(text.as_str()),
                     ContentBlock::Thinking { text } => Some(text.as_str()),
-                    ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
+                    ContentBlock::EncryptedReasoning { .. }
+                    | ContentBlock::ToolUse { .. }
+                    | ContentBlock::ToolResult { .. } => None,
                 })
                 .collect::<Vec<_>>()
                 .join("");
@@ -212,6 +214,7 @@ impl OpenRouterProvider {
                     })),
                     ContentBlock::Text { .. }
                     | ContentBlock::Thinking { .. }
+                    | ContentBlock::EncryptedReasoning { .. }
                     | ContentBlock::ToolResult { .. } => None,
                 })
                 .collect();
@@ -233,6 +236,7 @@ impl OpenRouterProvider {
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
                 ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })

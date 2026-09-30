@@ -35,6 +35,11 @@ pub enum StreamDelta {
     /// Thinking block signature (Claude extended thinking)
     SignatureDelta { signature: String },
 
+    /// A fully materialized reasoning item (OpenAI Responses encrypted
+    /// reasoning). Atomic, not incremental: the whole replayable item
+    /// arrives at once when the request asked for encrypted content.
+    ReasoningItemDelta { id: String, encrypted: String },
+
     /// Start of a tool use block
     ToolUseStart { id: ToolCallId, name: ToolName },
 
@@ -217,6 +222,12 @@ impl CollectedResponse {
             StreamDelta::SignatureDelta { .. } => {
                 // Signatures are metadata, not content - ignore for collection
             }
+            StreamDelta::ReasoningItemDelta { id, encrypted } => {
+                // Atomic replayable reasoning item: carried whole into
+                // the collected content, never rendered.
+                self.content
+                    .push(ContentBlock::EncryptedReasoning { id, encrypted });
+            }
         }
     }
 
@@ -290,6 +301,7 @@ impl CollectedResponse {
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
                 ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
@@ -305,6 +317,7 @@ impl CollectedResponse {
             .filter_map(|b| match b {
                 ContentBlock::Thinking { text } => Some(text.as_str()),
                 ContentBlock::Text { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
@@ -321,6 +334,7 @@ impl CollectedResponse {
                 ContentBlock::ToolUse { id, name, input } => Some((id, name, input)),
                 ContentBlock::Text { .. }
                 | ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
             .collect()
@@ -362,6 +376,7 @@ impl CollectedResponse {
                     }
                 }
                 ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => new_content.push(block),
             }

@@ -52,40 +52,7 @@ impl OpenAiProvider {
             }
 
             let model = self.config.model.as_str();
-            let input_items = build_input_items(&request);
-
-            let mut builder = CreateResponseArgs::default();
-            builder
-                .model(model)
-                .input(InputParam::Items(input_items))
-                .max_output_tokens(request.config.max_tokens.get())
-                // Stateless by design: the Session owns history, so the
-                // response must not be stored server-side.
-                .store(false)
-                .stream(true);
-
-            if let Some(system) = system_text(&request) {
-                builder.instructions(system);
-            }
-
-            if let Some(temp) = request.config.temperature {
-                if self.config.model.supports_temperature() {
-                    builder.temperature(temp.get());
-                }
-            }
-
-            if !request.tools.is_empty() {
-                builder.tools(convert_tools(&request.tools));
-            }
-
-            if let Some(reasoning) = &self.config.reasoning {
-                builder.reasoning(to_sdk_reasoning(reasoning));
-            }
-
-            let openai_request = builder.build().map_err(|e| ProviderError::InvalidRequest {
-                provider: crate::provider::ProviderKind::OpenAi,
-                message: format!("Failed to build responses request: {e}"),
-            })?;
+            let openai_request = self.build_responses_request(&request)?;
 
             let stream = self
                 .client
@@ -105,18 +72,19 @@ impl OpenAiProvider {
                         message: e.to_string(),
                     })],
                 },
+                // The Responses terminal events (completed/incomplete/
+                // failed) carry usage and stop reason into the state;
+                // the stream ends right after them, and Completed is
+                // emitted here — the same end-of-stream shape the chat
+                // surface uses.
                 |state| {
-                    if !state.completed {
-                        Some(Ok(StreamEvent::Completed {
-                            metadata: CompletionMetadata {
-                                model: state.model.clone(),
-                                stop_reason: state.stop_reason,
-                                usage: state.usage,
-                            },
-                        }))
-                    } else {
-                        None
-                    }
+                    Some(Ok(StreamEvent::Completed {
+                        metadata: CompletionMetadata {
+                            model: state.model.clone(),
+                            stop_reason: state.stop_reason,
+                            usage: state.usage,
+                        },
+                    }))
                 },
             );
 
@@ -125,6 +93,46 @@ impl OpenAiProvider {
                 ctx.cancellation,
                 ctx.correlation_id,
             ))
+        })
+    }
+
+    /// Build the Responses API request body (separate so tests can
+    /// pin the wire shape).
+    fn build_responses_request(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<async_openai::types::responses::CreateResponse, ProviderError> {
+        let mut builder = CreateResponseArgs::default();
+        builder
+            .model(self.config.model.as_str())
+            .input(InputParam::Items(build_input_items(request)))
+            .max_output_tokens(request.config.max_tokens.get())
+            // Stateless by design: the Session owns history, so the
+            // response must not be stored server-side.
+            .store(false)
+            .stream(true);
+
+        if let Some(system) = system_text(request) {
+            builder.instructions(system);
+        }
+
+        if let Some(temp) = request.config.temperature {
+            if self.config.model.supports_temperature() {
+                builder.temperature(temp.get());
+            }
+        }
+
+        if !request.tools.is_empty() {
+            builder.tools(convert_tools(&request.tools));
+        }
+
+        if let Some(reasoning) = &self.config.reasoning {
+            builder.reasoning(to_sdk_reasoning(reasoning));
+        }
+
+        builder.build().map_err(|e| ProviderError::InvalidRequest {
+            provider: crate::provider::ProviderKind::OpenAi,
+            message: format!("Failed to build responses request: {e}"),
         })
     }
 }
@@ -297,11 +305,10 @@ struct ResponsesStreamState {
     model: Option<ModelId>,
     stop_reason: Option<StopReason>,
     usage: Option<TokenUsage>,
-    /// call_id + name per function-call item, keyed by the item id the
+    /// call_id per function-call item, keyed by the item id the
     /// delta events reference.
     tool_items: HashMap<String, ToolCallId>,
     started: bool,
-    completed: bool,
 }
 
 /// Parse one Responses stream event into driver stream events.
@@ -344,10 +351,19 @@ fn parse_responses_event(
                     }
                 };
                 let id = ToolCallId::new(&call.call_id);
-                // Delta events key tool input by the item id; when the
-                // server omits it, fall back to the call id so the
-                // correlation still resolves.
-                let item_key = call.id.clone().unwrap_or_else(|| call.call_id.clone());
+                // Argument deltas reference the item id; without it the
+                // stream cannot be correlated, so fail loud instead of
+                // guessing at the call-id domain.
+                let Some(item_key) = call.id.clone() else {
+                    events.push(Err(StreamError::Deserialize {
+                        message: format!(
+                            "function call item for {} carries no item id",
+                            call.call_id
+                        ),
+                        raw_data: None,
+                    }));
+                    return events;
+                };
                 state.tool_items.insert(item_key, id.clone());
                 events.push(Ok(StreamEvent::ContentBlockStart {
                     index: added.output_index as usize,
@@ -411,18 +427,27 @@ fn parse_responses_event(
                 }
             }
         }
+        // Refusals are answer-channel content: surface them as text so
+        // a safety refusal is visible instead of an empty turn.
+        ResponseStreamEvent::ResponseRefusalDelta(delta) => {
+            if !delta.delta.is_empty() {
+                events.push(Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                    text: delta.delta,
+                })));
+            }
+        }
+        // The done event duplicates the streamed refusal text.
+        ResponseStreamEvent::ResponseRefusalDone(_) => {}
         ResponseStreamEvent::ResponseCompleted(completed) => {
             state.usage = completed.response.usage.map(to_token_usage);
             state.stop_reason = Some(stop_reason_for(
                 &completed.response.output,
                 completed.response.status,
             ));
-            state.completed = true;
         }
         ResponseStreamEvent::ResponseIncomplete(incomplete) => {
             state.usage = incomplete.response.usage.map(to_token_usage);
             state.stop_reason = Some(StopReason::MaxTokens);
-            state.completed = true;
         }
         ResponseStreamEvent::ResponseFailed(failed) => {
             let message = failed
@@ -431,15 +456,7 @@ fn parse_responses_event(
                 .as_ref()
                 .map(|e| e.message.clone())
                 .unwrap_or_else(|| "responses stream failed".to_owned());
-            if is_content_policy_message(&message) {
-                state.stop_reason = Some(StopReason::ContentFilter);
-            } else {
-                events.push(Err(StreamError::ConnectionLost {
-                    kind: StreamErrorKind::ProviderError,
-                    message,
-                }));
-            }
-            state.completed = true;
+            record_terminal_failure(message, state, &mut events);
         }
         // Terminal bookkeeping events without driver-facing payloads.
         ResponseStreamEvent::ResponseOutputItemDone(_)
@@ -459,9 +476,7 @@ fn parse_responses_event(
         // scope for the driver's client-side function tools; ignoring
         // their events keeps an unexpected hosted-tool response from
         // erroring the whole stream.
-        ResponseStreamEvent::ResponseRefusalDelta(_)
-        | ResponseStreamEvent::ResponseRefusalDone(_)
-        | ResponseStreamEvent::ResponseFileSearchCallInProgress(_)
+        ResponseStreamEvent::ResponseFileSearchCallInProgress(_)
         | ResponseStreamEvent::ResponseFileSearchCallSearching(_)
         | ResponseStreamEvent::ResponseFileSearchCallCompleted(_)
         | ResponseStreamEvent::ResponseWebSearchCallInProgress(_)
@@ -489,15 +504,29 @@ fn parse_responses_event(
         | ResponseStreamEvent::ResponseCustomToolCallInputDone(_) => {}
         // A mid-stream error event fails the stream loudly.
         ResponseStreamEvent::ResponseError(error) => {
-            events.push(Err(StreamError::ConnectionLost {
-                kind: StreamErrorKind::ProviderError,
-                message: error.message,
-            }));
-            state.completed = true;
+            record_terminal_failure(error.message, state, &mut events);
         }
     }
 
     events
+}
+
+/// Record a terminal failure (failed response or mid-stream error):
+/// content-policy messages end the turn with `ContentFilter`; anything
+/// else fails the stream loudly.
+fn record_terminal_failure(
+    message: String,
+    state: &mut ResponsesStreamState,
+    events: &mut Vec<Result<StreamEvent, StreamError>>,
+) {
+    if is_content_policy_message(&message) {
+        state.stop_reason = Some(StopReason::ContentFilter);
+    } else {
+        events.push(Err(StreamError::ConnectionLost {
+            kind: StreamErrorKind::ProviderError,
+            message,
+        }));
+    }
 }
 
 fn stop_reason_for(output: &[OutputItem], status: Status) -> StopReason {
@@ -706,7 +735,6 @@ mod tests {
             state.usage.map(|u| (u.input_tokens, u.output_tokens)),
             Some((12, 7))
         );
-        assert!(state.completed);
     }
 
     #[test]
@@ -843,16 +871,105 @@ mod tests {
         );
     }
 
-    /// The wire body must be stateless: store:false, stream:true.
+    /// The wire body must be stateless streaming: store=false,
+    /// stream=true, model and instructions present, reasoning effort
+    /// mapped one-to-one.
     #[test]
     fn request_body_is_stateless_streaming() {
-        let reasoning = crate::config::ReasoningConfig {
-            effort: ReasoningEffort::High,
-            summary: ReasoningSummary::Auto,
+        let config = crate::config::OpenAiConfig {
+            api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            api: crate::config::OpenAiApi::Responses,
+            base_url: None,
+            model: crate::config::OpenAiModel::Gpt5,
+            max_tokens: crate::types::MaxTokens::new(512).unwrap(),
+            temperature: None,
+            reasoning: Some(crate::config::ReasoningConfig {
+                effort: ReasoningEffort::High,
+                summary: ReasoningSummary::Auto,
+            }),
+            structured_output: false,
         };
-        let sdk = to_sdk_reasoning(&reasoning);
-        let wire = serde_json::to_value(&sdk).unwrap();
-        assert_eq!(wire["effort"], "high");
-        assert_eq!(wire["summary"], "auto");
+        let provider = OpenAiProvider::new(config).unwrap();
+
+        let request = CompletionRequest::new(
+            ModelId::new("gpt-5").unwrap(),
+            vec![Message::new(
+                DriverRole::User,
+                vec![ContentBlock::Text { text: "hi".into() }],
+            )],
+        )
+        .with_system(crate::types::SystemPrompt::new("be brief"))
+        .with_config(crate::provider::CompletionConfig::new(
+            crate::types::MaxTokens::new(512).unwrap(),
+        ));
+
+        let wire = serde_json::to_value(provider.build_responses_request(&request).unwrap())
+            .expect("request serializes");
+
+        assert_eq!(wire["store"], false, "stateless: store must be false");
+        assert_eq!(wire["stream"], true);
+        assert_eq!(wire["model"], "gpt-5");
+        assert_eq!(wire["max_output_tokens"], 512);
+        assert_eq!(wire["instructions"], "be brief");
+        assert_eq!(wire["reasoning"]["effort"], "high");
+        assert_eq!(wire["reasoning"]["summary"], "auto");
+        assert!(
+            wire.get("temperature").is_none(),
+            "reasoning models take no temperature"
+        );
+    }
+
+    /// Refusal deltas surface as answer text, not silence.
+    #[test]
+    fn refusal_delta_maps_to_text_delta() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.refusal.delta",
+            "sequence_number": 4,
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "I can't help with that."
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::TextDelta { text }))
+                if text == "I can't help with that."
+        )));
+    }
+
+    /// A function-call item without an item id cannot be correlated
+    /// with its argument deltas; the stream fails loud instead of
+    /// guessing.
+    #[test]
+    fn function_call_item_without_id_fails_loud() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.output_item.added",
+            "sequence_number": 4,
+            "output_index": 1,
+            "item": {
+                "type": "function_call",
+                "call_id": "call_abc",
+                "name": "read_file",
+                "arguments": ""
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "missing item id must fail loud, got: {events:?}"
+        );
     }
 }

@@ -113,7 +113,12 @@ impl OpenAiModel {
     /// Check if the model supports reasoning configuration
     pub fn supports_reasoning(&self) -> bool {
         match self {
-            Self::Gpt5 | Self::Gpt5_1 | Self::Gpt5_2 | Self::O1 | Self::O1Mini | Self::O3
+            Self::Gpt5
+            | Self::Gpt5_1
+            | Self::Gpt5_2
+            | Self::O1
+            | Self::O1Mini
+            | Self::O3
             | Self::O3Mini => true,
             Self::Gpt4o | Self::Gpt4oMini => false,
             // Unenumerated variants of known reasoning families

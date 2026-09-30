@@ -15,6 +15,7 @@ use super::common::{ApiKey, env_parse_opt, env_parse_or_default};
 /// config is not sent on the Chat Completions surface.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum OpenAiApi {
     /// Chat Completions API (default)
     #[default]
@@ -31,7 +32,7 @@ impl std::str::FromStr for OpenAiApi {
             "chat-completions" => Ok(Self::ChatCompletions),
             "responses" => Ok(Self::Responses),
             other => Err(ConfigError::InvalidValue {
-                field: "OPENAI_API".to_owned(),
+                field: "api".to_owned(),
                 reason: format!(
                     "unknown API surface {other:?}; expected \"chat-completions\" or \"responses\""
                 ),
@@ -347,7 +348,7 @@ mod tests {
         let cfg: OpenAiConfig = serde_json::from_str(
             "{\"api_key\": \"k\", \"model\": \"gpt-4o\", \"max_tokens\": 1024}",
         )
-        .expect("config without an api key deserializes");
+        .expect("config without an api field deserializes");
         assert_eq!(cfg.api, OpenAiApi::ChatCompletions);
     }
 

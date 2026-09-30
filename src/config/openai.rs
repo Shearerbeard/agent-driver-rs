@@ -112,16 +112,14 @@ impl OpenAiModel {
 
     /// Check if the model supports reasoning configuration
     pub fn supports_reasoning(&self) -> bool {
-        matches!(
-            self,
-            Self::Gpt5
-                | Self::Gpt5_1
-                | Self::Gpt5_2
-                | Self::O1
-                | Self::O1Mini
-                | Self::O3
-                | Self::O3Mini
-        )
+        match self {
+            Self::Gpt5 | Self::Gpt5_1 | Self::Gpt5_2 | Self::O1 | Self::O1Mini | Self::O3
+            | Self::O3Mini => true,
+            Self::Gpt4o | Self::Gpt4oMini => false,
+            // Unenumerated variants of known reasoning families
+            // (e.g. gpt-5.6-terra) arrive as custom strings.
+            Self::Custom(s) => s.starts_with("gpt-5") || s.starts_with('o'),
+        }
     }
 
     /// Check if the model supports streaming
@@ -339,6 +337,14 @@ mod tests {
 
         let parsed: OpenAiModel = "custom-model".parse().unwrap();
         assert_eq!(parsed, OpenAiModel::Custom("custom-model".into()));
+    }
+
+    #[test]
+    fn model_reasoning_support_covers_custom_gpt5_variants() {
+        assert!(OpenAiModel::Custom("gpt-5.6-terra".into()).supports_reasoning());
+        assert!(OpenAiModel::Custom("o4-mini".into()).supports_reasoning());
+        assert!(!OpenAiModel::Custom("gpt-4o".into()).supports_reasoning());
+        assert!(!OpenAiModel::Gpt4o.supports_reasoning());
     }
 
     #[test]

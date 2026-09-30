@@ -17,8 +17,6 @@ commit history.
   `include: ["reasoning.encrypted_content"]`). `ReasoningConfig` maps
   natively to `reasoning: { effort, summary }`. Non-OpenAI providers
   drop the encrypted-reasoning block rather than replay it.
-  Breaking for downstream exhaustive matches on `ContentBlock`/
-  `StreamDelta` (both `#[non_exhaustive]`).
 - Bedrock extended thinking support: `BedrockConfig.thinking`
   (`BEDROCK_THINKING_BUDGET`) sends the `additionalModelRequestFields`
   thinking block for Claude-family models; `reasoningContent` deltas from

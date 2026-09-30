@@ -156,13 +156,7 @@ fn system_text(request: &CompletionRequest) -> Option<String> {
                 .map(|m| {
                     m.content
                         .iter()
-                        .filter_map(|b| match b {
-                            ContentBlock::Text { text } => Some(text.as_str()),
-                            ContentBlock::Thinking { .. }
-                            | ContentBlock::EncryptedReasoning { .. }
-                            | ContentBlock::ToolUse { .. }
-                            | ContentBlock::ToolResult { .. } => None,
-                        })
+                        .filter_map(ContentBlock::as_text)
                         .collect::<Vec<_>>()
                         .join("\n")
                 })
@@ -174,7 +168,7 @@ fn system_text(request: &CompletionRequest) -> Option<String> {
 ///
 /// Assistant history replays as an easy assistant message (text only —
 /// thinking summaries are not replayed; the reasoning items that carry
-/// them round-trip natively in Stage 4) plus one function-call item per
+/// them round-trip natively) plus one function-call item per
 /// tool use, and tool results replay as function-call outputs.
 fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
     let mut items = Vec::new();
@@ -190,13 +184,7 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                 let text = msg
                     .content
                     .iter()
-                    .filter_map(|b| match b {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        ContentBlock::Thinking { .. }
-                        | ContentBlock::EncryptedReasoning { .. }
-                        | ContentBlock::ToolUse { .. }
-                        | ContentBlock::ToolResult { .. } => None,
-                    })
+                    .filter_map(ContentBlock::as_text)
                     .collect::<Vec<_>>()
                     .join("\n");
                 if !text.is_empty() {
@@ -439,12 +427,14 @@ fn parse_responses_event(
                 })));
             }
         }
+        // Summary deltas (summarized reasoning) and reasoning-text
+        // deltas (raw chain of thought, newer reasoning models) both
+        // map to the driver's ThinkingDelta channel.
         ResponseStreamEvent::ResponseReasoningSummaryTextDelta(delta) => {
-            if !delta.delta.is_empty() {
-                events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
-                    thinking: delta.delta,
-                })));
-            }
+            push_thinking_delta(delta.delta, &mut events);
+        }
+        ResponseStreamEvent::ResponseReasoningTextDelta(delta) => {
+            push_thinking_delta(delta.delta, &mut events);
         }
         ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(delta) => {
             if !delta.delta.is_empty() {
@@ -508,7 +498,6 @@ fn parse_responses_event(
         | ResponseStreamEvent::ResponseReasoningSummaryPartAdded(_)
         | ResponseStreamEvent::ResponseReasoningSummaryPartDone(_)
         | ResponseStreamEvent::ResponseReasoningSummaryTextDone(_)
-        | ResponseStreamEvent::ResponseReasoningTextDelta(_)
         | ResponseStreamEvent::ResponseReasoningTextDone(_) => {}
         // Lifecycle noise that carries no content for this surface.
         ResponseStreamEvent::ResponseInProgress(_) | ResponseStreamEvent::ResponseQueued(_) => {}
@@ -555,6 +544,14 @@ fn parse_responses_event(
 /// Record a terminal failure (failed response or mid-stream error):
 /// content-policy messages end the turn with `ContentFilter`; anything
 /// else fails the stream loudly.
+fn push_thinking_delta(thinking: String, events: &mut Vec<Result<StreamEvent, StreamError>>) {
+    if !thinking.is_empty() {
+        events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
+            thinking,
+        })));
+    }
+}
+
 fn record_terminal_failure(
     message: String,
     state: &mut ResponsesStreamState,
@@ -1098,6 +1095,31 @@ mod tests {
             wire["include"],
             serde_json::json!(["reasoning.encrypted_content"])
         );
+    }
+
+    /// Raw reasoning-text deltas (newer reasoning models) map to the
+    /// same ThinkingDelta channel as summaries.
+    #[test]
+    fn reasoning_text_delta_maps_to_thinking_delta() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.reasoning_text.delta",
+            "sequence_number": 2,
+            "item_id": "rs_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "raw chain of thought"
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking }))
+                if thinking == "raw chain of thought"
+        )));
     }
 
     /// Refusal deltas surface as answer text, not silence.

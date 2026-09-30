@@ -146,12 +146,17 @@ impl OpenAiProvider {
                         })
                         .collect();
 
+                    // An assistant message with neither content nor tool
+                    // calls (every block dropped in serialization, e.g.
+                    // an encrypted-reasoning-only turn) is omitted.
+                    if text.is_empty() && tool_calls.is_empty() {
+                        continue;
+                    }
+
                     let mut builder = ChatCompletionRequestAssistantMessageArgs::default();
-                    let mut has_payload = false;
 
                     if !text.is_empty() {
                         builder.content(text);
-                        has_payload = true;
                     }
 
                     if !tool_calls.is_empty() {
@@ -171,14 +176,6 @@ impl OpenAiProvider {
                             })
                             .collect();
                         builder.tool_calls(tc);
-                        has_payload = true;
-                    }
-
-                    // An assistant message with neither content nor tool
-                    // calls (every block dropped in serialization, e.g.
-                    // an encrypted-reasoning-only turn) is omitted.
-                    if !has_payload {
-                        continue;
                     }
 
                     openai_messages.push(

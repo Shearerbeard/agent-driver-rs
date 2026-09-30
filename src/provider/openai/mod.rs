@@ -1,11 +1,14 @@
 //! OpenAI provider implementation using the `async-openai` crate.
 //!
-//! Supports GPT-4o, GPT-5.x, and o-series reasoning models. Handles:
-//! - Streaming chat completions with tool/function calling
-//! - Reasoning effort configuration for models that support it
-//! - Non-streaming fallback for o3/o3-mini models
+//! Supports GPT-4o, GPT-5.x, and o-series reasoning models over two
+//! config-selected API surfaces ([`crate::config::OpenAiApi`]):
+//! - Chat Completions (default): streaming with tool/function calling
+//!   and third-party reasoning deltas from compatible endpoints
+//! - Responses: the reasoning-native surface for GPT-5.x models, run
+//!   statelessly (`store: false`) with the session owning history
 
 mod chat;
+mod responses;
 
 pub use chat::{ReasoningAwareChoice, ReasoningAwareChunk, ReasoningAwareDelta};
 
@@ -16,12 +19,56 @@ use async_openai::Client;
 use async_openai::config::OpenAIConfig;
 
 use crate::config::OpenAiConfig;
-use crate::error::ProviderError;
+use crate::error::{
+    AuthErrorKind, ProviderError, is_content_policy_message, is_context_window_message,
+};
 use crate::provider::{
     CompletionRequest, ModelInfo, Provider, ProviderCapabilities, ProviderContext, ProviderInfo,
 };
 use crate::streaming::StreamHandle;
 use crate::types::ModelId;
+
+/// Map an async-openai request error to the driver's provider errors.
+///
+/// Shared by both API surfaces (chat completions and responses); the
+/// SDK's error type stringifies uniformly, so the mapping is
+/// message-based either way.
+pub(super) fn map_request_error(msg: String, model: &str) -> ProviderError {
+    if msg.contains("401") || msg.contains("Unauthorized") {
+        ProviderError::Auth {
+            provider: crate::provider::ProviderKind::OpenAi,
+            kind: AuthErrorKind::Rejected,
+            message: msg,
+        }
+    } else if msg.contains("429") || msg.contains("rate") {
+        ProviderError::RateLimited {
+            provider: crate::provider::ProviderKind::OpenAi,
+            retry_after: None,
+        }
+    } else if msg.contains("model") && msg.contains("not found") {
+        ProviderError::ModelNotFound {
+            provider: crate::provider::ProviderKind::OpenAi,
+            model: model.to_owned(),
+        }
+    } else if is_context_window_message(&msg) {
+        ProviderError::ContextWindowExceeded {
+            provider: crate::provider::ProviderKind::OpenAi,
+            message: msg,
+            context_window: None,
+            tokens_used: None,
+        }
+    } else if is_content_policy_message(&msg) {
+        ProviderError::ContentPolicyViolation {
+            provider: crate::provider::ProviderKind::OpenAi,
+            message: msg,
+        }
+    } else {
+        ProviderError::InvalidRequest {
+            provider: crate::provider::ProviderKind::OpenAi,
+            message: msg,
+        }
+    }
+}
 
 /// OpenAI provider
 pub struct OpenAiProvider {
@@ -30,6 +77,10 @@ pub struct OpenAiProvider {
     info: ProviderInfo,
 }
 
+#[allow(
+    clippy::multiple_inherent_impl,
+    reason = "the OpenAI impl is split per API surface (mod, chat, responses); the lint targets accidental fragmentation"
+)]
 impl OpenAiProvider {
     /// Create a new OpenAI-compatible provider.
     ///
@@ -77,7 +128,10 @@ impl Provider for OpenAiProvider {
         request: CompletionRequest,
         ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<StreamHandle, ProviderError>> + Send + '_>> {
-        self.complete_stream_chat(request, ctx)
+        match self.config.api {
+            crate::config::OpenAiApi::ChatCompletions => self.complete_stream_chat(request, ctx),
+            crate::config::OpenAiApi::Responses => self.complete_stream_responses(request, ctx),
+        }
     }
 
     fn list_models(

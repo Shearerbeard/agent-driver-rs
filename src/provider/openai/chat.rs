@@ -7,10 +7,7 @@
 use std::collections::HashMap;
 use std::pin::Pin;
 
-use crate::error::{
-    AuthErrorKind, ProviderError, StreamError, StreamErrorKind, is_content_policy_message,
-    is_context_window_message,
-};
+use crate::error::{ProviderError, StreamError, StreamErrorKind};
 use crate::provider::{CompletionRequest, ProviderContext, ProviderKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
@@ -378,43 +375,7 @@ impl OpenAiProvider {
                 .chat()
                 .create_stream_byot::<_, ReasoningAwareChunk>(openai_request)
                 .await
-                .map_err(|e| {
-                    let msg = e.to_string();
-                    if msg.contains("401") || msg.contains("Unauthorized") {
-                        ProviderError::Auth {
-                            provider: ProviderKind::OpenAi,
-                            kind: AuthErrorKind::Rejected,
-                            message: msg,
-                        }
-                    } else if msg.contains("429") || msg.contains("rate") {
-                        ProviderError::RateLimited {
-                            provider: ProviderKind::OpenAi,
-                            retry_after: None,
-                        }
-                    } else if msg.contains("model") && msg.contains("not found") {
-                        ProviderError::ModelNotFound {
-                            provider: ProviderKind::OpenAi,
-                            model: model.to_owned(),
-                        }
-                    } else if is_context_window_message(&msg) {
-                        ProviderError::ContextWindowExceeded {
-                            provider: ProviderKind::OpenAi,
-                            message: msg,
-                            context_window: None,
-                            tokens_used: None,
-                        }
-                    } else if is_content_policy_message(&msg) {
-                        ProviderError::ContentPolicyViolation {
-                            provider: ProviderKind::OpenAi,
-                            message: msg,
-                        }
-                    } else {
-                        ProviderError::InvalidRequest {
-                            provider: ProviderKind::OpenAi,
-                            message: msg,
-                        }
-                    }
-                })?;
+                .map_err(|e| super::map_request_error(e.to_string(), model))?;
 
             let event_stream = crate::provider::stream_adapter::buffered_sdk_stream(
                 stream,

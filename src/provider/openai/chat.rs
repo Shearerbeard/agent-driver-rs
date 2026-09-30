@@ -976,6 +976,7 @@ mod tests {
     fn no_duplicate_system_message() {
         let config = OpenAiConfig {
             api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            api: Default::default(),
             base_url: None,
             model: crate::config::OpenAiModel::Gpt4o,
             max_tokens: crate::types::MaxTokens::new(100).unwrap(),

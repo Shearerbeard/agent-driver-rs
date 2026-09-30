@@ -30,6 +30,8 @@ fn make_config(model: &str) -> OpenAiConfig {
     };
     OpenAiConfig {
         api_key,
+        api: Default::default(),
+        base_url: None,
         model: model_enum,
         max_tokens: MaxTokens::new(256).unwrap(),
         temperature: None,

@@ -210,7 +210,7 @@ fn build_input_items(request: &CompletionRequest) -> Vec<InputItem> {
                 // order (reasoning items precede the text they
                 // produced, matching how the API emitted them).
                 let mut text = String::new();
-                let mut flush_text = |items: &mut Vec<InputItem>, text: &mut String| {
+                let flush_text = |items: &mut Vec<InputItem>, text: &mut String| {
                     if !text.is_empty() {
                         items.push(InputItem::EasyMessage(easy_message(
                             Role::Assistant,

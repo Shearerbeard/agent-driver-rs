@@ -1,26 +1,19 @@
-//! OpenAI provider implementation using the `async-openai` crate.
+//! Chat Completions API surface of the OpenAI provider.
 //!
-//! Supports GPT-4o, GPT-5.x, and o-series reasoning models. Handles:
-//! - Streaming chat completions with tool/function calling
-//! - Reasoning effort configuration for models that support it
-//! - Non-streaming fallback for o3/o3-mini models
+//! Streaming chat completions with tool/function calling, reasoning
+//! deltas from OpenAI-compatible endpoints, and the BYOT chunk wrapper
+//! that keeps third-party reasoning fields alive through deserialization.
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::pin::Pin;
 
-use crate::config::OpenAiConfig;
-use crate::error::{
-    AuthErrorKind, ProviderError, StreamError, StreamErrorKind, is_content_policy_message,
-    is_context_window_message,
-};
+use crate::error::{ProviderError, StreamError, StreamErrorKind};
+use crate::provider::{CompletionRequest, ProviderContext, ProviderKind};
 use crate::streaming::{
     CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent, StreamHandle,
     TokenUsage,
 };
 use crate::types::{ContentBlock, Message, ModelId, Role, ToolCallId, ToolName};
-use async_openai::Client;
-use async_openai::config::OpenAIConfig;
 use async_openai::types::chat::{
     ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
     ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
@@ -31,16 +24,7 @@ use async_openai::types::chat::{
     StopConfiguration,
 };
 
-use super::{
-    CompletionRequest, ModelInfo, Provider, ProviderCapabilities, ProviderContext, ProviderInfo,
-};
-
-/// OpenAI provider
-pub struct OpenAiProvider {
-    config: OpenAiConfig,
-    client: Client<OpenAIConfig>,
-    info: ProviderInfo,
-}
+use super::OpenAiProvider;
 
 /// A streamed chat-completion chunk that also carries reasoning deltas.
 ///
@@ -84,42 +68,11 @@ pub struct ReasoningAwareDelta {
     pub inner: ChatCompletionStreamResponseDelta,
 }
 
+#[allow(
+    clippy::multiple_inherent_impl,
+    reason = "the OpenAI impl is split per API surface (mod, chat, responses); the lint targets accidental fragmentation"
+)]
 impl OpenAiProvider {
-    /// Create a new OpenAI-compatible provider.
-    ///
-    /// `config.base_url` points the client at any OpenAI-compatible
-    /// endpoint (BaseTen Model APIs, OpenRouter, a local vLLM server);
-    /// unset means the official OpenAI base.
-    pub fn new(config: OpenAiConfig) -> Result<Self, ProviderError> {
-        let supports_streaming = config.model.supports_streaming();
-
-        // Create async-openai client with API key, and the configured
-        // base URL when one is set.
-        let mut openai_config = OpenAIConfig::new().with_api_key(config.api_key.as_str());
-        if let Some(base) = &config.base_url {
-            openai_config = openai_config.with_api_base(base);
-        }
-        let client = Client::with_config(openai_config);
-
-        let info = ProviderInfo {
-            kind: super::ProviderKind::OpenAi,
-            name: "OpenAI",
-            capabilities: ProviderCapabilities {
-                streaming: supports_streaming,
-                tools: true,
-                vision: true,
-                extended_thinking: config.model.supports_reasoning(),
-                max_context_tokens: Some(128_000),
-            },
-        };
-
-        Ok(Self {
-            config,
-            client,
-            info,
-        })
-    }
-
     /// Convert our messages to OpenAI format.
     ///
     /// System messages are excluded because OpenAI only accepts a single system
@@ -144,6 +97,7 @@ impl OpenAiProvider {
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
                             ContentBlock::Thinking { .. }
+                            | ContentBlock::EncryptedReasoning { .. }
                             | ContentBlock::ToolUse { .. }
                             | ContentBlock::ToolResult { .. } => None,
                         })
@@ -156,7 +110,7 @@ impl OpenAiProvider {
                                 .content(text)
                                 .build()
                                 .map_err(|e| ProviderError::InvalidRequest {
-                                    provider: super::ProviderKind::OpenAi,
+                                    provider: ProviderKind::OpenAi,
                                     message: format!("Failed to build user message: {e}"),
                                 })?
                                 .into(),
@@ -170,7 +124,9 @@ impl OpenAiProvider {
                         .filter_map(|b| match b {
                             ContentBlock::Text { text } => Some(text.as_str()),
                             ContentBlock::Thinking { text } => Some(text.as_str()),
-                            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => None,
+                            ContentBlock::EncryptedReasoning { .. }
+                            | ContentBlock::ToolUse { .. }
+                            | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -185,9 +141,17 @@ impl OpenAiProvider {
                             }
                             ContentBlock::Text { .. }
                             | ContentBlock::Thinking { .. }
+                            | ContentBlock::EncryptedReasoning { .. }
                             | ContentBlock::ToolResult { .. } => None,
                         })
                         .collect();
+
+                    // An assistant message with neither content nor tool
+                    // calls (every block dropped in serialization, e.g.
+                    // an encrypted-reasoning-only turn) is omitted.
+                    if text.is_empty() && tool_calls.is_empty() {
+                        continue;
+                    }
 
                     let mut builder = ChatCompletionRequestAssistantMessageArgs::default();
 
@@ -218,7 +182,7 @@ impl OpenAiProvider {
                         builder
                             .build()
                             .map_err(|e| ProviderError::InvalidRequest {
-                                provider: super::ProviderKind::OpenAi,
+                                provider: ProviderKind::OpenAi,
                                 message: format!("Failed to build assistant message: {e}"),
                             })?
                             .into(),
@@ -242,7 +206,7 @@ impl OpenAiProvider {
                                     .content(content_str)
                                     .build()
                                     .map_err(|e| ProviderError::InvalidRequest {
-                                        provider: super::ProviderKind::OpenAi,
+                                        provider: ProviderKind::OpenAi,
                                         message: format!("Failed to build tool message: {e}"),
                                     })?
                                     .into(),
@@ -285,6 +249,7 @@ impl OpenAiProvider {
                             .filter_map(|b| match b {
                                 ContentBlock::Text { text } => Some(text.as_str()),
                                 ContentBlock::Thinking { .. }
+                                | ContentBlock::EncryptedReasoning { .. }
                                 | ContentBlock::ToolUse { .. }
                                 | ContentBlock::ToolResult { .. } => None,
                             })
@@ -300,7 +265,7 @@ impl OpenAiProvider {
                     .content(system)
                     .build()
                     .map_err(|e| ProviderError::InvalidRequest {
-                        provider: super::ProviderKind::OpenAi,
+                        provider: ProviderKind::OpenAi,
                         message: format!("Failed to build system message: {e}"),
                     })?
                     .into(),
@@ -332,7 +297,7 @@ impl OpenAiProvider {
                     .parameters(t.input_schema.to_value())
                     .build()
                     .map_err(|e| ProviderError::InvalidRequest {
-                        provider: super::ProviderKind::OpenAi,
+                        provider: ProviderKind::OpenAi,
                         message: format!("Failed to build function: {e}"),
                     })?;
 
@@ -342,14 +307,10 @@ impl OpenAiProvider {
             })
             .collect()
     }
-}
 
-impl Provider for OpenAiProvider {
-    fn info(&self) -> &ProviderInfo {
-        &self.info
-    }
-
-    fn complete_stream(
+    /// Run one chat-completions streaming request (the `Provider` trait
+    /// dispatches here when the API surface is chat completions).
+    pub(super) fn complete_stream_chat(
         &self,
         request: CompletionRequest,
         ctx: ProviderContext,
@@ -358,7 +319,7 @@ impl Provider for OpenAiProvider {
             // Check if model supports streaming
             if !self.config.model.supports_streaming() {
                 return Err(ProviderError::StreamingNotSupported {
-                    provider: super::ProviderKind::OpenAi,
+                    provider: ProviderKind::OpenAi,
                     model: self.config.model.as_str().to_owned(),
                 });
             }
@@ -410,7 +371,7 @@ impl Provider for OpenAiProvider {
                 req_builder
                     .build()
                     .map_err(|e| ProviderError::InvalidRequest {
-                        provider: super::ProviderKind::OpenAi,
+                        provider: ProviderKind::OpenAi,
                         message: format!("Failed to build request: {e}"),
                     })?;
 
@@ -426,45 +387,9 @@ impl Provider for OpenAiProvider {
                 .chat()
                 .create_stream_byot::<_, ReasoningAwareChunk>(openai_request)
                 .await
-                .map_err(|e| {
-                    let msg = e.to_string();
-                    if msg.contains("401") || msg.contains("Unauthorized") {
-                        ProviderError::Auth {
-                            provider: super::ProviderKind::OpenAi,
-                            kind: AuthErrorKind::Rejected,
-                            message: msg,
-                        }
-                    } else if msg.contains("429") || msg.contains("rate") {
-                        ProviderError::RateLimited {
-                            provider: super::ProviderKind::OpenAi,
-                            retry_after: None,
-                        }
-                    } else if msg.contains("model") && msg.contains("not found") {
-                        ProviderError::ModelNotFound {
-                            provider: super::ProviderKind::OpenAi,
-                            model: model.to_owned(),
-                        }
-                    } else if is_context_window_message(&msg) {
-                        ProviderError::ContextWindowExceeded {
-                            provider: super::ProviderKind::OpenAi,
-                            message: msg,
-                            context_window: None,
-                            tokens_used: None,
-                        }
-                    } else if is_content_policy_message(&msg) {
-                        ProviderError::ContentPolicyViolation {
-                            provider: super::ProviderKind::OpenAi,
-                            message: msg,
-                        }
-                    } else {
-                        ProviderError::InvalidRequest {
-                            provider: super::ProviderKind::OpenAi,
-                            message: msg,
-                        }
-                    }
-                })?;
+                .map_err(|e| super::map_request_error(e.to_string(), model))?;
 
-            let event_stream = super::stream_adapter::buffered_sdk_stream(
+            let event_stream = crate::provider::stream_adapter::buffered_sdk_stream(
                 stream,
                 ctx.cancellation.clone(),
                 StreamState::default(),
@@ -495,41 +420,6 @@ impl Provider for OpenAiProvider {
                 ctx.cancellation,
                 ctx.correlation_id,
             ))
-        })
-    }
-
-    fn list_models(
-        &self,
-        _ctx: ProviderContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>, ProviderError>> + Send + '_>> {
-        #[allow(
-            clippy::expect_used,
-            reason = "listed OpenAI model IDs are hardcoded valid constants"
-        )]
-        Box::pin(async move {
-            // All model IDs below are hardcoded valid strings
-            Ok(vec![
-                ModelInfo {
-                    id: ModelId::new("gpt-4o").expect("hardcoded valid model ID"),
-                    name: "GPT-4o".to_owned(),
-                    context_window: Some(128_000),
-                },
-                ModelInfo {
-                    id: ModelId::new("gpt-4o-mini").expect("hardcoded valid model ID"),
-                    name: "GPT-4o Mini".to_owned(),
-                    context_window: Some(128_000),
-                },
-                ModelInfo {
-                    id: ModelId::new("o1").expect("hardcoded valid model ID"),
-                    name: "o1".to_owned(),
-                    context_window: Some(200_000),
-                },
-                ModelInfo {
-                    id: ModelId::new("o1-mini").expect("hardcoded valid model ID"),
-                    name: "o1 Mini".to_owned(),
-                    context_window: Some(128_000),
-                },
-            ])
         })
     }
 }
@@ -686,6 +576,7 @@ fn parse_openai_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::OpenAiConfig;
 
     fn text_chunk(content: &str) -> ReasoningAwareChunk {
         serde_json::from_value(serde_json::json!({
@@ -1058,6 +949,7 @@ mod tests {
     fn no_duplicate_system_message() {
         let config = OpenAiConfig {
             api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            api: Default::default(),
             base_url: None,
             model: crate::config::OpenAiModel::Gpt4o,
             max_tokens: crate::types::MaxTokens::new(100).unwrap(),

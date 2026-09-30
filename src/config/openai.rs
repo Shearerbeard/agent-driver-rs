@@ -7,11 +7,49 @@ use crate::types::{MaxTokens, Temperature};
 
 use super::common::{ApiKey, env_parse_opt, env_parse_or_default};
 
+/// OpenAI API surface the provider targets
+///
+/// The Responses API is the reasoning-native surface for GPT-5.x models
+/// (`ReasoningConfig` maps to its `reasoning: { effort, summary }`
+/// parameter); Chat Completions is the long-standing default. Reasoning
+/// config is not sent on the Chat Completions surface.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum OpenAiApi {
+    /// Chat Completions API (default)
+    #[default]
+    ChatCompletions,
+    /// Responses API
+    Responses,
+}
+
+impl std::str::FromStr for OpenAiApi {
+    type Err = ConfigError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "chat-completions" => Ok(Self::ChatCompletions),
+            "responses" => Ok(Self::Responses),
+            other => Err(ConfigError::InvalidValue {
+                field: "api".to_owned(),
+                reason: format!(
+                    "unknown API surface {other:?}; expected \"chat-completions\" or \"responses\""
+                ),
+            }),
+        }
+    }
+}
+
 /// OpenAI API configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OpenAiConfig {
     /// API key (required)
     pub api_key: ApiKey,
+
+    /// API surface to target (chat completions by default)
+    #[serde(default)]
+    pub api: OpenAiApi,
 
     /// Base URL for OpenAI-compatible endpoints (BaseTen, OpenRouter,
     /// vLLM servers). When unset, the official `api.openai.com` base
@@ -74,16 +112,19 @@ impl OpenAiModel {
 
     /// Check if the model supports reasoning configuration
     pub fn supports_reasoning(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::Gpt5
-                | Self::Gpt5_1
-                | Self::Gpt5_2
-                | Self::O1
-                | Self::O1Mini
-                | Self::O3
-                | Self::O3Mini
-        )
+            | Self::Gpt5_1
+            | Self::Gpt5_2
+            | Self::O1
+            | Self::O1Mini
+            | Self::O3
+            | Self::O3Mini => true,
+            Self::Gpt4o | Self::Gpt4oMini => false,
+            // Unenumerated variants of known reasoning families
+            // (e.g. gpt-5.6-terra) arrive as custom strings.
+            Self::Custom(s) => s.starts_with("gpt-5") || s.starts_with('o'),
+        }
     }
 
     /// Check if the model supports streaming
@@ -177,6 +218,12 @@ impl OpenAiConfig {
             Err(e) => return Err(ConfigError::from(e)),
         };
 
+        let api = match std::env::var("OPENAI_API") {
+            Ok(v) => v.trim().parse::<OpenAiApi>()?,
+            Err(std::env::VarError::NotPresent) => OpenAiApi::default(),
+            Err(e) => return Err(ConfigError::from(e)),
+        };
+
         let model_str = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
         let model = model_str.parse::<OpenAiModel>()?;
 
@@ -214,6 +261,7 @@ impl OpenAiConfig {
 
         Ok(Self {
             api_key,
+            api,
             base_url,
             model,
             max_tokens,
@@ -294,5 +342,50 @@ mod tests {
 
         let parsed: OpenAiModel = "custom-model".parse().unwrap();
         assert_eq!(parsed, OpenAiModel::Custom("custom-model".into()));
+    }
+
+    #[test]
+    fn model_reasoning_support_covers_custom_gpt5_variants() {
+        assert!(OpenAiModel::Custom("gpt-5.6-terra".into()).supports_reasoning());
+        assert!(OpenAiModel::Custom("o4-mini".into()).supports_reasoning());
+        assert!(!OpenAiModel::Custom("gpt-4o".into()).supports_reasoning());
+        assert!(!OpenAiModel::Gpt4o.supports_reasoning());
+    }
+
+    #[test]
+    fn api_defaults_to_chat_completions() {
+        assert_eq!(OpenAiApi::default(), OpenAiApi::ChatCompletions);
+
+        let cfg: OpenAiConfig = serde_json::from_str(
+            "{\"api_key\": \"k\", \"model\": \"gpt-4o\", \"max_tokens\": 1024}",
+        )
+        .expect("config without an api field deserializes");
+        assert_eq!(cfg.api, OpenAiApi::ChatCompletions);
+    }
+
+    #[test]
+    fn api_serde_round_trips_kebab_case() {
+        let api: OpenAiApi = serde_json::from_str("\"responses\"").unwrap();
+        assert_eq!(api, OpenAiApi::Responses);
+        assert_eq!(serde_json::to_string(&api).unwrap(), "\"responses\"");
+
+        let api: OpenAiApi = serde_json::from_str("\"chat-completions\"").unwrap();
+        assert_eq!(api, OpenAiApi::ChatCompletions);
+        assert_eq!(serde_json::to_string(&api).unwrap(), "\"chat-completions\"");
+    }
+
+    #[test]
+    fn api_from_str_parses_both_surfaces_and_fails_loud() {
+        let api: OpenAiApi = "responses".parse().unwrap();
+        assert_eq!(api, OpenAiApi::Responses);
+        let api: OpenAiApi = "chat-completions".parse().unwrap();
+        assert_eq!(api, OpenAiApi::ChatCompletions);
+
+        let err = "completions".parse::<OpenAiApi>().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("chat-completions") && msg.contains("responses"),
+            "error must name both accepted values: {msg}"
+        );
     }
 }

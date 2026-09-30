@@ -162,6 +162,9 @@ fn convert_messages(
                         None => continue,
                     }
                 }
+                // OpenAI Responses replay token: no Bedrock wire
+                // equivalent, dropped rather than guessed at.
+                ContentBlock::EncryptedReasoning { .. } => continue,
                 ContentBlock::ToolUse { id, name, input } => {
                     content_blocks.push(BedrockContentBlock::ToolUse(
                         ToolUseBlock::builder()

@@ -468,6 +468,7 @@ async fn collect_with_observer(
                             | StreamEvent::Completed { .. }
                             | StreamEvent::Error { .. }
                             | StreamEvent::Delta(StreamDelta::SignatureDelta { .. })
+                            | StreamEvent::Delta(StreamDelta::ReasoningItemDelta { .. })
                             | StreamEvent::Delta(StreamDelta::ToolUseStart { .. })
                             | StreamEvent::Delta(StreamDelta::ToolInputDelta { .. }) => {}
                         }

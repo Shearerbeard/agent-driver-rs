@@ -160,7 +160,9 @@ fn extract_text(content: &[ContentBlock]) -> String {
                 }
                 result.push_str(text);
             }
-            ContentBlock::ToolUse { .. } | ContentBlock::ToolResult { .. } => {}
+            ContentBlock::EncryptedReasoning { .. }
+            | ContentBlock::ToolUse { .. }
+            | ContentBlock::ToolResult { .. } => {}
         }
     }
     result

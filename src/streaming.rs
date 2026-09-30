@@ -35,6 +35,11 @@ pub enum StreamDelta {
     /// Thinking block signature (Claude extended thinking)
     SignatureDelta { signature: String },
 
+    /// A fully materialized reasoning item (OpenAI Responses encrypted
+    /// reasoning). Atomic, not incremental: the whole replayable item
+    /// arrives at once when the request asked for encrypted content.
+    ReasoningItemDelta { id: String, encrypted: String },
+
     /// Start of a tool use block
     ToolUseStart { id: ToolCallId, name: ToolName },
 
@@ -153,6 +158,10 @@ pub struct CollectedResponse {
     // Internal: accumulation state for streaming
     pending_text: String,
     pending_thinking: String,
+    /// Replayable reasoning items, buffered so the flushed order is
+    /// deterministic (reasoning precedes its message content, matching
+    /// how reasoning streams arrive before the answer).
+    pending_reasoning: Vec<ContentBlock>,
     pending_tool_uses: HashMap<ToolCallId, PendingToolUse>,
     pending_tool_index: Option<usize>,
     tool_block_indices: HashMap<usize, ToolCallId>,
@@ -217,6 +226,12 @@ impl CollectedResponse {
             StreamDelta::SignatureDelta { .. } => {
                 // Signatures are metadata, not content - ignore for collection
             }
+            StreamDelta::ReasoningItemDelta { id, encrypted } => {
+                // Atomic replayable reasoning item: buffered whole, and
+                // flushed ahead of the message text it precedes.
+                self.pending_reasoning
+                    .push(ContentBlock::EncryptedReasoning { id, encrypted });
+            }
         }
     }
 
@@ -259,6 +274,7 @@ impl CollectedResponse {
     /// any accumulated content that wasn't explicitly closed with `ContentBlockStop`
     /// is captured. Some providers (e.g., OpenRouter) don't emit `ContentBlockStop`.
     pub fn flush_pending(&mut self) {
+        self.content.append(&mut self.pending_reasoning);
         if !self.pending_text.is_empty() {
             self.content.push(ContentBlock::Text {
                 text: std::mem::take(&mut self.pending_text),
@@ -290,6 +306,7 @@ impl CollectedResponse {
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
                 ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
@@ -305,6 +322,7 @@ impl CollectedResponse {
             .filter_map(|b| match b {
                 ContentBlock::Thinking { text } => Some(text.as_str()),
                 ContentBlock::Text { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
@@ -321,6 +339,7 @@ impl CollectedResponse {
                 ContentBlock::ToolUse { id, name, input } => Some((id, name, input)),
                 ContentBlock::Text { .. }
                 | ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
             .collect()
@@ -362,6 +381,7 @@ impl CollectedResponse {
                     }
                 }
                 ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => new_content.push(block),
             }

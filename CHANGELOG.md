@@ -6,6 +6,17 @@ commit history.
 
 ## Unreleased
 
+- OpenAI Responses API surface: `OPENAI_API=responses` (or
+  `OpenAiConfig.api`) selects the Responses API as an alternative to
+  Chat Completions on the same provider. Runs statelessly (`store:
+  false`) with the session owning history; reasoning summaries stream
+  as `ThinkingDelta`, tool calls round-trip as function items, and
+  reasoning replays across turns via the new
+  `ContentBlock::EncryptedReasoning` block and
+  `StreamDelta::ReasoningItemDelta` (requested with
+  `include: ["reasoning.encrypted_content"]`). `ReasoningConfig` maps
+  natively to `reasoning: { effort, summary }`. Non-OpenAI providers
+  drop the encrypted-reasoning block rather than replay it.
 - Bedrock extended thinking support: `BedrockConfig.thinking`
   (`BEDROCK_THINKING_BUDGET`) sends the `additionalModelRequestFields`
   thinking block for Claude-family models; `reasoningContent` deltas from

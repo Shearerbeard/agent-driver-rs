@@ -610,7 +610,13 @@ pub enum ThinkingSupport {
 
 ### 6. Document llama-server as a future provider
 
-llama-server (llama.cpp) uses `reasoning_content` (not `thinking`), has budget control via `thinking_budget_tokens`, and uses an OpenAI-compatible API format. When we add it as a provider, it should be treated as a distinct provider (not routed through the OpenAI provider) due to the `reasoning_content` field and budget control differences.
+llama-server (llama.cpp) uses an OpenAI-compatible API with
+`reasoning_content` output and a `thinking_budget_tokens` request option.
+
+**Decision update (2026-10-03):** [ADR-0008](0008-compose-openai-compatible-connections.md)
+allows the shared Chat Completions connection to read `reasoning_content` without
+a separate provider. llama-server's `thinking_budget_tokens` request option is
+not supported by that connection; its request-side integration remains open.
 
 ## Consequences
 
@@ -626,12 +632,15 @@ llama-server (llama.cpp) uses `reasoning_content` (not `thinking`), has budget c
 - Anthropic's adaptive vs manual distinction and the deprecated-but-still-supported manual mode adds config complexity
 - Two OpenAI APIs (Chat Completions vs Responses) with different reasoning semantics may need different provider implementations or a mode switch
 
+OpenAI Responses uses a mode on the existing provider (implemented on PR #4;
+connection-profile decision in [ADR-0008](0008-compose-openai-compatible-connections.md)).
+
 ### Open Questions
-- Should we support the OpenAI Responses API as a separate provider, or extend the existing OpenAI provider with a mode flag?
 - When Anthropic's `display: "omitted"` is used, should observers still receive a `ThinkingDelta` (empty) or should the event be suppressed?
 - Should OTel/Phoenix traces include thinking token counts as span attributes?
 - How should we handle Ollama's GPT-OSS string think values when ollama-rs only supports `Option<bool>`? Fork/patch ollama-rs, or use raw HTTP?
-- Should llama-server be a standalone provider or share infrastructure with the OpenAI provider (since it's OpenAI-compatible with extensions)?
+- Should llama-server's `thinking_budget_tokens` request option require a
+  dedicated adapter, or a verified optional Chat request dialect?
 
 ### Specification Confidence
 

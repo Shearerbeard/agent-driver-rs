@@ -308,6 +308,96 @@ impl OpenAiProvider {
             .collect()
     }
 
+    /// Build the Chat Completions request body, enforcing the
+    /// profile's model and capability contract.
+    ///
+    /// Separate from [`Self::complete_stream_chat`] so tests can pin the
+    /// wire shape and so the request-time validation seam is single.
+    fn build_chat_request(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<async_openai::types::chat::CreateChatCompletionRequest, ProviderError> {
+        let profile = &self.profile;
+
+        // The provider pin is authoritative; a request naming a
+        // different model must fail rather than be silently ignored.
+        if request.model.as_str() != profile.model_id() {
+            return Err(ProviderError::InvalidRequest {
+                provider: ProviderKind::OpenAi,
+                message: format!(
+                    "request model {:?} does not match configured model {:?}",
+                    request.model.as_str(),
+                    profile.model_id()
+                ),
+            });
+        }
+
+        // Capability comes from the validated profile, not the model
+        // enum, so a custom declaration is honored on this surface.
+        if !profile.supports_streaming() {
+            return Err(ProviderError::StreamingNotSupported {
+                provider: ProviderKind::OpenAi,
+                model: profile.model_id().to_owned(),
+            });
+        }
+
+        let messages = self.build_messages(request)?;
+
+        let mut req_builder = CreateChatCompletionRequestArgs::default();
+        req_builder
+            .model(profile.model_id())
+            .messages(messages)
+            .max_completion_tokens(request.config.max_tokens.get())
+            .stream(true)
+            // OpenAI-compatible servers (vLLM, BaseTen) stream the
+            // token-usage chunk only when this is set; without it the
+            // shim's context-usage metering would read zeros.
+            // `include_obfuscation` stays unset: it is OpenAI-dialect
+            // only, and compatible endpoints (Fireworks, BaseTen BYOT,
+            // vLLM) reject the unknown field with a 400 before the
+            // model runs (adr/A19; live-verified 2026-09-25).
+            .stream_options(ChatCompletionStreamOptions {
+                include_usage: Some(true),
+                include_obfuscation: None,
+            });
+
+        // A supplied temperature is either sent or rejected; the profile
+        // already guaranteed capability, so this cannot silently discard
+        // the request.
+        if let Some(temp) = request.config.temperature {
+            if !profile.supports_temperature() {
+                return Err(ProviderError::InvalidRequest {
+                    provider: ProviderKind::OpenAi,
+                    message: format!(
+                        "model {:?} on the Chat Completions surface does not support temperature",
+                        profile.model_id()
+                    ),
+                });
+            }
+            req_builder.temperature(temp.get());
+        }
+
+        // Add tools if present
+        if !request.tools.is_empty() {
+            let tools = self.convert_tools(&request.tools)?;
+            req_builder.tools(tools);
+        }
+
+        // Add stop sequences
+        if !request.config.stop_sequences.is_empty() {
+            req_builder.stop(StopConfiguration::StringArray(
+                request.config.stop_sequences.clone(),
+            ));
+        }
+
+        req_builder
+            .build()
+            .map_err(|e| ProviderError::InvalidRequest {
+                provider: ProviderKind::OpenAi,
+                message: format!("Failed to build request: {e}"),
+            })
+    }
+
     /// Run one chat-completions streaming request (the `Provider` trait
     /// dispatches here when the API surface is chat completions).
     pub(super) fn complete_stream_chat(
@@ -316,64 +406,9 @@ impl OpenAiProvider {
         ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<StreamHandle, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // Check if model supports streaming
-            if !self.config.model.supports_streaming() {
-                return Err(ProviderError::StreamingNotSupported {
-                    provider: ProviderKind::OpenAi,
-                    model: self.config.model.as_str().to_owned(),
-                });
-            }
-
-            let model = self.config.model.as_str();
-
-            let messages = self.build_messages(&request)?;
-
-            // Build request
-            let mut req_builder = CreateChatCompletionRequestArgs::default();
-            req_builder
-                .model(model)
-                .messages(messages)
-                .max_completion_tokens(request.config.max_tokens.get())
-                .stream(true)
-                // OpenAI-compatible servers (vLLM, BaseTen) stream the
-                // token-usage chunk only when this is set; without it the
-                // shim's context-usage metering would read zeros.
-                // `include_obfuscation` stays unset: it is OpenAI-dialect
-                // only, and compatible endpoints (Fireworks, BaseTen BYOT,
-                // vLLM) reject the unknown field with a 400 before the
-                // model runs (adr/A19; live-verified 2026-09-25).
-                .stream_options(ChatCompletionStreamOptions {
-                    include_usage: Some(true),
-                    include_obfuscation: None,
-                });
-
-            // Add temperature if supported
-            if let Some(temp) = request.config.temperature {
-                if self.config.model.supports_temperature() {
-                    req_builder.temperature(temp.get());
-                }
-            }
-
-            // Add tools if present
-            if !request.tools.is_empty() {
-                let tools = self.convert_tools(&request.tools)?;
-                req_builder.tools(tools);
-            }
-
-            // Add stop sequences
-            if !request.config.stop_sequences.is_empty() {
-                req_builder.stop(StopConfiguration::StringArray(
-                    request.config.stop_sequences.clone(),
-                ));
-            }
-
-            let openai_request =
-                req_builder
-                    .build()
-                    .map_err(|e| ProviderError::InvalidRequest {
-                        provider: ProviderKind::OpenAi,
-                        message: format!("Failed to build request: {e}"),
-                    })?;
+            let profile = &self.profile;
+            let model = profile.model_id();
+            let openai_request = self.build_chat_request(&request)?;
 
             // Create stream. The BYOT form is what keeps reasoning alive:
             // the spec-typed `create_stream` would deserialize each chunk
@@ -392,7 +427,10 @@ impl OpenAiProvider {
             let event_stream = crate::provider::stream_adapter::buffered_sdk_stream(
                 stream,
                 ctx.cancellation.clone(),
-                StreamState::default(),
+                StreamState {
+                    reasoning_output: profile.chat_reasoning_output(),
+                    ..StreamState::default()
+                },
                 |item, state| match item {
                     Ok(response) => parse_openai_chunk(response, state),
                     Err(e) => vec![Err(StreamError::ConnectionLost {
@@ -433,6 +471,8 @@ struct StreamState {
     tool_call_ids: HashMap<usize, String>,
     started: bool,
     completed: bool,
+    /// Preferred Chat reasoning output field for this connection.
+    reasoning_output: crate::config::OpenAiChatReasoningOutput,
 }
 
 /// Parse an OpenAI streaming chunk
@@ -486,12 +526,23 @@ fn parse_openai_chunk(
         // Reasoning deltas (vLLM `reasoning_content`, OpenRouter
         // `reasoning`). Mapped to the driver's ThinkingDelta so the agent
         // loop folds them as thinking blocks; they never surface as
-        // answer text.
-        // Both spellings in one delta is pathological; emit one delta,
-        // preferring the vLLM-canonical field.
-        let reasoning_text = match (&delta.reasoning_content, &delta.reasoning) {
-            (Some(rc), _) if !rc.is_empty() => Some(rc),
-            (_, Some(r)) if !r.is_empty() => Some(r),
+        // answer text. The connection's selected output field, when set,
+        // decides which spelling wins if a server populates both; `None`
+        // and the absence of a selected field fall back to the
+        // vLLM-canonical `reasoning_content`, preserving the tolerant
+        // BYOT behavior.
+        let prefer_alt = matches!(
+            state.reasoning_output,
+            crate::config::OpenAiChatReasoningOutput::Reasoning
+        );
+        let (first, second) = if prefer_alt {
+            (&delta.reasoning, &delta.reasoning_content)
+        } else {
+            (&delta.reasoning_content, &delta.reasoning)
+        };
+        let reasoning_text = match (first, second) {
+            (Some(a), _) if !a.is_empty() => Some(a),
+            (_, Some(b)) if !b.is_empty() => Some(b),
             _ => None,
         };
         if let Some(rc) = reasoning_text {
@@ -943,19 +994,98 @@ mod tests {
         assert_eq!(thinking, ["vllm text"]);
     }
 
+    fn dual_spelling_chunk() -> ReasoningAwareChunk {
+        serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": { "reasoning_content": "vllm text", "reasoning": "alt text" },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid dual-spelling chunk JSON")
+    }
+
+    fn single_thinking(events: &[Result<StreamEvent, StreamError>]) -> Option<&str> {
+        let mut thinking = events.iter().filter_map(|e| match e {
+            Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta { thinking })) => {
+                Some(thinking.as_str())
+            }
+            _ => None,
+        });
+        let first = thinking.next();
+        assert!(thinking.next().is_none(), "expected one thinking delta");
+        first
+    }
+
+    /// Selecting the `reasoning` output field flips the preference when a
+    /// server populates both spellings.
+    #[test]
+    fn parse_both_spellings_prefers_selected_reasoning() {
+        let mut state = StreamState {
+            started: true,
+            reasoning_output: crate::config::OpenAiChatReasoningOutput::Reasoning,
+            ..Default::default()
+        };
+        let events = parse_openai_chunk(dual_spelling_chunk(), &mut state);
+        assert_eq!(single_thinking(&events), Some("alt text"));
+    }
+
+    /// Selecting `reasoning_content` explicitly prefers the vLLM field.
+    #[test]
+    fn parse_both_spellings_prefers_selected_reasoning_content() {
+        let mut state = StreamState {
+            started: true,
+            reasoning_output: crate::config::OpenAiChatReasoningOutput::ReasoningContent,
+            ..Default::default()
+        };
+        let events = parse_openai_chunk(dual_spelling_chunk(), &mut state);
+        assert_eq!(single_thinking(&events), Some("vllm text"));
+    }
+
+    /// With no selected preference (`None`), an unselected spelling still
+    /// appears as thinking — the tolerant BYOT parser is preserved.
+    #[test]
+    fn parse_unselected_spelling_still_surfaces() {
+        let mut state = StreamState {
+            started: true,
+            reasoning_output: crate::config::OpenAiChatReasoningOutput::None,
+            ..Default::default()
+        };
+        let chunk: ReasoningAwareChunk = serde_json::from_value(serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_234_567_890_u64,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "delta": { "reasoning": "only alt" },
+                "finish_reason": null
+            }]
+        }))
+        .expect("valid chunk JSON");
+        let events = parse_openai_chunk(chunk, &mut state);
+        assert_eq!(single_thinking(&events), Some("only alt"));
+    }
+
     /// OpenAI only accepts one system message. If both `request.system` and a
     /// `Role::System` message are supplied, we must not emit a duplicate.
     #[test]
     fn no_duplicate_system_message() {
         let config = OpenAiConfig {
             api_key: crate::config::ApiKey::new("test-key").unwrap(),
-            api: Default::default(),
+            api: crate::config::OpenAiApi::default(),
             base_url: None,
             model: crate::config::OpenAiModel::Gpt4o,
             max_tokens: crate::types::MaxTokens::new(100).unwrap(),
             temperature: None,
             reasoning: None,
             structured_output: false,
+            chat_reasoning_output: crate::config::OpenAiChatReasoningOutput::None,
+            custom_capabilities: None,
         };
         let provider = OpenAiProvider::new(config).unwrap();
 
@@ -1005,6 +1135,212 @@ mod tests {
         assert!(
             wire.get("include_obfuscation").is_none(),
             "the wire body must not name include_obfuscation, got: {wire}"
+        );
+    }
+
+    fn chat_provider(
+        model: crate::config::OpenAiModel,
+        output: crate::config::OpenAiChatReasoningOutput,
+        capabilities: Option<crate::config::CustomModelCapabilities>,
+    ) -> OpenAiProvider {
+        let config = OpenAiConfig {
+            api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            api: crate::config::OpenAiApi::ChatCompletions,
+            base_url: None,
+            model,
+            max_tokens: crate::types::MaxTokens::new(100).unwrap(),
+            temperature: None,
+            reasoning: None,
+            structured_output: false,
+            chat_reasoning_output: output,
+            custom_capabilities: capabilities,
+        };
+        OpenAiProvider::new(config).unwrap()
+    }
+
+    /// Ordinary Chat wire body, asserted in full. The request-level
+    /// `max_tokens` default (4096) is what reaches the wire, not the
+    /// provider config's value.
+    #[test]
+    fn chat_request_body_is_streaming_with_usage() {
+        let provider = chat_provider(
+            crate::config::OpenAiModel::Gpt4o,
+            crate::config::OpenAiChatReasoningOutput::None,
+            None,
+        );
+        let request = CompletionRequest::new(
+            ModelId::new("gpt-4o").unwrap(),
+            vec![Message::user("hello")],
+        );
+
+        let wire = serde_json::to_value(provider.build_chat_request(&request).unwrap())
+            .expect("request serializes");
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "messages": [{ "role": "user", "content": "hello" }],
+                "model": "gpt-4o",
+                "max_completion_tokens": 4096,
+                "stream": true,
+                "stream_options": { "include_usage": true }
+            })
+        );
+    }
+
+    /// A custom capability declaration is honored on the request body:
+    /// the full body shows a temperature, which is absent by default.
+    #[test]
+    fn chat_request_body_sends_temperature_honoring_custom_capability() {
+        let provider = chat_provider(
+            crate::config::OpenAiModel::Custom("org/local".into()),
+            crate::config::OpenAiChatReasoningOutput::None,
+            Some(crate::config::CustomModelCapabilities::new(
+                true, false, true,
+            )),
+        );
+        let request = CompletionRequest::new(
+            ModelId::new("org/local").unwrap(),
+            vec![Message::user("hello")],
+        )
+        .with_config(
+            crate::provider::CompletionConfig::new(crate::types::MaxTokens::new(64).unwrap())
+                .with_temperature(crate::types::Temperature::new(0.5).unwrap()),
+        );
+
+        let wire = serde_json::to_value(provider.build_chat_request(&request).unwrap()).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "messages": [{ "role": "user", "content": "hello" }],
+                "model": "org/local",
+                "max_completion_tokens": 64,
+                "stream": true,
+                "stream_options": { "include_usage": true },
+                "temperature": 0.5
+            })
+        );
+    }
+
+    /// The selected reasoning output preference is an output-side
+    /// concern: both Chat output modes produce the same wire body. The
+    /// full body is asserted, not a comparison of two implementation
+    /// outputs.
+    #[test]
+    fn chat_request_body_fixture_across_output_modes() {
+        let expected = serde_json::json!({
+            "messages": [{ "role": "user", "content": "hello" }],
+            "model": "gpt-4o",
+            "max_completion_tokens": 4096,
+            "stream": true,
+            "stream_options": { "include_usage": true }
+        });
+        for output in [
+            crate::config::OpenAiChatReasoningOutput::None,
+            crate::config::OpenAiChatReasoningOutput::ReasoningContent,
+            crate::config::OpenAiChatReasoningOutput::Reasoning,
+        ] {
+            let provider = chat_provider(crate::config::OpenAiModel::Gpt4o, output, None);
+            let request = CompletionRequest::new(
+                ModelId::new("gpt-4o").unwrap(),
+                vec![Message::user("hello")],
+            );
+            let wire =
+                serde_json::to_value(provider.build_chat_request(&request).unwrap()).unwrap();
+            assert_eq!(
+                wire, expected,
+                "output mode {output:?} changed the wire body"
+            );
+        }
+    }
+
+    /// Full body with system prompt, assistant text, a tool call, and a
+    /// tool result, showing message conversion on the wire.
+    #[test]
+    fn chat_request_body_fixture_with_tools_and_history() {
+        let provider = chat_provider(
+            crate::config::OpenAiModel::Gpt4o,
+            crate::config::OpenAiChatReasoningOutput::None,
+            None,
+        );
+        let request = CompletionRequest::new(
+            ModelId::new("gpt-4o").unwrap(),
+            vec![
+                Message::user("what is 2+2?"),
+                Message::new(
+                    Role::Assistant,
+                    vec![
+                        ContentBlock::Text {
+                            text: "Let me check.".into(),
+                        },
+                        ContentBlock::ToolUse {
+                            id: ToolCallId::new("call_abc"),
+                            name: ToolName::new("calculator").unwrap(),
+                            input: serde_json::json!({"x": 2, "y": 2, "operation": "add"}),
+                        },
+                    ],
+                ),
+                Message::new(
+                    Role::Tool,
+                    vec![ContentBlock::ToolResult {
+                        tool_use_id: ToolCallId::new("call_abc"),
+                        content: crate::types::ToolResultContent::Text("4".into()),
+                        is_error: false,
+                    }],
+                ),
+            ],
+        )
+        .with_system(crate::types::SystemPrompt::new("be brief"));
+
+        let wire = serde_json::to_value(provider.build_chat_request(&request).unwrap()).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "messages": [
+                    { "role": "system", "content": "be brief" },
+                    { "role": "user", "content": "what is 2+2?" },
+                    {
+                        "role": "assistant",
+                        "content": "Let me check.",
+                        "tool_calls": [{
+                            "id": "call_abc",
+                            "type": "function",
+                            "function": {
+                                "name": "calculator",
+                                "arguments": "{\"x\":2,\"y\":2,\"operation\":\"add\"}"
+                            }
+                        }]
+                    },
+                    { "role": "tool", "tool_call_id": "call_abc", "content": "4" }
+                ],
+                "model": "gpt-4o",
+                "max_completion_tokens": 4096,
+                "stream": true,
+                "stream_options": { "include_usage": true }
+            })
+        );
+    }
+
+    /// The request-time guard rejects a temperature the selected model
+    /// and surface do not allow.
+    #[test]
+    fn chat_request_temperature_unsupported_fails_loud() {
+        let provider = chat_provider(
+            crate::config::OpenAiModel::Gpt5,
+            crate::config::OpenAiChatReasoningOutput::None,
+            None,
+        );
+        let request =
+            CompletionRequest::new(ModelId::new("gpt-5").unwrap(), vec![Message::user("hello")])
+                .with_config(
+                    crate::provider::CompletionConfig::new(
+                        crate::types::MaxTokens::new(64).unwrap(),
+                    )
+                    .with_temperature(crate::types::Temperature::new(1.0).unwrap()),
+                );
+        let err = provider.build_chat_request(&request).unwrap_err();
+        assert!(
+            matches!(err, ProviderError::InvalidRequest { .. }),
+            "unsupported temperature must fail loud, got: {err:?}"
         );
     }
 }

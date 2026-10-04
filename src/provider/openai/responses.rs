@@ -41,17 +41,32 @@ impl OpenAiProvider {
         ctx: ProviderContext,
     ) -> Pin<Box<dyn Future<Output = Result<StreamHandle, ProviderError>> + Send + '_>> {
         Box::pin(async move {
-            // The o3/o3-mini streaming caveat is recorded against the
-            // chat-completions surface; it is carried over unchanged
-            // until a live run proves the Responses behavior differs.
-            if !self.config.model.supports_streaming() {
-                return Err(ProviderError::StreamingNotSupported {
+            let profile = &self.profile;
+
+            // The provider pin is authoritative; a request naming a
+            // different model must fail rather than be silently ignored.
+            if request.model.as_str() != profile.model_id() {
+                return Err(ProviderError::InvalidRequest {
                     provider: crate::provider::ProviderKind::OpenAi,
-                    model: self.config.model.as_str().to_owned(),
+                    message: format!(
+                        "request model {:?} does not match configured model {:?}",
+                        request.model.as_str(),
+                        profile.model_id()
+                    ),
                 });
             }
 
-            let model = self.config.model.as_str();
+            // Streaming capability is per-surface: o3/o3-mini stream on
+            // Responses even though the Chat Completions restriction
+            // remains.
+            if !profile.supports_streaming() {
+                return Err(ProviderError::StreamingNotSupported {
+                    provider: crate::provider::ProviderKind::OpenAi,
+                    model: profile.model_id().to_owned(),
+                });
+            }
+
+            let model = profile.model_id();
             let openai_request = self.build_responses_request(&request)?;
 
             let stream = self
@@ -67,25 +82,27 @@ impl OpenAiProvider {
                 ResponsesStreamState::default(),
                 |item, state| match item {
                     Ok(event) => parse_responses_event(event, state),
-                    Err(e) => vec![Err(StreamError::ConnectionLost {
-                        kind: StreamErrorKind::TransportError,
-                        message: e.to_string(),
-                    })],
+                    Err(e) => {
+                        let mut events = Vec::new();
+                        fail_stream(
+                            StreamError::ConnectionLost {
+                                kind: StreamErrorKind::TransportError,
+                                message: e.to_string(),
+                            },
+                            state,
+                            &mut events,
+                        );
+                        events
+                    }
                 },
-                // The Responses terminal events (completed/incomplete/
-                // failed) carry usage and stop reason into the state;
-                // the stream ends right after them, and Completed is
-                // emitted here — the same end-of-stream shape the chat
-                // surface uses.
-                |state| {
-                    Some(Ok(StreamEvent::Completed {
-                        metadata: CompletionMetadata {
-                            model: state.model.clone(),
-                            stop_reason: state.stop_reason,
-                            usage: state.usage,
-                        },
-                    }))
-                },
+                // A successful `Completed` is emitted only when the
+                // parser actually saw `response.completed` or a
+                // supported `response.incomplete`. A failed response,
+                // mid-stream error, SDK transport error, or bare EOF
+                // must not be followed by a successful terminal event,
+                // so both collectors (which accept bare EOF) see an
+                // error instead. Failure is reported exactly once.
+                responses_terminal_event,
             );
 
             Ok(StreamHandle::new(
@@ -104,7 +121,7 @@ impl OpenAiProvider {
     ) -> Result<async_openai::types::responses::CreateResponse, ProviderError> {
         let mut builder = CreateResponseArgs::default();
         builder
-            .model(self.config.model.as_str())
+            .model(self.profile.model_id())
             .input(InputParam::Items(build_input_items(request)))
             .max_output_tokens(request.config.max_tokens.get())
             // Stateless by design: the Session owns history, so the
@@ -117,16 +134,23 @@ impl OpenAiProvider {
         }
 
         if let Some(temp) = request.config.temperature {
-            if self.config.model.supports_temperature() {
-                builder.temperature(temp.get());
+            if !self.profile.supports_temperature() {
+                return Err(ProviderError::InvalidRequest {
+                    provider: crate::provider::ProviderKind::OpenAi,
+                    message: format!(
+                        "model {:?} on the Responses surface does not support temperature",
+                        self.profile.model_id()
+                    ),
+                });
             }
+            builder.temperature(temp.get());
         }
 
         if !request.tools.is_empty() {
             builder.tools(convert_tools(&request.tools));
         }
 
-        if let Some(reasoning) = &self.config.reasoning {
+        if let Some(reasoning) = self.profile.reasoning() {
             builder.reasoning(to_sdk_reasoning(reasoning));
             // Ask for the encrypted reasoning payload so multi-turn
             // replay works statelessly (store: false).
@@ -316,6 +340,40 @@ fn to_sdk_reasoning(config: &crate::config::ReasoningConfig) -> Reasoning {
     }
 }
 
+/// Terminal status of a Responses stream.
+///
+/// PR 1 only distinguishes "saw a real success terminal" from
+/// everything else; reason classification (incomplete causes) belongs to
+/// PR 2. Failure is absorbing: once a failure is recorded, a later
+/// `response.completed`/`response.incomplete` cannot turn it into a
+/// success.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum TerminalStatus {
+    /// No terminal event seen yet.
+    #[default]
+    Active,
+    /// `response.completed` was observed.
+    SawCompleted,
+    /// A supported `response.incomplete` was observed.
+    SawIncomplete,
+    /// A failure was recorded; a later success cannot override it.
+    Failed,
+}
+
+impl TerminalStatus {
+    /// Record a successful terminal, unless a failure already stuck.
+    fn succeed(&mut self, status: Self) {
+        if *self != Self::Failed {
+            *self = status;
+        }
+    }
+
+    /// Record a failure; failure is absorbing.
+    fn fail(&mut self) {
+        *self = Self::Failed;
+    }
+}
+
 /// State for tracking Responses stream parsing.
 #[derive(Default)]
 struct ResponsesStreamState {
@@ -326,13 +384,28 @@ struct ResponsesStreamState {
     /// delta events reference.
     tool_items: HashMap<String, ToolCallId>,
     started: bool,
+    /// Whether the parser saw a successful terminal (`completed` or a
+    /// supported `incomplete`) or recorded a failure.
+    terminal: TerminalStatus,
+    /// Whether a terminal stream error was already pushed as an event.
+    /// When set, the EOF callback stays silent so a failure or SDK
+    /// transport error yields exactly one error on the wire.
+    terminal_error_surfaced: bool,
 }
 
 /// Parse one Responses stream event into driver stream events.
+///
+/// Once the stream has failed, every later event is dropped: a failure
+/// is absorbing, so no content, no successful terminal, and no second
+/// error can follow it.
 fn parse_responses_event(
     event: ResponseStreamEvent,
     state: &mut ResponsesStreamState,
 ) -> Vec<Result<StreamEvent, StreamError>> {
+    if state.terminal == TerminalStatus::Failed {
+        return Vec::new();
+    }
+
     let mut events = Vec::new();
 
     match event {
@@ -360,10 +433,14 @@ fn parse_responses_event(
                 let name = match ToolName::new(&call.name) {
                     Ok(name) => name,
                     Err(e) => {
-                        events.push(Err(StreamError::Deserialize {
-                            message: format!("invalid OpenAI tool name: {e}"),
-                            raw_data: None,
-                        }));
+                        fail_stream(
+                            StreamError::Deserialize {
+                                message: format!("invalid OpenAI tool name: {e}"),
+                                raw_data: None,
+                            },
+                            state,
+                            &mut events,
+                        );
                         return events;
                     }
                 };
@@ -372,13 +449,17 @@ fn parse_responses_event(
                 // stream cannot be correlated, so fail loud instead of
                 // guessing at the call-id domain.
                 let Some(item_key) = call.id.clone() else {
-                    events.push(Err(StreamError::Deserialize {
-                        message: format!(
-                            "function call item for {} carries no item id",
-                            call.call_id
-                        ),
-                        raw_data: None,
-                    }));
+                    fail_stream(
+                        StreamError::Deserialize {
+                            message: format!(
+                                "function call item for {} carries no item id",
+                                call.call_id
+                            ),
+                            raw_data: None,
+                        },
+                        state,
+                        &mut events,
+                    );
                     return events;
                 };
                 state.tool_items.insert(item_key, id.clone());
@@ -463,10 +544,14 @@ fn parse_responses_event(
                 &completed.response.output,
                 completed.response.status,
             ));
+            state.terminal.succeed(TerminalStatus::SawCompleted);
         }
         ResponseStreamEvent::ResponseIncomplete(incomplete) => {
             state.usage = incomplete.response.usage.map(to_token_usage);
             state.stop_reason = Some(StopReason::MaxTokens);
+            // PR 1 treats a valid incomplete as a success terminal; PR 2
+            // classifies the reported reason and rejects unknown ones.
+            state.terminal.succeed(TerminalStatus::SawIncomplete);
         }
         ResponseStreamEvent::ResponseFailed(failed) => {
             let message = failed
@@ -541,9 +626,7 @@ fn parse_responses_event(
     events
 }
 
-/// Record a terminal failure (failed response or mid-stream error):
-/// content-policy messages end the turn with `ContentFilter`; anything
-/// else fails the stream loudly.
+/// Push a non-empty reasoning delta onto the thinking channel.
 fn push_thinking_delta(thinking: String, events: &mut Vec<Result<StreamEvent, StreamError>>) {
     if !thinking.is_empty() {
         events.push(Ok(StreamEvent::Delta(StreamDelta::ThinkingDelta {
@@ -552,6 +635,28 @@ fn push_thinking_delta(thinking: String, events: &mut Vec<Result<StreamEvent, St
     }
 }
 
+/// Mark the stream failed and surface at most one terminal error.
+///
+/// Failure is absorbing: the status becomes [`TerminalStatus::Failed`]
+/// and stays there. The first terminal error is pushed to `events`; any
+/// later terminal error is dropped so the consumer observes exactly one.
+fn fail_stream(
+    error: StreamError,
+    state: &mut ResponsesStreamState,
+    events: &mut Vec<Result<StreamEvent, StreamError>>,
+) {
+    state.terminal.fail();
+    if !state.terminal_error_surfaced {
+        state.terminal_error_surfaced = true;
+        events.push(Err(error));
+    }
+}
+
+/// Record a `response.failed`/`response.error` terminal failure.
+///
+/// A content-policy message still records the `ContentFilter` stop
+/// reason, but every failure marks the stream failed so the EOF callback
+/// cannot later emit a successful `Completed`.
 fn record_terminal_failure(
     message: String,
     state: &mut ResponsesStreamState,
@@ -559,11 +664,57 @@ fn record_terminal_failure(
 ) {
     if is_content_policy_message(&message) {
         state.stop_reason = Some(StopReason::ContentFilter);
-    } else {
-        events.push(Err(StreamError::ConnectionLost {
+    }
+    fail_stream(
+        StreamError::ConnectionLost {
             kind: StreamErrorKind::ProviderError,
             message,
-        }));
+        },
+        state,
+        events,
+    );
+}
+
+/// Terminal event for the Responses stream.
+///
+/// Emits a successful `Completed` only when the parser saw an actual
+/// `response.completed` or a supported `response.incomplete`. A failed
+/// response, mid-stream error, SDK transport error, or bare EOF yields a
+/// typed stream error instead, so collectors that accept bare EOF still
+/// fail on a truncated or failed response.
+///
+/// Failure is absorbing and reported exactly once: if the parser already
+/// pushed a terminal error (a `response.failed`/`response.error` event
+/// or an SDK transport error), the EOF callback returns `None` so the
+/// consumer observes a single error rather than a duplicate.
+fn responses_terminal_event(
+    state: &ResponsesStreamState,
+) -> Option<Result<StreamEvent, StreamError>> {
+    match state.terminal {
+        TerminalStatus::SawCompleted | TerminalStatus::SawIncomplete => {
+            Some(Ok(StreamEvent::Completed {
+                metadata: CompletionMetadata {
+                    model: state.model.clone(),
+                    stop_reason: state.stop_reason,
+                    usage: state.usage,
+                },
+            }))
+        }
+        TerminalStatus::Failed => {
+            if state.terminal_error_surfaced {
+                None
+            } else {
+                Some(Err(StreamError::ConnectionLost {
+                    kind: StreamErrorKind::ProviderError,
+                    message: "Responses stream failed".to_owned(),
+                }))
+            }
+        }
+        TerminalStatus::Active => Some(Err(StreamError::ConnectionLost {
+            kind: StreamErrorKind::ConnectionDropped,
+            message: "Responses stream ended without response.completed or response.incomplete"
+                .to_owned(),
+        })),
     }
 }
 
@@ -625,7 +776,7 @@ mod tests {
         let events = parse_responses_event(created_event(), &mut state);
 
         assert!(state.started);
-        assert_eq!(state.model.as_ref().map(|m| m.as_str()), Some("gpt-5.2"));
+        assert_eq!(state.model.as_ref().map(ModelId::as_str), Some("gpt-5.2"));
         assert!(
             events
                 .iter()
@@ -831,6 +982,206 @@ mod tests {
         assert_eq!(state.stop_reason, Some(StopReason::MaxTokens));
     }
 
+    /// A real `response.completed` is the only way to a successful
+    /// terminal event.
+    #[test]
+    fn terminal_after_completed_is_success() {
+        let mut state = ResponsesStreamState::default();
+        parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.completed",
+                "sequence_number": 9,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "completed",
+                    "output": []
+                }
+            })),
+            &mut state,
+        );
+        assert!(matches!(
+            responses_terminal_event(&state),
+            Some(Ok(StreamEvent::Completed { .. }))
+        ));
+    }
+
+    /// Bare EOF (no terminal event) must not be reported as success.
+    #[test]
+    fn terminal_after_bare_eof_is_error() {
+        let state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        assert!(matches!(responses_terminal_event(&state), Some(Err(_))));
+    }
+
+    /// A `response.failed` marks failure; the terminal event is an
+    /// error, never `Completed`.
+    #[test]
+    fn terminal_after_failed_is_error() {
+        let mut state = ResponsesStreamState::default();
+        let events = parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.failed",
+                "sequence_number": 4,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "failed",
+                    "output": [],
+                    "error": { "code": "server_error", "message": "boom" }
+                }
+            })),
+            &mut state,
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::ConnectionLost { .. }))),
+            "failed response must surface a stream error: {events:?}"
+        );
+        assert!(
+            responses_terminal_event(&state).is_none(),
+            "the error was already surfaced; EOF must not duplicate it"
+        );
+    }
+
+    /// Failure is absorbing: a `response.completed` after a
+    /// `response.failed` cannot turn the stream into a success.
+    #[test]
+    fn terminal_failed_then_completed_stays_failed() {
+        let mut state = ResponsesStreamState::default();
+        parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.failed",
+                "sequence_number": 4,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "failed",
+                    "output": [],
+                    "error": { "code": "server_error", "message": "boom" }
+                }
+            })),
+            &mut state,
+        );
+        let events = parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.completed",
+                "sequence_number": 5,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "completed",
+                    "output": []
+                }
+            })),
+            &mut state,
+        );
+        assert_eq!(
+            state.terminal,
+            TerminalStatus::Failed,
+            "completed after failed must stay failed"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "failed stream must not emit a Completed event"
+        );
+        assert!(
+            responses_terminal_event(&state).is_none(),
+            "the failure was already reported once"
+        );
+    }
+
+    /// Failure is also absorbing against `response.incomplete`: a
+    /// truncated-success terminal after a failure cannot win.
+    #[test]
+    fn terminal_failed_then_incomplete_stays_failed() {
+        let mut state = ResponsesStreamState::default();
+        parse_responses_event(failed_response_event(4), &mut state);
+        let events = parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.incomplete",
+                "sequence_number": 5,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "incomplete",
+                    "output": [],
+                    "incomplete_details": { "reason": "max_output_tokens" }
+                }
+            })),
+            &mut state,
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "failed stream must not emit a Completed event"
+        );
+        assert!(responses_terminal_event(&state).is_none());
+    }
+
+    /// A mid-stream `response.error` marks failure; a later bare EOF can
+    /// never emit a successful `Completed`, and the error is not
+    /// duplicated at EOF.
+    #[test]
+    fn terminal_after_error_event_is_error() {
+        let mut state = ResponsesStreamState::default();
+        parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "error",
+                "sequence_number": 3,
+                "code": "server_error",
+                "message": "upstream failed"
+            })),
+            &mut state,
+        );
+        assert!(responses_terminal_event(&state).is_none());
+    }
+
+    /// A content-policy failure records the filter stop reason but still
+    /// terminates as a failure (no successful `Completed`).
+    #[test]
+    fn terminal_after_content_policy_failure_is_error() {
+        let mut state = ResponsesStreamState::default();
+        parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.failed",
+                "sequence_number": 4,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "failed",
+                    "output": [],
+                    "error": {
+                        "code": "content_policy_violation",
+                        "message": "Rejected: this request violates our content policy."
+                    }
+                }
+            })),
+            &mut state,
+        );
+        assert_eq!(state.stop_reason, Some(StopReason::ContentFilter));
+        assert!(responses_terminal_event(&state).is_none());
+    }
+
     #[test]
     fn input_items_round_trip_conversation() {
         let request = CompletionRequest::new(
@@ -926,6 +1277,8 @@ mod tests {
                 summary: ReasoningSummary::Auto,
             }),
             structured_output: false,
+            chat_reasoning_output: crate::config::OpenAiChatReasoningOutput::None,
+            custom_capabilities: None,
         };
         let provider = OpenAiProvider::new(config).unwrap();
 
@@ -944,16 +1297,18 @@ mod tests {
         let wire = serde_json::to_value(provider.build_responses_request(&request).unwrap())
             .expect("request serializes");
 
-        assert_eq!(wire["store"], false, "stateless: store must be false");
-        assert_eq!(wire["stream"], true);
-        assert_eq!(wire["model"], "gpt-5");
-        assert_eq!(wire["max_output_tokens"], 512);
-        assert_eq!(wire["instructions"], "be brief");
-        assert_eq!(wire["reasoning"]["effort"], "high");
-        assert_eq!(wire["reasoning"]["summary"], "auto");
-        assert!(
-            wire.get("temperature").is_none(),
-            "reasoning models take no temperature"
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "model": "gpt-5",
+                "input": [{ "type": "message", "role": "user", "content": "hi" }],
+                "max_output_tokens": 512,
+                "store": false,
+                "stream": true,
+                "instructions": "be brief",
+                "reasoning": { "effort": "high", "summary": "auto" },
+                "include": ["reasoning.encrypted_content"]
+            })
         );
     }
 
@@ -1063,26 +1418,32 @@ mod tests {
         ));
     }
 
-    /// The reasoning request asks for the encrypted payload so replay
-    /// works statelessly.
+    /// A custom model that declares reasoning support on Responses gets
+    /// the native reasoning parameter and encrypted-content request; the
+    /// profile, not a model-ID heuristic, supplies it. Asserted as a
+    /// full body.
     #[test]
-    fn reasoning_request_asks_for_encrypted_content() {
+    fn custom_capability_reasoning_reaches_responses_wire() {
         let config = crate::config::OpenAiConfig {
             api_key: crate::config::ApiKey::new("test-key").unwrap(),
             api: crate::config::OpenAiApi::Responses,
             base_url: None,
-            model: crate::config::OpenAiModel::Gpt5,
+            model: crate::config::OpenAiModel::Custom("org/reasoner".into()),
             max_tokens: crate::types::MaxTokens::new(512).unwrap(),
             temperature: None,
             reasoning: Some(crate::config::ReasoningConfig {
-                effort: ReasoningEffort::High,
-                summary: ReasoningSummary::Auto,
+                effort: ReasoningEffort::Low,
+                summary: ReasoningSummary::Concise,
             }),
             structured_output: false,
+            chat_reasoning_output: crate::config::OpenAiChatReasoningOutput::None,
+            custom_capabilities: Some(crate::config::CustomModelCapabilities::new(
+                false, true, true,
+            )),
         };
         let provider = OpenAiProvider::new(config).unwrap();
         let request = CompletionRequest::new(
-            ModelId::new("gpt-5").unwrap(),
+            ModelId::new("org/reasoner").unwrap(),
             vec![Message::new(
                 DriverRole::User,
                 vec![ContentBlock::Text { text: "hi".into() }],
@@ -1092,8 +1453,16 @@ mod tests {
         let wire =
             serde_json::to_value(provider.build_responses_request(&request).unwrap()).unwrap();
         assert_eq!(
-            wire["include"],
-            serde_json::json!(["reasoning.encrypted_content"])
+            wire,
+            serde_json::json!({
+                "model": "org/reasoner",
+                "input": [{ "type": "message", "role": "user", "content": "hi" }],
+                "max_output_tokens": 4096,
+                "store": false,
+                "stream": true,
+                "reasoning": { "effort": "low", "summary": "concise" },
+                "include": ["reasoning.encrypted_content"]
+            })
         );
     }
 
@@ -1173,6 +1542,310 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
             "missing item id must fail loud, got: {events:?}"
+        );
+    }
+
+    /// Drive the Responses events through the real stream adapter
+    /// (`buffered_sdk_stream`) with the production parser and terminal
+    /// callback, and return the full wire sequence. This exercises the
+    /// adapter's EOF handling, not just the state helper.
+    async fn run_responses_adapter(
+        inner_items: Vec<Result<ResponseStreamEvent, StreamError>>,
+    ) -> Vec<Result<StreamEvent, StreamError>> {
+        use crate::provider::stream_adapter::buffered_sdk_stream;
+        use futures::StreamExt as _;
+
+        let inner = futures::stream::iter(inner_items);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let stream = buffered_sdk_stream(
+            inner,
+            cancel,
+            ResponsesStreamState::default(),
+            |item, state| match item {
+                Ok(event) => parse_responses_event(event, state),
+                Err(e) => {
+                    let mut events = Vec::new();
+                    fail_stream(e, state, &mut events);
+                    events
+                }
+            },
+            responses_terminal_event,
+        );
+        stream.collect().await
+    }
+
+    fn completed_response_event(sequence: u64) -> ResponseStreamEvent {
+        stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": sequence,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": []
+            }
+        }))
+    }
+
+    fn failed_response_event(sequence: u64) -> ResponseStreamEvent {
+        stream_event(serde_json::json!({
+            "type": "response.failed",
+            "sequence_number": sequence,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "failed",
+                "output": [],
+                "error": { "code": "server_error", "message": "boom" }
+            }
+        }))
+    }
+
+    /// Adapter-level: `failed` then `completed` then EOF yields exactly
+    /// one error and never a `Completed`.
+    #[tokio::test]
+    async fn adapter_failed_then_completed_emits_one_error() {
+        let events = run_responses_adapter(vec![
+            Ok(failed_response_event(4)),
+            Ok(completed_response_event(5)),
+        ])
+        .await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(
+            errors, 1,
+            "failure must be reported exactly once, got: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "a failed stream must never emit Completed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: `failed` then `incomplete` then EOF also yields
+    /// exactly one error and never a `Completed`.
+    #[tokio::test]
+    async fn adapter_failed_then_incomplete_emits_one_error() {
+        let incomplete = stream_event(serde_json::json!({
+            "type": "response.incomplete",
+            "sequence_number": 5,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "incomplete",
+                "output": [],
+                "incomplete_details": { "reason": "max_output_tokens" }
+            }
+        }));
+        let events =
+            run_responses_adapter(vec![Ok(failed_response_event(4)), Ok(incomplete)]).await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "a failed stream must never emit Completed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: a `response.error` event followed by EOF emits
+    /// exactly one error and no `Completed`.
+    #[tokio::test]
+    async fn adapter_error_event_then_eof_emits_one_error() {
+        let error_event = stream_event(serde_json::json!({
+            "type": "error",
+            "sequence_number": 3,
+            "code": "server_error",
+            "message": "upstream failed"
+        }));
+        let events = run_responses_adapter(vec![Ok(error_event)]).await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "expected one error, got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "error stream must never emit Completed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: an SDK transport error followed by EOF emits
+    /// exactly one error and no `Completed`.
+    #[tokio::test]
+    async fn adapter_transport_error_then_eof_emits_one_error() {
+        let transport = StreamError::ConnectionLost {
+            kind: StreamErrorKind::TransportError,
+            message: "connection reset".to_owned(),
+        };
+        let events = run_responses_adapter(vec![Err(transport)]).await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "expected one error, got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "transport failure must never emit Completed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: an abrupt EOF with no terminal event is a single
+    /// error.
+    #[tokio::test]
+    async fn adapter_bare_eof_is_single_error() {
+        let events = run_responses_adapter(vec![Ok(created_event())]).await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "bare EOF must yield one error, got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "bare EOF must never emit Completed: {events:?}"
+        );
+    }
+
+    fn error_response_event(sequence: u64) -> ResponseStreamEvent {
+        stream_event(serde_json::json!({
+            "type": "error",
+            "sequence_number": sequence,
+            "code": "server_error",
+            "message": "upstream failed"
+        }))
+    }
+
+    fn text_delta_event(sequence: u64, text: &str) -> ResponseStreamEvent {
+        stream_event(serde_json::json!({
+            "type": "response.output_text.delta",
+            "sequence_number": sequence,
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": text
+        }))
+    }
+
+    /// Adapter-level: `failed` then a second terminal error event then
+    /// EOF still yields exactly one error.
+    #[tokio::test]
+    async fn adapter_failed_then_error_then_eof_emits_one_error() {
+        let events = run_responses_adapter(vec![
+            Ok(failed_response_event(4)),
+            Ok(error_response_event(5)),
+        ])
+        .await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "failed stream must never emit Completed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: a parser error (invalid function-call item id)
+    /// followed by EOF yields exactly one error.
+    #[tokio::test]
+    async fn adapter_parser_error_then_eof_emits_one_error() {
+        let bad_item = stream_event(serde_json::json!({
+            "type": "response.output_item.added",
+            "sequence_number": 4,
+            "output_index": 1,
+            "item": {
+                "type": "function_call",
+                "call_id": "call_abc",
+                "name": "read_file",
+                "arguments": ""
+            }
+        }));
+        let events = run_responses_adapter(vec![Ok(bad_item)]).await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "parser failure must never emit Completed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: an SDK transport error then a `completed` then EOF
+    /// yields exactly one error and never a `Completed`.
+    #[tokio::test]
+    async fn adapter_transport_error_then_completed_emits_one_error() {
+        let transport = StreamError::ConnectionLost {
+            kind: StreamErrorKind::TransportError,
+            message: "connection reset".to_owned(),
+        };
+        let events =
+            run_responses_adapter(vec![Err(transport), Ok(completed_response_event(9))]).await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "transport failure must never emit Completed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: content deltas after a failure are suppressed; a
+    /// post-failure `completed` cannot win either.
+    #[tokio::test]
+    async fn adapter_post_failure_events_are_suppressed() {
+        let events = run_responses_adapter(vec![
+            Ok(failed_response_event(4)),
+            Ok(text_delta_event(5, "late text")),
+            Ok(completed_response_event(6)),
+        ])
+        .await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "got: {events:?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Delta(StreamDelta::TextDelta { .. })))),
+            "post-failure text must be suppressed: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "post-failure Completed must be suppressed: {events:?}"
+        );
+    }
+
+    /// Adapter-level: a real `completed` still yields a successful
+    /// `Completed` terminal.
+    #[tokio::test]
+    async fn adapter_completed_emits_completed() {
+        let events =
+            run_responses_adapter(vec![Ok(created_event()), Ok(completed_response_event(9))]).await;
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "completed stream must emit Completed: {events:?}"
+        );
+        assert!(
+            events.iter().all(Result::is_ok),
+            "completed stream must have no errors: {events:?}"
         );
     }
 }

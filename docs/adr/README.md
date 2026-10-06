@@ -46,6 +46,9 @@ What becomes easier or harder as a result?
 | [0005](0005-prompt-caching-support.md) | Prompt Caching Support Across Providers | Proposed | caching, provider, performance, telemetry | **Wave 4** (performance) |
 | [0006](0006-multi-agent-trace-composition.md) | Multi-Agent Trace Composition with OpenInference | Proposed | otel, phoenix, multi-agent, tracing, architecture | **Wave 5** (observability) |
 | [0007](0007-codex-style-lint-tooling-adoption.md) | Codex-Style Lint & Tooling Adoption | Accepted | linting, tooling, quality, ci | **Parallel track** (Tier 1 done; follow-ups deferred) |
+| [0008](0008-mid-run-steering-nudges.md) | Mid-Run Steering via Queued User Nudges | Proposed | agent-loop, session, streaming, concurrency | — (tracked constraint) |
+| [0009](0009-structured-output-support.md) | Structured Output via Response Format with Forced-Tool Fallback | Proposed | provider, structured-output, tools, streaming | — (tracked constraint) |
+| [0010](0010-hitl-interrupts-and-parking.md) | Interrupts for Human-in-the-Loop Parking and Durable Resume | Proposed | agent-loop, session, hitl, lifecycle, tools | — (tracked constraint) |
 
 ## Implementation Order
 
@@ -67,5 +70,9 @@ ADR-0007 runs as a **parallel track** alongside the waves. It does not block
 any wave, but its Layer B (`expect_used = deny`) should be promoted last in
 that track because provider `.expect()` cleanup is broader than the other lint
 promotions.
+
+ADR-0008 through ADR-0010 are **tracked constraints**, not scheduled waves.
+They record design rules that bind adjacent work and are promoted to a wave
+only if prioritized (see `TODO.md` "Future Flexibility").
 
 See [roadmap](../internal/agent-driver-roadmap.md) for phase mapping.

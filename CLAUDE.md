@@ -177,6 +177,9 @@ Design decisions are documented in `docs/adr/`. Read these before making archite
 - **ADR-0005:** Prompt Caching Support Across Providers (Proposed)
 - **ADR-0006:** Multi-Agent Trace Composition with OpenInference (Proposed)
 - **ADR-0007:** Codex-Style Lint & Tooling Adoption (Accepted)
+- **ADR-0008:** Mid-Run Steering via Queued User Nudges (Proposed)
+- **ADR-0009:** Structured Output via Response Format with Forced-Tool Fallback (Proposed)
+- **ADR-0010:** Interrupts for Human-in-the-Loop Parking and Durable Resume (Proposed)
 - See `docs/adr/README.md` for the full index and ADR format
 
 When proposing a significant architectural change (new subsystem, protocol integration, cross-cutting concern), write an ADR first. ADRs focus on _context and consequences_, not implementation details.
@@ -204,7 +207,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 - Phoenix: self-hosted, set via `PHOENIX_ENDPOINT` (port 4317 OTLP, port 6006 UI)
 - `PHOENIX_ENDPOINT=http://your-phoenix-host:4317`
 - ADR-0001: Tool System & MCP Integration (Accepted)
-- ADR-0002 through ADR-0007: All written and reviewed
+- ADR-0002 through ADR-0010: All written and reviewed
 
 ## Gotchas
 

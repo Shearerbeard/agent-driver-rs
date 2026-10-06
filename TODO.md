@@ -156,6 +156,36 @@ Bedrock parser tests) landed on master. Full logs:
 
 ---
 
+## Future Flexibility (tracked constraints, not scheduled work)
+
+Capabilities we have decided not to build yet but want to keep possible.
+Design rule: don't foreclose these seams when touching adjacent code. If one
+becomes a priority, promote it to a wave and move its ADR to that status.
+
+- [ ] **Steering nudge queue** (ADR-0008) — user messages injected mid-run,
+  drained at the tool boundary between `execute_tools` phase 3 and
+  `continue_streaming()` (`src/agent/driver.rs`). Constraints: keep per-turn
+  re-snapshot of session state; never hold the messages lock across provider
+  calls; never let an injected user message land between `tool_use` and its
+  `tool_result` (Anthropic 400s).
+- [ ] **Structured output** (ADR-0009) — `response_format` on
+  `CompletionConfig` plus a `ProviderCapabilities` flag; native mapping where
+  supported (OpenAI `response_format`, Ollama `format`), forced-tool fallback
+  elsewhere (requires configurable `tool_choice` — today only hardcoded `auto`
+  in `src/provider/openrouter.rs`). Note: `OpenAiConfig.structured_output` is
+  dead config, never read — wire it or remove it (same disease as
+  `ReasoningConfig` in Wave 1).
+- [ ] **Interrupts / HITL park-resume** (ADR-0010) — in-process parking already
+  works (async `Tool::execute` + `ToolContext` cancellation). Missing: an
+  enforcement hook for `ToolAnnotations.requires_confirmation` (field exists,
+  nothing reads it), an `AgentLoop::resume()` entry point (today `run()` always
+  appends a new user message), and session history export for cross-process
+  parking (`Message`/`ContentBlock` already derive serde). Constraints: keep
+  `LoopStopReason`/`AgentOutcome` extensible; treat the tool-execution boundary
+  as the canonical park/drain point (same seam as the nudge queue).
+
+---
+
 ## Completed
 
 ### ADRs

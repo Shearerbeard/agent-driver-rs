@@ -20,8 +20,8 @@
 //! ## Usage patterns
 //!
 //! ```no_run
-//! use agent_driver_rs::tool::{ToolRegistry, ToolDefinition, ToolSchema, FnTool, ToolResult, DynTool};
-//! use agent_driver_rs::ToolName;
+//! use agent_driver::tool::{ToolRegistry, ToolDefinition, ToolSchema, FnTool, ToolResult, DynTool};
+//! use agent_driver::ToolName;
 //! use std::sync::Arc;
 //! use futures::FutureExt;
 //!
@@ -67,8 +67,8 @@ use super::executor::DynTool;
 /// # Example
 ///
 /// ```no_run
-/// use agent_driver_rs::tool::{ToolRegistry, ToolDefinition, ToolSchema};
-/// use agent_driver_rs::ToolName;
+/// use agent_driver::tool::{ToolRegistry, ToolDefinition, ToolSchema};
+/// use agent_driver::ToolName;
 ///
 /// # async fn example() {
 /// let registry = ToolRegistry::new();

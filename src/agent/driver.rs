@@ -45,9 +45,9 @@ pub struct AgentOutcome {
 /// # Example
 ///
 /// ```no_run
-/// # use agent_driver_rs::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
-/// # use agent_driver_rs::Session;
-/// # async fn example(session: &Session) -> Result<(), agent_driver_rs::AgentLoopError> {
+/// # use agent_driver::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
+/// # use agent_driver::Session;
+/// # async fn example(session: &Session) -> Result<(), agent_driver::AgentLoopError> {
 /// // Basic usage
 /// let outcome = AgentLoop::new(session)
 ///     .run("What time is it?")

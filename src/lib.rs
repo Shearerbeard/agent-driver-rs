@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```no_run
-//! use agent_driver_rs::{Session, SessionBuilder, SystemPrompt};
-//! use agent_driver_rs::config::ProviderConfig;
+//! use agent_driver::{Session, SessionBuilder, SystemPrompt};
+//! use agent_driver::config::ProviderConfig;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

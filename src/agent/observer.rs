@@ -21,7 +21,7 @@
 //! ## Custom observer example
 //!
 //! ```no_run
-//! use agent_driver_rs::agent::{AgentObserver, AgentEvent};
+//! use agent_driver::agent::{AgentObserver, AgentEvent};
 //!
 //! struct StreamingPrinter;
 //!
@@ -153,7 +153,7 @@ impl std::fmt::Display for LoopStopReason {
 /// # Example
 ///
 /// ```no_run
-/// use agent_driver_rs::agent::{AgentObserver, AgentEvent};
+/// use agent_driver::agent::{AgentObserver, AgentEvent};
 ///
 /// struct PrintObserver;
 ///

@@ -16,14 +16,14 @@ mod tests {
         SpanData,
     };
 
-    use agent_driver_rs::agent::AgentLoop;
-    use agent_driver_rs::otel::attr;
-    use agent_driver_rs::provider::mock::{
+    use agent_driver::agent::AgentLoop;
+    use agent_driver::otel::attr;
+    use agent_driver::provider::mock::{
         MockProvider, mock_text_response, mock_tool_call_response,
     };
-    use agent_driver_rs::session::SessionBuilder;
-    use agent_driver_rs::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
-    use agent_driver_rs::types::{ModelId, ToolName};
+    use agent_driver::session::SessionBuilder;
+    use agent_driver::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
+    use agent_driver::types::{ModelId, ToolName};
 
     fn test_tracer() -> (
         Arc<opentelemetry_sdk::trace::Tracer>,
@@ -70,7 +70,7 @@ mod tests {
         );
     }
 
-    fn echo_tool() -> agent_driver_rs::tool::DynTool {
+    fn echo_tool() -> agent_driver::tool::DynTool {
         let def = ToolDefinition::new(
             ToolName::new("echo").expect("hardcoded valid tool name"),
             "Echos the input back",
@@ -78,7 +78,7 @@ mod tests {
         );
         Arc::new(FnTool::new(
             def,
-            |_input: &ToolInput, _ctx: &agent_driver_rs::tool::ToolContext| {
+            |_input: &ToolInput, _ctx: &agent_driver::tool::ToolContext| {
                 async move { Ok(ToolResult::text("echoed!")) }.boxed()
             },
         ))

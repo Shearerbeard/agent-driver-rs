@@ -26,7 +26,7 @@ use super::types::{McpServerName, ToolSchema, ToolSource};
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use agent_driver_rs::tool::{McpConnection, ToolRegistry};
+/// use agent_driver::tool::{McpConnection, ToolRegistry};
 ///
 /// let registry = ToolRegistry::new();
 ///
@@ -308,7 +308,7 @@ pub struct McpHttpSpec {
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use agent_driver_rs::tool::{McpManager, McpServerSpec, ToolRegistry};
+/// use agent_driver::tool::{McpManager, McpServerSpec, ToolRegistry};
 ///
 /// let registry = ToolRegistry::new();
 /// let mut manager = McpManager::new();

@@ -137,7 +137,7 @@ struct PendingToolUse {
 /// # Example
 ///
 /// ```
-/// use agent_driver_rs::streaming::{CollectedResponse, StreamDelta, ContentBlockType};
+/// use agent_driver::streaming::{CollectedResponse, StreamDelta, ContentBlockType};
 ///
 /// let mut response = CollectedResponse::new();
 /// response.apply_delta(StreamDelta::TextDelta { text: "Hello!".into() });
@@ -506,7 +506,7 @@ pub type CompletionStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, Stream
 /// # Example
 ///
 /// ```no_run
-/// # async fn example(session: &agent_driver_rs::Session) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn example(session: &agent_driver::Session) -> Result<(), Box<dyn std::error::Error>> {
 /// use futures::StreamExt;
 ///
 /// let mut handle = session.send_streaming("Hello!").await?;

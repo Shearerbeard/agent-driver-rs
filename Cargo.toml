@@ -1,5 +1,5 @@
 [package]
-name = "agent-driver-rs"
+name = "agent-driver"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.91.1"
@@ -63,7 +63,7 @@ opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "trace"], option
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace"], optional = true }
 
 [dev-dependencies]
-agent-driver-rs = { path = ".", features = ["test-support"] }
+agent-driver = { path = ".", features = ["test-support"] }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "trace", "testing"] }
 
 [[bin]]

@@ -6,7 +6,7 @@ rust-version = "1.91.1"
 license = "MIT OR Apache-2.0"
 description = "Unified abstraction over LLM providers with streaming, tools, MCP, and agent loops"
 repository = "https://github.com/Shearerbeard/agent-driver-rs"
-exclude = ["TODO.md", "bench"]
+exclude = ["TODO.md", "bench", "docs/next-session.md", "docs/rust-quality-audit-plan.md", "docs/rust-quality-audit-checklist.md"]
 
 [features]
 default = ["anthropic", "openai", "openrouter"]

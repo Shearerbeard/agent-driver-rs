@@ -18,9 +18,7 @@ mod tests {
 
     use agent_driver::agent::AgentLoop;
     use agent_driver::otel::attr;
-    use agent_driver::provider::mock::{
-        MockProvider, mock_text_response, mock_tool_call_response,
-    };
+    use agent_driver::provider::mock::{MockProvider, mock_text_response, mock_tool_call_response};
     use agent_driver::session::SessionBuilder;
     use agent_driver::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
     use agent_driver::types::{ModelId, ToolName};

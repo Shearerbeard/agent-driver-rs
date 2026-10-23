@@ -1,12 +1,12 @@
 use std::hint::black_box;
 use std::sync::Arc;
 
-use agent_driver_rs::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
-use agent_driver_rs::config::{ApiKey, OpenAiConfig, OpenAiModel};
-use agent_driver_rs::provider::OpenAiProvider;
-use agent_driver_rs::tool::{DynTool, FnTool, ToolDefinition, ToolSchema};
-use agent_driver_rs::ToolName;
-use agent_driver_rs::{
+use agent_driver::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
+use agent_driver::config::{ApiKey, OpenAiConfig, OpenAiModel};
+use agent_driver::provider::OpenAiProvider;
+use agent_driver::tool::{DynTool, FnTool, ToolDefinition, ToolSchema};
+use agent_driver::ToolName;
+use agent_driver::{
     MaxTokens, ModelId, SessionBuilder, StreamDelta, StreamEvent, SystemPrompt, ToolResult,
 };
 use futures::StreamExt;
@@ -174,7 +174,7 @@ pub async fn tool_roundtrip(model: &str, n: usize, warmup: usize) -> Vec<Sample>
 /// to match rig's `list_tools()` — both return raw tool definitions without
 /// schema parsing or wrapper construction.
 pub async fn mcp_discovery(_model: &str, n: usize, warmup: usize) -> Vec<Sample> {
-    use agent_driver_rs::tool::McpConnection;
+    use agent_driver::tool::McpConnection;
 
     // Setup: connect once before the timed loop
     let conn = McpConnection::connect_stdio(
@@ -205,7 +205,7 @@ pub async fn mcp_discovery(_model: &str, n: usize, warmup: usize) -> Vec<Sample>
 /// libraries do at most 2 tool execution rounds. Uses a single-tool-call prompt
 /// ("read Cargo.toml") to avoid depth-cap errors from multi-round listing.
 pub async fn mcp_roundtrip(model: &str, n: usize, warmup: usize) -> Vec<Sample> {
-    use agent_driver_rs::tool::McpConnection;
+    use agent_driver::tool::McpConnection;
 
     // Setup: connect + discover tools once
     let conn = McpConnection::connect_stdio(

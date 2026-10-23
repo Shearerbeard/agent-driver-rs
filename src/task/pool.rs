@@ -36,8 +36,8 @@ struct RegisteredTask {
 /// # Example
 ///
 /// ```no_run
-/// use agent_driver_rs::task::TaskPool;
-/// use agent_driver_rs::CorrelationId;
+/// use agent_driver::task::TaskPool;
+/// use agent_driver::CorrelationId;
 ///
 /// # async fn example() {
 /// let pool = TaskPool::new();

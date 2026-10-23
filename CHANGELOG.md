@@ -4,8 +4,14 @@ Notable project changes are recorded here for humans and cold agents. This file
 is intentionally high level; implementation detail stays in ADRs, PRs, and
 commit history.
 
-## Unreleased
+## [0.1.0] - 2026-10-22
 
+- Crate renamed `agent-driver-rs` → `agent-driver` for the crates.io
+  release; the repository keeps its name. Import paths change from
+  `agent_driver_rs` to `agent_driver`.
+- First crates.io release, published by the new tag-driven workflow
+  (`.github/workflows/publish.yml`): tag, Cargo.toml version, and the
+  matching CHANGELOG entry must agree before upload.
 - Bedrock extended thinking support: `BedrockConfig.thinking`
   (`BEDROCK_THINKING_BUDGET`) sends the `additionalModelRequestFields`
   thinking block for Claude-family models; `reasoningContent` deltas from

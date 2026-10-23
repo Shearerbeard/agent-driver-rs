@@ -26,7 +26,7 @@ use super::definition::ToolDefinition;
 /// # Example
 ///
 /// ```
-/// use agent_driver_rs::tool::ToolContext;
+/// use agent_driver::tool::ToolContext;
 /// use tokio_util::sync::CancellationToken;
 ///
 /// let ctx = ToolContext::new(CancellationToken::new());
@@ -51,7 +51,7 @@ impl ToolContext {
 /// # Example
 ///
 /// ```
-/// use agent_driver_rs::tool::ToolInput;
+/// use agent_driver::tool::ToolInput;
 ///
 /// let input = ToolInput::from_value(serde_json::json!({"path": "/tmp/test.txt"})).unwrap();
 /// assert_eq!(input.get_str("path"), Some("/tmp/test.txt"));
@@ -146,7 +146,7 @@ impl Default for ToolInput {
 /// # Example
 ///
 /// ```
-/// use agent_driver_rs::tool::ToolResult;
+/// use agent_driver::tool::ToolResult;
 ///
 /// let ok = ToolResult::text("File contents here");
 /// assert!(ok.is_success());

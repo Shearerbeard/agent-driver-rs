@@ -39,12 +39,7 @@ fn ser_duration_us<S: serde::Serializer>(d: &Duration, s: S) -> Result<S::Ok, S:
 }
 
 /// Run a scenario `n` times (plus `warmup` discarded iterations) and collect samples.
-pub async fn run_scenario<F, Fut>(
-    name: &str,
-    n: usize,
-    warmup: usize,
-    f: F,
-) -> Vec<Sample>
+pub async fn run_scenario<F, Fut>(name: &str, n: usize, warmup: usize, f: F) -> Vec<Sample>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
@@ -68,7 +63,7 @@ where
         }
         let duration = start.elapsed();
         let stats = reg.change();
-        let bytes_allocated = stats.bytes_allocated as usize;
+        let bytes_allocated = stats.bytes_allocated;
         samples.push(Sample {
             duration,
             bytes_allocated,
@@ -157,14 +152,12 @@ pub fn print_report(rows: &[ReportRow], model: &str, iterations: usize) {
 
     println!();
     println!("{sep}");
-    println!(
-        "  Benchmark: agent-driver-rs vs rig.rs (model: {model}, iterations: {iterations})"
-    );
+    println!("  Benchmark: agent-driver-rs vs rig.rs (model: {model}, iterations: {iterations})");
     println!("{sep}");
     println!();
     println!(
-        "{:<17}{:<17}{:>9}{:>9}{:>9}{:>9}{:>9}  {:>10}  {}",
-        "Scenario", "Library", "Min", "Median", "Mean", "StdDev", "Max", "Alloc", "vs"
+        "{:<17}{:<17}{:>9}{:>9}{:>9}{:>9}{:>9}  {:>10}  vs",
+        "Scenario", "Library", "Min", "Median", "Mean", "StdDev", "Max", "Alloc"
     );
     println!("{thin}");
 

@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 
 use agent_driver_rs::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
-use agent_driver_rs::config::{ApiKey, OpenAiConfig, OpenAiModel};
+use agent_driver_rs::config::{ApiKey, CustomModelCapabilities, OpenAiConfig, OpenAiModel};
 use agent_driver_rs::provider::OpenAiProvider;
 use agent_driver_rs::tool::{DynTool, FnTool, ToolDefinition, ToolSchema};
 use agent_driver_rs::ToolName;
@@ -19,24 +19,63 @@ const TTFT_PROMPT: &str = "Say hello in exactly three words.";
 const TOOL_PROMPT: &str = "What is 47 multiplied by 89? Use the calculator tool.";
 const SYSTEM_PROMPT: &str = "You are a helpful assistant. Be concise.";
 
+/// Build an explicit custom capability declaration from the
+/// `OPENAI_CUSTOM_TEMPERATURE`, `OPENAI_CUSTOM_REASONING`, and
+/// `OPENAI_CUSTOM_STREAMING` environment variables.
+///
+/// All three must be present and strictly `true`/`false`; a partial or
+/// malformed declaration fails loudly, matching the provider's config
+/// contract. Custom capabilities are never inferred from the model name.
+fn custom_capabilities_from_env(model: &str) -> CustomModelCapabilities {
+    let flag = |var: &str| -> bool {
+        match std::env::var(var).as_deref() {
+            Ok("true") => true,
+            Ok("false") => false,
+            Ok(other) => panic!("{var} must be \"true\" or \"false\", got {other:?}"),
+            Err(_) => panic!(
+                "custom model {model:?} requires {var}; set OPENAI_CUSTOM_TEMPERATURE, \
+                 OPENAI_CUSTOM_REASONING, and OPENAI_CUSTOM_STREAMING to \"true\" or \"false\""
+            ),
+        }
+    };
+
+    CustomModelCapabilities::new(
+        flag("OPENAI_CUSTOM_TEMPERATURE"),
+        flag("OPENAI_CUSTOM_REASONING"),
+        flag("OPENAI_CUSTOM_STREAMING"),
+    )
+}
+
 /// Build an OpenAI config for the given model string.
 fn make_config(model: &str) -> OpenAiConfig {
-    let api_key =
-        ApiKey::new(std::env::var("OPENAI_API_KEY").unwrap());
-    let model_enum = match model {
-        "gpt-4o" => OpenAiModel::Gpt4o,
-        "gpt-4o-mini" => OpenAiModel::Gpt4oMini,
-        other => OpenAiModel::Custom(other.to_string()),
+    let api_key = ApiKey::new(std::env::var("OPENAI_API_KEY").unwrap())
+        .expect("OPENAI_API_KEY must be set and non-empty");
+    let custom_capabilities = match OpenAiModel::from_id(model) {
+        OpenAiModel::Custom(_) => Some(custom_capabilities_from_env(model)),
+        _ => None,
     };
+    build_config(model, api_key, custom_capabilities)
+}
+
+/// Assemble a config from a model string and an explicit (optional)
+/// custom capability declaration. Pure so the benchmark's model wiring
+/// is testable without touching the environment.
+fn build_config(
+    model: &str,
+    api_key: ApiKey,
+    custom_capabilities: Option<CustomModelCapabilities>,
+) -> OpenAiConfig {
     OpenAiConfig {
         api_key,
         api: Default::default(),
         base_url: None,
-        model: model_enum,
+        model: OpenAiModel::from_id(model),
         max_tokens: MaxTokens::new(256).unwrap(),
         temperature: None,
         reasoning: None,
         structured_output: false,
+        chat_reasoning_output: Default::default(),
+        custom_capabilities,
     }
 }
 
@@ -261,7 +300,12 @@ pub async fn mcp_roundtrip(model: &str, n: usize, warmup: usize) -> Vec<Sample> 
 }
 
 /// Run all our scenarios and return report rows.
-pub async fn run_all(model: &str, n: usize, warmup: usize, scenario_filter: Option<&str>) -> Vec<ReportRow> {
+pub async fn run_all(
+    model: &str,
+    n: usize,
+    warmup: usize,
+    scenario_filter: Option<&str>,
+) -> Vec<ReportRow> {
     let mut rows = Vec::new();
     let lib = "agent-driver-rs";
 
@@ -321,4 +365,51 @@ pub async fn run_all(model: &str, n: usize, warmup: usize, scenario_filter: Opti
     }
 
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_api_key() -> ApiKey {
+        ApiKey::new("bench-test-key").expect("test key is non-empty")
+    }
+
+    #[test]
+    fn known_model_builds_without_custom_capabilities() {
+        let config = build_config("gpt-4o-mini", test_api_key(), None);
+        assert!(matches!(config.model, OpenAiModel::Gpt4oMini));
+        assert!(config.custom_capabilities.is_none());
+        OpenAiProvider::new(config).expect("known model config must construct");
+    }
+
+    /// A custom model with an explicit capability declaration builds and
+    /// constructs — the benchmark's custom-model smoke path.
+    #[test]
+    fn custom_model_with_declared_capabilities_constructs() {
+        let config = build_config(
+            "org/local-llm",
+            test_api_key(),
+            Some(CustomModelCapabilities::new(true, false, true)),
+        );
+        assert!(matches!(config.model, OpenAiModel::Custom(ref m) if m == "org/local-llm"));
+        OpenAiProvider::new(config).expect("custom model with capabilities must construct");
+    }
+
+    /// A custom model with no declaration must fail at provider
+    /// construction — capability is never inferred from the model name.
+    #[test]
+    fn custom_model_without_capabilities_fails_loud() {
+        let config = build_config("gpt-5.6-terra", test_api_key(), None);
+        let err = match OpenAiProvider::new(config) {
+            Ok(_) => panic!("missing declaration must fail"),
+            Err(err) => err,
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains("custom_capabilities") || message.contains("capability"),
+            "error must name the missing declaration, got: {message}"
+        );
+    }
+
 }

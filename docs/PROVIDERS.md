@@ -52,9 +52,16 @@ Claude Opus 4 and Claude Sonnet 4 models.
 ```bash
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o                # default
+OPENAI_API=chat-completions        # chat-completions (default) | responses
+# OPENAI_BASE_URL=http://localhost:8000/v1  # optional compatible endpoint
 OPENAI_MAX_TOKENS=4096
 OPENAI_TEMPERATURE=0.7             # optional, not allowed on reasoning models
-OPENAI_REASONING_EFFORT=medium     # optional: none/minimal/low/medium/high/xhigh
+OPENAI_REASONING_EFFORT=medium     # optional on Responses: none/minimal/low/medium/high/xhigh
+OPENAI_CHAT_REASONING_OUTPUT=none  # optional: none | reasoning_content | reasoning
+# Custom models require all three explicit capability declarations:
+# OPENAI_CUSTOM_TEMPERATURE=true
+# OPENAI_CUSTOM_REASONING=false
+# OPENAI_CUSTOM_STREAMING=true
 ```
 
 **Model variants:**
@@ -64,13 +71,24 @@ OPENAI_REASONING_EFFORT=medium     # optional: none/minimal/low/medium/high/xhig
 - Any custom string
 
 **Gotchas:**
-- **o3 and o3-mini do not support streaming.** The library checks
-  `model.supports_streaming()` and these models return `false`.
+- **o3 and o3-mini do not support streaming on Chat Completions.** They do
+  stream on the Responses surface (`OPENAI_API=responses`). Streaming
+  support is computed per selected surface.
 - **Temperature is not allowed on reasoning models.** GPT-5.x, o1, o3 series
   models do not support the temperature parameter. Config validation rejects
   a temperature setting on these models.
-- **Reasoning configuration** is only available on reasoning models (GPT-5.x,
-  o1, o3 series). Set `OPENAI_REASONING_EFFORT` to control the reasoning effort level.
+- **Reasoning effort** is sent on Responses for models that support it. Chat
+  Completions does not send this option. For compatible Chat endpoints,
+  `OPENAI_CHAT_REASONING_OUTPUT` selects which streamed field wins if both
+  `reasoning_content` and `reasoning` appear; either field remains readable.
+- **Custom models must declare capabilities.** Set
+  `OPENAI_CUSTOM_TEMPERATURE`, `OPENAI_CUSTOM_REASONING`, and
+  `OPENAI_CUSTOM_STREAMING` (each `true` or `false`) for any model that is
+  not a well-known ID; capability is never inferred from the model name.
+  The model configured on the provider must match the session's request model.
+  Custom Chat endpoints cannot request reasoning effort until their request
+  dialect is supported. A compatible base URL must include its API prefix,
+  usually `/v1`.
 
 ---
 
@@ -206,9 +224,11 @@ These providers use SDK client libraries that return `futures::Stream` items:
 | `delta.content` | `Delta(TextDelta { text })` |
 | `delta.tool_calls[].function.name` | `Delta(ToolUseStart { id, name })` |
 | `delta.tool_calls[].function.arguments` | `Delta(ToolInputDelta { id, partial_json })` |
-| Stream ends (inner yields `None`) | `Completed { metadata }` (via `on_end` callback) |
+| Chat stream ends (inner yields `None`) | `Completed { metadata }` (via `on_end` callback) |
+| Responses terminal event | `Completed { metadata }` after `response.completed` or `response.incomplete` |
 
-Both use the `buffered_sdk_stream` adapter. Block lifecycle events
+Both use the `buffered_sdk_stream` adapter. A Responses stream that ends
+without a terminal event returns an error. Block lifecycle events
 (`ContentBlockStart`/`ContentBlockStop`) are synthesised by the parse function
 based on the presence of tool call start markers and content boundaries.
 

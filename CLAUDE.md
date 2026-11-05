@@ -210,7 +210,7 @@ When proposing a significant architectural change (new subsystem, protocol integ
 
 1. **Bedrock models need inference profiles** - Modern Claude models require `BEDROCK_INFERENCE_PROFILE` env var
 2. **aws_smithy_types::Document::Null** - Unit variant, not `Null(true)`
-3. **OpenAI o3/o3-mini don't support streaming** - Check `model.supports_streaming()`
+3. **OpenAI o3/o3-mini don't support streaming on Chat Completions** - The `responses` surface does stream them; capability is computed per selected surface
 4. **Temperature not allowed on reasoning models** - GPT-5, o1, o3 series
 5. **OpenAI Responses API is stateless** - `OPENAI_API=responses` sets `store:false`; the session owns history. Reasoning replays only via `ContentBlock::EncryptedReasoning` (needs `include: reasoning.encrypted_content`, sent when reasoning is configured)
 6. **Edition 2024** - MSRV 1.91.1, `rust-toolchain.toml` pins stable

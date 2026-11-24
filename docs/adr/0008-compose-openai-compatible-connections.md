@@ -55,11 +55,11 @@ owns ordered Responses collection and terminal reason classification.
 ## Consequences
 
 Compatible endpoints can share a small interface without pretending that
-their optional parameters are identical. Custom-model users must declare
-capabilities, adding configuration work. The existing public `OpenAiConfig`
-struct still permits invalid field combinations until provider construction;
-that seam validates once, while request-specific options are checked at the
-request seam. Changing that struct's fields can break downstream literals
-before 0.1.0. Unknown request-side reasoning dialects and third-party
-reasoning replay remain unsupported; the specs state the tests required
-before either is claimed.
+their optional parameters are identical. Custom-model users must configure
+capabilities explicitly.
+
+Provider construction validates the public `OpenAiConfig` struct.
+Request-specific options are checked when the request is built. Changing
+the config fields breaks downstream literals written for 0.1.0. Unknown
+request-side reasoning dialects and third-party reasoning replay remain
+unsupported; the specs state the tests required before either is claimed.

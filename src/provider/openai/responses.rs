@@ -2185,7 +2185,7 @@ mod tests {
             ModelId::new("gpt-4o").unwrap(),
             vec![Message::user("hello")],
         );
-        assert!(provider.build_responses_request(&request).is_ok());
+        drop(provider.build_responses_request(&request).unwrap());
         request.config.stop_sequences.push("STOP".into());
         assert!(matches!(
             provider.build_responses_request(&request),

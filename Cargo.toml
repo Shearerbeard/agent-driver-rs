@@ -11,7 +11,7 @@ exclude = ["TODO.md", "bench", "docs/next-session.md", "docs/rust-quality-audit-
 [features]
 default = ["anthropic", "openai", "openrouter"]
 anthropic = []
-openai = ["dep:async-openai"]
+openai = ["dep:async-openai", "dep:reqwest-openai"]
 bedrock = ["dep:aws-sdk-bedrockruntime", "dep:aws-config", "dep:aws-smithy-types"]
 openrouter = []
 ollama = ["dep:ollama-rs"]
@@ -38,6 +38,8 @@ serde_json = "1"
 
 # HTTP
 reqwest = { version = "0.12", features = ["json", "stream"] }
+# Match the OpenAI SDK's transport version so its retry policy is configurable.
+reqwest-openai = { package = "reqwest", version = "0.13", default-features = false, optional = true }
 reqwest-eventsource = "0.6"
 
 # Error handling
@@ -53,7 +55,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 
 # Provider SDKs (optional)
-async-openai = { version = "0.41", features = ["chat-completion", "byot", "responses"], optional = true }
+async-openai = { version = "0.41", features = ["chat-completion", "byot", "responses", "middleware"], optional = true }
 aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"], optional = true }
 aws-config = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio", "sso"], optional = true }
 aws-smithy-types = { version = "1", optional = true }

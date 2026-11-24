@@ -74,6 +74,10 @@ OPENAI_CHAT_REASONING_OUTPUT=none  # optional: none | reasoning_content | reason
 - **o3 and o3-mini do not support streaming on Chat Completions.** They do
   stream on the Responses surface (`OPENAI_API=responses`). Streaming
   support is computed per selected surface.
+- **Retry ownership:** `OpenAiProvider::new(config)?.without_retries()?`
+  disables SDK and HTTP-transport retries. Use it when the caller accounts
+  for individual requests. The default constructor keeps its retry policy;
+  explicit repeated calls and the separate `with_retry` helper are unaffected.
 - **Temperature is not allowed on reasoning models.** GPT-5.x, o1, o3 series
   models do not support the temperature parameter. Config validation rejects
   a temperature setting on these models.

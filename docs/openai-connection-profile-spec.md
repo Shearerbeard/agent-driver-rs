@@ -37,21 +37,24 @@ OpenAI-compatible base URL may still point at an OpenRouter-compatible server.
   Expose a small public constructor/configuration route for programmatic custom
   models, with serde parsing and validation that cannot silently invent a
   profile. Adding a field to `OpenAiConfig` breaks existing struct literals:
-  update repository call sites and document the pre-0.1.0 source break.
+  update repository call sites and document the source break from 0.1.0.
 - `config.model` is authoritative for the provider pin. `request.model` must
   equal it; a mismatch is `ProviderError::InvalidRequest`, not a silent
   override. Existing `SessionBuilder` constructs matching requests. Request
   `max_tokens` and `temperature` remain request-level; reject a supplied
   temperature when the selected model and surface do not allow it. Do not
   quietly discard a configured or requested option.
+<!-- vale ai-tells.ServesAsDodge = NO -->
+<!-- vale-reason: This describes conversion of named wire fields to thinking deltas, not an inflated substitute for a copula. -->
 - Chat's output convention can be `none`, `reasoning_content`, or `reasoning`.
   This selects the preferred output field, not an unverified request payload.
   Preserve the tolerant BYOT parser for compatible servers: an unselected
-  spelling still appears as thinking; if both are populated, prefer the
+  spelling still emits thinking deltas; if both are populated, prefer the
   selected spelling (use the existing `reasoning_content` preference for
   `none`). Unknown extension fields remain tolerated. Native Responses uses
   its existing `ReasoningConfig` and encrypted item replay; no new encrypted
   content type is needed because PR #4 already introduces it.
+<!-- vale ai-tells.ServesAsDodge = YES -->
 - Only send request-side reasoning effort where its wire parameter has been
   verified for the selected surface. Native Responses already sends effort.
   Chat's present `ReasoningConfig` is not sent; do not pretend a third-party

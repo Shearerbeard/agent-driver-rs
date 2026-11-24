@@ -64,6 +64,10 @@ OPENAI_REASONING_EFFORT=medium     # optional: none/minimal/low/medium/high/xhig
 - Any custom string
 
 **Gotchas:**
+- **Retry ownership:** `OpenAiProvider::new(config)?.without_retries()?`
+  disables SDK and HTTP-transport retries. Use it when the caller accounts
+  for individual requests. The default constructor keeps its retry policy;
+  explicit repeated calls and the separate `with_retry` helper are unaffected.
 - **o3 and o3-mini do not support streaming.** The library checks
   `model.supports_streaming()` and these models return `false`.
 - **Temperature is not allowed on reasoning models.** GPT-5.x, o1, o3 series

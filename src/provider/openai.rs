@@ -120,6 +120,27 @@ impl OpenAiProvider {
         })
     }
 
+    /// Disable SDK and HTTP-transport retries for this provider.
+    ///
+    /// Use this when the caller owns retry decisions or request accounting.
+    /// Explicit repeated calls and [`super::with_retry`] remain caller-controlled.
+    /// Providers constructed with [`Self::new`] keep their default retry policy.
+    pub fn without_retries(mut self) -> Result<Self, ProviderError> {
+        let http_client = reqwest_openai::Client::builder()
+            .retry(reqwest_openai::retry::never())
+            .build()
+            .map_err(|error| ProviderError::HttpError {
+                provider: super::ProviderKind::OpenAi,
+                status: None,
+                message: error.to_string(),
+            })?;
+        self.client = self
+            .client
+            .with_http_client(http_client.clone())
+            .with_http_service(async_openai::middleware::ReqwestService::new(http_client));
+        Ok(self)
+    }
+
     /// Convert our messages to OpenAI format.
     ///
     /// System messages are excluded because OpenAI only accepts a single system

@@ -7,22 +7,22 @@
 //!   2. Set Phoenix endpoint: export PHOENIX_ENDPOINT=http://your-phoenix:4317
 //!   3. Run: cargo run --features "phoenix ollama" --example phoenix_integration_ollama
 
-use agent_driver_rs::agent::AgentLoop;
-use agent_driver_rs::config::OllamaConfig;
-use agent_driver_rs::provider::ollama::OllamaProvider;
-use agent_driver_rs::session::SessionBuilder;
-use agent_driver_rs::types::ModelId;
+use agent_driver::agent::AgentLoop;
+use agent_driver::config::OllamaConfig;
+use agent_driver::provider::ollama::OllamaProvider;
+use agent_driver::session::SessionBuilder;
+use agent_driver::types::ModelId;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Phoenix Integration - Ollama Provider\n");
 
-    let tracer = agent_driver_rs::otel::init_phoenix().unwrap_or_else(|e| {
+    let tracer = agent_driver::otel::init_phoenix().unwrap_or_else(|e| {
         eprintln!("Warning: Phoenix init failed ({}), using no-op tracer", e);
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::default();
-        agent_driver_rs::otel::init_tracer_provider(Arc::new(provider));
-        Arc::new(agent_driver_rs::otel::get_tracer("phoenix-ollama").unwrap())
+        agent_driver::otel::init_tracer_provider(Arc::new(provider));
+        Arc::new(agent_driver::otel::get_tracer("phoenix-ollama").unwrap())
     });
 
     let config = OllamaConfig::from_env()?;
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Response: {}", outcome.final_response.text());
 
     session.shutdown().await;
-    agent_driver_rs::otel::shutdown_phoenix();
+    agent_driver::otel::shutdown_phoenix();
 
     Ok(())
 }

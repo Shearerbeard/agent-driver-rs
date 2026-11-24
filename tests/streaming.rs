@@ -6,14 +6,14 @@
 
 #[cfg(test)]
 mod tests {
-    use agent_driver_rs::error::StreamError;
-    use agent_driver_rs::provider::mock::*;
-    use agent_driver_rs::provider::{CompletionRequest, Provider as _, ProviderContext};
-    use agent_driver_rs::streaming::{
+    use agent_driver::error::StreamError;
+    use agent_driver::provider::mock::*;
+    use agent_driver::provider::{CompletionRequest, Provider as _, ProviderContext};
+    use agent_driver::streaming::{
         CompletionMetadata, CompletionStream, ContentBlockType, StopReason, StreamDelta,
         StreamEvent, StreamHandle,
     };
-    use agent_driver_rs::types::{CorrelationId, ModelId};
+    use agent_driver::types::{CorrelationId, ModelId};
     use futures::StreamExt as _;
     use tokio_util::sync::CancellationToken;
     use tokio_util::task::TaskTracker;
@@ -30,7 +30,7 @@ mod tests {
     #[tokio::test]
     async fn mid_stream_error_propagates() {
         let events = mock_error_response(StreamError::ConnectionLost {
-            kind: agent_driver_rs::error::StreamErrorKind::TransportError,
+            kind: agent_driver::error::StreamErrorKind::TransportError,
             message: "gone".into(),
         });
         let provider = MockProvider::new(vec![events]);

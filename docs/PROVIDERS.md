@@ -56,7 +56,7 @@ OPENAI_API=chat-completions        # chat-completions (default) | responses
 # OPENAI_BASE_URL=http://localhost:8000/v1  # optional compatible endpoint
 OPENAI_MAX_TOKENS=4096
 OPENAI_TEMPERATURE=0.7             # optional, not allowed on reasoning models
-OPENAI_REASONING_EFFORT=medium     # optional on Responses: none/minimal/low/medium/high/xhigh
+# OPENAI_REASONING_EFFORT=medium   # optional on Responses reasoning models: none/minimal/low/medium/high/xhigh
 OPENAI_CHAT_REASONING_OUTPUT=none  # optional: none | reasoning_content | reasoning
 # Custom models require all three explicit capability declarations:
 # OPENAI_CUSTOM_TEMPERATURE=true
@@ -225,12 +225,28 @@ These providers use SDK client libraries that return `futures::Stream` items:
 | `delta.tool_calls[].function.name` | `Delta(ToolUseStart { id, name })` |
 | `delta.tool_calls[].function.arguments` | `Delta(ToolInputDelta { id, partial_json })` |
 | Chat stream ends (inner yields `None`) | `Completed { metadata }` (via `on_end` callback) |
-| Responses terminal event | `Completed { metadata }` after `response.completed` or `response.incomplete` |
+| Responses `response.completed` / supported `response.incomplete` | one `BlockComplete { index, block }` per representable terminal block, then `Completed { metadata }` at EOF |
 
 Both use the `buffered_sdk_stream` adapter. A Responses stream that ends
-without a terminal event returns an error. Block lifecycle events
-(`ContentBlockStart`/`ContentBlockStop`) are synthesised by the parse function
-based on the presence of tool call start markers and content boundaries.
+without a terminal event returns an error. Live deltas and balanced
+`ContentBlockStart`/`ContentBlockStop` pairs are synthesised by the parse
+function as items and content parts arrive.
+
+On `response.completed` or a supported `response.incomplete`, the Responses
+parser walks the terminal `response.output` array in provider order and emits
+one `BlockComplete { index, block }` per representable text, thinking-summary,
+encrypted-reasoning, or tool-use block, using consecutive zero-based ordinals
+and always before the final `Completed`. Those complete blocks are the
+authoritative collection carrier: `StreamHandle::collect` and the agent loop
+discard their provisional delta buffers once the first one arrives, while
+direct consumers still see the live deltas. Function-call arguments that are
+not valid JSON, a terminal status that contradicts the event type (a
+`response.completed` that is not `completed`), encrypted reasoning without a
+usable id, unknown or missing incomplete reasons, and hosted output items
+(web/file search, code interpreter, MCP, and similar) fail the stream loudly
+rather than being dropped or empty-filled. Refusals surface as answer text,
+and an empty terminal output is valid only when no content delta streamed
+earlier.
 
 ### Bedrock (AWS SDK `.recv()`)
 

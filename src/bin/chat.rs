@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 
-use agent_driver_rs::{
+use agent_driver::{
     ModelId, SessionBuilder, SystemPrompt,
     agent::{AgentEvent, AgentLoop, AgentLoopConfig, AgentObserver, MaxToolDepth},
     config::ProviderConfig,
@@ -151,7 +151,7 @@ struct McpServerEntry {
 #[cfg(feature = "mcp")]
 #[allow(dead_code, reason = "held to keep MCP child processes alive via Drop")]
 struct McpKeepAlive {
-    connections: Vec<agent_driver_rs::tool::McpConnection>,
+    connections: Vec<agent_driver::tool::McpConnection>,
 }
 
 #[tokio::main]
@@ -315,7 +315,7 @@ async fn create_provider(
                 temperature: cfg.temperature,
                 stop_sequences: vec![],
             };
-            let provider = agent_driver_rs::provider::AnthropicProvider::new(cfg)?;
+            let provider = agent_driver::provider::AnthropicProvider::new(cfg)?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
         #[cfg(feature = "openai")]
@@ -326,7 +326,7 @@ async fn create_provider(
                 temperature: cfg.temperature,
                 stop_sequences: vec![],
             };
-            let provider = agent_driver_rs::provider::OpenAiProvider::new(cfg)?;
+            let provider = agent_driver::provider::OpenAiProvider::new(cfg)?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
         #[cfg(feature = "bedrock")]
@@ -337,7 +337,7 @@ async fn create_provider(
                 temperature: cfg.temperature,
                 stop_sequences: vec![],
             };
-            let provider = agent_driver_rs::provider::BedrockProvider::new(cfg).await?;
+            let provider = agent_driver::provider::BedrockProvider::new(cfg).await?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
         #[cfg(feature = "openrouter")]
@@ -348,7 +348,7 @@ async fn create_provider(
                 temperature: cfg.temperature,
                 stop_sequences: vec![],
             };
-            let provider = agent_driver_rs::provider::OpenRouterProvider::new(cfg)?;
+            let provider = agent_driver::provider::OpenRouterProvider::new(cfg)?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
         #[cfg(feature = "ollama")]
@@ -359,7 +359,7 @@ async fn create_provider(
                 temperature: cfg.temperature,
                 stop_sequences: vec![],
             };
-            let provider = agent_driver_rs::provider::OllamaProvider::new(cfg)?;
+            let provider = agent_driver::provider::OllamaProvider::new(cfg)?;
             Ok((Arc::new(provider), model_id, completion_config))
         }
         #[allow(
@@ -377,11 +377,11 @@ async fn create_provider(
 #[cfg(feature = "mcp")]
 async fn setup_mcp_connections(
     args: &Args,
-    session: &agent_driver_rs::Session,
+    session: &agent_driver::Session,
 ) -> Result<McpKeepAlive, Box<dyn std::error::Error>> {
-    use agent_driver_rs::tool::McpServerSpec;
+    use agent_driver::tool::McpServerSpec;
 
-    let mut manager = agent_driver_rs::tool::McpManager::new();
+    let mut manager = agent_driver::tool::McpManager::new();
 
     // Collect all stdio specs from CLI --mcp args and --mcp-config file
     let mut stdio_specs = Vec::new();
@@ -437,7 +437,7 @@ async fn setup_mcp_connections(
     // Connect all HTTP servers in parallel
     #[cfg(feature = "mcp-http")]
     if !args.mcp_http_servers.is_empty() {
-        use agent_driver_rs::tool::McpHttpSpec;
+        use agent_driver::tool::McpHttpSpec;
 
         let http_specs: Vec<_> = args
             .mcp_http_servers

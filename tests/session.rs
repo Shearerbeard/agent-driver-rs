@@ -14,11 +14,11 @@ mod tests {
 
     use futures::FutureExt as _;
 
-    use agent_driver_rs::provider::mock::*;
-    use agent_driver_rs::session::SessionBuilder;
-    use agent_driver_rs::streaming::StreamEvent;
-    use agent_driver_rs::tool::{DynTool, FnTool, ToolDefinition, ToolResult, ToolSchema};
-    use agent_driver_rs::types::{Message, ModelId, Role, SystemPrompt, ToolName};
+    use agent_driver::provider::mock::*;
+    use agent_driver::session::SessionBuilder;
+    use agent_driver::streaming::StreamEvent;
+    use agent_driver::tool::{DynTool, FnTool, ToolDefinition, ToolResult, ToolSchema};
+    use agent_driver::types::{Message, ModelId, Role, SystemPrompt, ToolName};
 
     // ---------------------------------------------------------------------------
     // Helpers

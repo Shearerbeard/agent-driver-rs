@@ -3,7 +3,15 @@
 > Last reviewed: 2026-06-21. This is the canonical active roadmap. Historical
 > handoffs such as `docs/next-session.md` are snapshots, not active planning
 > sources. ADR wave details live in [docs/adr/README.md](docs/adr/README.md);
-> longer-range phase mapping lives in [docs/internal/agent-driver-roadmap.md](docs/internal/agent-driver-roadmap.md).
+> longer-range phase mapping lives in the `agent-driver-rs-adr` board of the
+> `aura-session-docs` wiki.
+
+> **External handoff (completed 2026-09-22, not agent-driver-rs work):** the
+> `jev-driver` prototype (sibling repo `/home/shearerbeard/dev/jev-driver`)
+> finished its close-out session: Gate A re-review sign-off, live smoke
+> passed (292ms round-trip), bus-test README/CLAUDE.md/LICENSE, all commits
+> local. Durable record: `NEXT-SESSION.md` in that repo. Future Stage 5 work
+> (ADR-0008) will land here; nothing in the waves below covers it yet.
 
 ---
 

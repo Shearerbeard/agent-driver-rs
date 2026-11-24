@@ -6,7 +6,7 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use agent_driver_rs::{SessionBuilder, otel};
+//! use agent_driver::{SessionBuilder, otel};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,7 +17,7 @@
 //!         .build()
 //!         .await?;
 //!
-//!     let outcome = agent_driver_rs::agent::AgentLoop::new(&session)
+//!     let outcome = agent_driver::agent::AgentLoop::new(&session)
 //!         .run("Search current weather")
 //!         .await?;
 //!

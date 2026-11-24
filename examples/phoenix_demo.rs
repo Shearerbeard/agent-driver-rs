@@ -8,7 +8,7 @@
 //! ```
 
 #[cfg(feature = "phoenix")]
-use agent_driver_rs::SessionBuilder;
+use agent_driver::SessionBuilder;
 #[cfg(feature = "phoenix")]
 use std::sync::Arc;
 
@@ -17,11 +17,11 @@ use std::sync::Arc;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting Phoenix-enabled agent execution...");
 
-    let tracer = agent_driver_rs::otel::init_phoenix().unwrap_or_else(|e| {
+    let tracer = agent_driver::otel::init_phoenix().unwrap_or_else(|e| {
         eprintln!("Warning: Phoenix init failed ({}), using no-op tracer", e);
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::default();
-        agent_driver_rs::otel::init_tracer_provider(Arc::new(provider));
-        Arc::new(agent_driver_rs::otel::get_tracer("agent-driver-rs").unwrap())
+        agent_driver::otel::init_tracer_provider(Arc::new(provider));
+        Arc::new(agent_driver::otel::get_tracer("agent-driver-rs").unwrap())
     });
 
     println!(
@@ -29,9 +29,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("PHOENIX_ENDPOINT").unwrap_or_else(|_| "localhost:4317".into())
     );
 
-    let provider = agent_driver_rs::provider::MockProvider::new(vec![vec![
-        agent_driver_rs::streaming::StreamEvent::Delta(
-            agent_driver_rs::streaming::StreamDelta::TextDelta {
+    let provider = agent_driver::provider::MockProvider::new(vec![vec![
+        agent_driver::streaming::StreamEvent::Delta(
+            agent_driver::streaming::StreamDelta::TextDelta {
                 text: "I can help you find weather information. What city are you interested in?"
                     .into(),
             },
@@ -40,13 +40,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let session = SessionBuilder::new()
         .with_provider(provider)
-        .model(agent_driver_rs::types::ModelId::new("gpt-4").unwrap())
+        .model(agent_driver::types::ModelId::new("gpt-4").unwrap())
         .otel_tracer(tracer)
         .build()
         .await
         .map_err(|e| format!("Failed to build session: {}", e))?;
 
-    let outcome = agent_driver_rs::agent::AgentLoop::new(&session)
+    let outcome = agent_driver::agent::AgentLoop::new(&session)
         .run("What is the weather in San Francisco?")
         .await
         .map_err(|e| format!("Agent loop failed: {}", e))?;
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Session ID: {}", session.session_id());
 
     session.shutdown().await;
-    agent_driver_rs::otel::shutdown_phoenix();
+    agent_driver::otel::shutdown_phoenix();
 
     Ok(())
 }

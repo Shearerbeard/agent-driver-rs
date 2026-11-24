@@ -25,8 +25,8 @@ use crate::types::{CorrelationId, MaxTokens, Message, ModelId, SystemPrompt, Tem
 /// # Example
 ///
 /// ```
-/// use agent_driver_rs::provider::CompletionRequest;
-/// use agent_driver_rs::{ModelId, Message, SystemPrompt};
+/// use agent_driver::provider::CompletionRequest;
+/// use agent_driver::{ModelId, Message, SystemPrompt};
 ///
 /// let request = CompletionRequest::new(
 ///     ModelId::new("claude-sonnet-4").unwrap(),

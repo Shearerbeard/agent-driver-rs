@@ -184,7 +184,9 @@ When proposing a significant architectural change (new subsystem, protocol integ
 ## Task Tracking
 
 - **TODO.md**: Wave-by-wave work items for the library
-- **docs/internal/agent-driver-roadmap.md**: Longer-range phase mapping
+- Longer-range phase mapping lives in the `agent-driver-rs-adr` board of the
+  `aura-session-docs` wiki; internal planning docs are intentionally not
+  tracked in this repo.
 - **docs/adr/README.md**: ADR index with implementation order
 
 **Current Priorities (in order):**

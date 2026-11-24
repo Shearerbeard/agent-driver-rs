@@ -16,14 +16,14 @@ mod tests {
     use futures::FutureExt as _;
     use tokio_util::sync::CancellationToken;
 
-    use agent_driver_rs::agent::{
+    use agent_driver::agent::{
         AgentEvent, AgentLoop, AgentLoopConfig, AgentObserver, LoopStopReason, MaxToolDepth,
     };
-    use agent_driver_rs::error::AgentLoopError;
-    use agent_driver_rs::provider::mock::*;
-    use agent_driver_rs::session::SessionBuilder;
-    use agent_driver_rs::tool::{DynTool, FnTool, ToolDefinition, ToolResult, ToolSchema};
-    use agent_driver_rs::types::{ModelId, ToolName};
+    use agent_driver::error::AgentLoopError;
+    use agent_driver::provider::mock::*;
+    use agent_driver::session::SessionBuilder;
+    use agent_driver::tool::{DynTool, FnTool, ToolDefinition, ToolResult, ToolSchema};
+    use agent_driver::types::{ModelId, ToolName};
 
     // ---------------------------------------------------------------------------
     // Helpers
@@ -73,13 +73,13 @@ mod tests {
     }
 
     /// Extract text content from a tool result message.
-    fn tool_result_text(msg: &agent_driver_rs::types::Message) -> String {
+    fn tool_result_text(msg: &agent_driver::types::Message) -> String {
         msg.content
             .iter()
             .filter_map(|b| {
-                if let agent_driver_rs::types::ContentBlock::ToolResult { content, .. } = b {
+                if let agent_driver::types::ContentBlock::ToolResult { content, .. } = b {
                     match content {
-                        agent_driver_rs::types::ToolResultContent::Text(t) => Some(t.as_str()),
+                        agent_driver::types::ToolResultContent::Text(t) => Some(t.as_str()),
                         _ => None,
                     }
                 } else {
@@ -472,8 +472,8 @@ mod tests {
 
         // Tool results should be in response order: slow first, fast second
         // msgs[2] = tool_result for slow_tool, msgs[3] = tool_result for fast_tool
-        assert_eq!(msgs[2].role, agent_driver_rs::types::Role::Tool);
-        assert_eq!(msgs[3].role, agent_driver_rs::types::Role::Tool);
+        assert_eq!(msgs[2].role, agent_driver::types::Role::Tool);
+        assert_eq!(msgs[3].role, agent_driver::types::Role::Tool);
 
         // Check content of tool results is in response order
         let slow_content = tool_result_text(&msgs[2]);
@@ -621,8 +621,8 @@ mod tests {
         );
 
         // Both tool results should be in history
-        assert_eq!(msgs[2].role, agent_driver_rs::types::Role::Tool);
-        assert_eq!(msgs[3].role, agent_driver_rs::types::Role::Tool);
+        assert_eq!(msgs[2].role, agent_driver::types::Role::Tool);
+        assert_eq!(msgs[3].role, agent_driver::types::Role::Tool);
 
         // Verify error result comes first (response order), success second
         let fail_content = tool_result_text(&msgs[2]);

@@ -11,32 +11,32 @@
 use futures::FutureExt;
 use std::sync::Arc;
 
-use agent_driver_rs::provider::mock::{
+use agent_driver::provider::mock::{
     MockProvider, mock_content_filter_response, mock_mixed_text_tool_response,
     mock_multi_tool_response, mock_text_response, mock_thinking_response, mock_tool_call_response,
 };
-use agent_driver_rs::session::SessionBuilder;
-use agent_driver_rs::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
-use agent_driver_rs::types::ModelId;
-use agent_driver_rs::{agent::AgentLoop, otel};
+use agent_driver::session::SessionBuilder;
+use agent_driver::tool::{FnTool, ToolDefinition, ToolInput, ToolResult, ToolSchema};
+use agent_driver::types::ModelId;
+use agent_driver::{agent::AgentLoop, otel};
 
-fn echo_tool() -> agent_driver_rs::tool::DynTool {
+fn echo_tool() -> agent_driver::tool::DynTool {
     let def = ToolDefinition::new(
-        agent_driver_rs::types::ToolName::new("echo").unwrap(),
+        agent_driver::types::ToolName::new("echo").unwrap(),
         "Echos the input back",
         ToolSchema::empty(),
     );
     Arc::new(FnTool::new(
         def,
-        |_input: &ToolInput, _ctx: &agent_driver_rs::tool::ToolContext| {
+        |_input: &ToolInput, _ctx: &agent_driver::tool::ToolContext| {
             async move { Ok(ToolResult::text("echoed!")) }.boxed()
         },
     ))
 }
 
-fn add_tool() -> agent_driver_rs::tool::DynTool {
+fn add_tool() -> agent_driver::tool::DynTool {
     let def = ToolDefinition::new(
-        agent_driver_rs::types::ToolName::new("add").unwrap(),
+        agent_driver::types::ToolName::new("add").unwrap(),
         "Adds two numbers",
         ToolSchema::new(
             serde_json::from_str(
@@ -54,7 +54,7 @@ fn add_tool() -> agent_driver_rs::tool::DynTool {
     );
     Arc::new(FnTool::new(
         def,
-        |input: &ToolInput, _ctx: &agent_driver_rs::tool::ToolContext| {
+        |input: &ToolInput, _ctx: &agent_driver::tool::ToolContext| {
             let a: f64 = input.get("a").unwrap().as_f64().unwrap();
             let b: f64 = input.get("b").unwrap().as_f64().unwrap();
             async move { Ok(ToolResult::text(&(a + b).to_string())) }.boxed()

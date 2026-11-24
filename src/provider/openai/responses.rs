@@ -12,9 +12,10 @@ use std::pin::Pin;
 use async_openai::types::responses::{
     CreateResponseArgs, EasyInputContent, EasyInputMessage, FunctionCallOutput,
     FunctionCallOutputItemParam, FunctionTool, FunctionToolCall, IncludeEnum, InputItem,
-    InputParam, Item, MessageType, OutputItem, Reasoning, ReasoningEffort as SdkReasoningEffort,
-    ReasoningItem, ReasoningSummary as SdkReasoningSummary, ResponseStreamEvent, ResponseUsage,
-    Role, Status, Tool,
+    InputParam, Item, MessageType, OutputItem, OutputMessageContent, Reasoning,
+    ReasoningEffort as SdkReasoningEffort, ReasoningItem, ReasoningItemContent,
+    ReasoningSummary as SdkReasoningSummary, ResponseStreamEvent, ResponseUsage, Role, Status,
+    SummaryPart, Tool,
 };
 
 use crate::config::{ReasoningEffort, ReasoningSummary};
@@ -119,6 +120,12 @@ impl OpenAiProvider {
         &self,
         request: &CompletionRequest,
     ) -> Result<async_openai::types::responses::CreateResponse, ProviderError> {
+        if !request.config.stop_sequences.is_empty() {
+            return Err(ProviderError::InvalidRequest {
+                provider: crate::provider::ProviderKind::OpenAi,
+                message: "Responses does not support stop sequences".into(),
+            });
+        }
         let mut builder = CreateResponseArgs::default();
         builder
             .model(self.profile.model_id())
@@ -340,13 +347,37 @@ fn to_sdk_reasoning(config: &crate::config::ReasoningConfig) -> Reasoning {
     }
 }
 
+/// Reported reason why a Responses stream ended incomplete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IncompleteReason {
+    /// `max_output_tokens` bound was reached.
+    MaxTokens,
+    /// `content_filter` stopped generation.
+    ContentFilter,
+}
+
+impl IncompleteReason {
+    /// Parse the provider's incomplete-reason string.
+    ///
+    /// Returns `None` for unknown or unsupported reasons so the caller
+    /// can turn the stream into a typed error rather than defaulting to
+    /// token exhaustion.
+    fn from_reason(reason: &str) -> Option<Self> {
+        match reason {
+            "max_output_tokens" => Some(Self::MaxTokens),
+            "content_filter" => Some(Self::ContentFilter),
+            _ => None,
+        }
+    }
+}
+
 /// Terminal status of a Responses stream.
 ///
-/// PR 1 only distinguishes "saw a real success terminal" from
-/// everything else; reason classification (incomplete causes) belongs to
-/// PR 2. Failure is absorbing: once a failure is recorded, a later
-/// `response.completed`/`response.incomplete` cannot turn it into a
-/// success.
+/// All terminal variants are absorbing: once the parser leaves
+/// [`Active`], no later event may change the status. This includes
+/// successful terminals (`SawCompleted`, `SawIncomplete`) and
+/// [`Cancelled`]; a failure after any terminal is dropped rather than
+/// overwriting it.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum TerminalStatus {
     /// No terminal event seen yet.
@@ -358,19 +389,23 @@ enum TerminalStatus {
     SawIncomplete,
     /// A failure was recorded; a later success cannot override it.
     Failed,
+    /// The response was cancelled by the provider.
+    Cancelled,
 }
 
 impl TerminalStatus {
-    /// Record a successful terminal, unless a failure already stuck.
+    /// Record a successful terminal. Only transitions from [`Active`].
     fn succeed(&mut self, status: Self) {
-        if *self != Self::Failed {
+        if *self == Self::Active {
             *self = status;
         }
     }
 
-    /// Record a failure; failure is absorbing.
+    /// Record a failure. Only transitions from [`Active`].
     fn fail(&mut self) {
-        *self = Self::Failed;
+        if *self == Self::Active {
+            *self = Self::Failed;
+        }
     }
 }
 
@@ -391,18 +426,30 @@ struct ResponsesStreamState {
     /// When set, the EOF callback stays silent so a failure or SDK
     /// transport error yields exactly one error on the wire.
     terminal_error_surfaced: bool,
+    /// Whether any live content delta was forwarded. An empty terminal
+    /// `response.output` is only valid when no content appeared earlier.
+    saw_live_content: bool,
+}
+
+impl ResponsesStreamState {
+    /// Mark that live content has appeared on the stream.
+    fn record_live_content(&mut self) {
+        self.saw_live_content = true;
+    }
 }
 
 /// Parse one Responses stream event into driver stream events.
 ///
-/// Once the stream has failed, every later event is dropped: a failure
-/// is absorbing, so no content, no successful terminal, and no second
-/// error can follow it.
+/// Every terminal is absorbing: once the parser leaves
+/// [`TerminalStatus::Active`] (a successful `SawCompleted`/`SawIncomplete`,
+/// a `Cancelled`, or a `Failed`), all later events are dropped. A failure
+/// cannot be followed by content or a successful terminal, and a success
+/// or cancellation cannot be overwritten by a later error.
 fn parse_responses_event(
     event: ResponseStreamEvent,
     state: &mut ResponsesStreamState,
 ) -> Vec<Result<StreamEvent, StreamError>> {
-    if state.terminal == TerminalStatus::Failed {
+    if state.terminal != TerminalStatus::Active {
         return Vec::new();
     }
 
@@ -422,7 +469,7 @@ fn parse_responses_event(
                 }));
             }
         }
-        ResponseStreamEvent::ResponseOutputItemAdded(added) => match added.item {
+        ResponseStreamEvent::ResponseOutputItemAdded(added) => match &added.item {
             OutputItem::Message(_) => {
                 events.push(Ok(StreamEvent::ContentBlockStart {
                     index: added.output_index as usize,
@@ -467,20 +514,241 @@ fn parse_responses_event(
                     index: added.output_index as usize,
                     block_type: ContentBlockType::ToolUse,
                 }));
+                state.record_live_content();
                 events.push(Ok(StreamEvent::Delta(StreamDelta::ToolUseStart {
                     id,
                     name,
                 })));
             }
             // Reasoning items stream their summaries through the
-            // dedicated delta events; hosted tool calls (web/file
-            // search, code interpreter, MCP, image gen, computer use,
-            // shell, compaction) are out of scope: the driver only
-            // registers client-side function tools today. Ignoring
-            // their items keeps unknown hosted-tool streams from
-            // erroring the whole response.
-            OutputItem::Reasoning(_)
-            | OutputItem::FileSearchCall(_)
+            // dedicated delta events. Every other item type is a hosted
+            // tool the driver cannot replay, so fail loud rather than
+            // silently dropping content the terminal array will carry.
+            OutputItem::Reasoning(_) => {}
+            OutputItem::FileSearchCall(_)
+            | OutputItem::FunctionCallOutput(_)
+            | OutputItem::WebSearchCall(_)
+            | OutputItem::ComputerCall(_)
+            | OutputItem::ComputerCallOutput(_)
+            | OutputItem::Compaction(_)
+            | OutputItem::ImageGenerationCall(_)
+            | OutputItem::CodeInterpreterCall(_)
+            | OutputItem::LocalShellCall(_)
+            | OutputItem::ShellCall(_)
+            | OutputItem::ShellCallOutput(_)
+            | OutputItem::ApplyPatchCall(_)
+            | OutputItem::ApplyPatchCallOutput(_)
+            | OutputItem::McpCall(_)
+            | OutputItem::McpListTools(_)
+            | OutputItem::McpApprovalRequest(_)
+            | OutputItem::CustomToolCall(_)
+            | OutputItem::CustomToolCallOutput(_)
+            | OutputItem::ToolSearchCall(_)
+            | OutputItem::ToolSearchOutput(_) => {
+                fail_stream(
+                    StreamError::Deserialize {
+                        message: format!(
+                            "unsupported Responses output item: {}",
+                            output_item_kind(&added.item)
+                        ),
+                        raw_data: None,
+                    },
+                    state,
+                    &mut events,
+                );
+                return events;
+            }
+        },
+        ResponseStreamEvent::ResponseOutputTextDelta(delta) => {
+            if !delta.delta.is_empty() {
+                state.record_live_content();
+                events.push(Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                    text: delta.delta,
+                })));
+            }
+        }
+        // Summary deltas (summarized reasoning) and reasoning-text
+        // deltas (raw chain of thought, newer reasoning models) both
+        // map to the driver's ThinkingDelta channel.
+        ResponseStreamEvent::ResponseReasoningSummaryTextDelta(delta) => {
+            if !delta.delta.is_empty() {
+                state.record_live_content();
+            }
+            push_thinking_delta(delta.delta, &mut events);
+        }
+        ResponseStreamEvent::ResponseReasoningTextDelta(delta) => {
+            if !delta.delta.is_empty() {
+                state.record_live_content();
+            }
+            push_thinking_delta(delta.delta, &mut events);
+        }
+        ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(delta) => {
+            if !delta.delta.is_empty() {
+                state.record_live_content();
+                let Some(id) = state.tool_items.get(&delta.item_id) else {
+                    fail_stream(
+                        StreamError::Deserialize {
+                            message: format!(
+                                "function-call argument delta references unknown item_id {}",
+                                delta.item_id
+                            ),
+                            raw_data: None,
+                        },
+                        state,
+                        &mut events,
+                    );
+                    return events;
+                };
+                events.push(Ok(StreamEvent::Delta(StreamDelta::ToolInputDelta {
+                    id: ToolCallId::new(id.as_str()),
+                    partial_json: delta.delta,
+                })));
+            }
+        }
+        // Refusals are answer-channel content: surface them as text so
+        // a safety refusal is visible instead of an empty turn.
+        ResponseStreamEvent::ResponseRefusalDelta(delta) => {
+            if !delta.delta.is_empty() {
+                state.record_live_content();
+                events.push(Ok(StreamEvent::Delta(StreamDelta::TextDelta {
+                    text: delta.delta,
+                })));
+            }
+        }
+        // The done event duplicates the streamed refusal text.
+        ResponseStreamEvent::ResponseRefusalDone(_) => {}
+        ResponseStreamEvent::ResponseCompleted(completed) => {
+            state.usage = completed.response.usage.map(to_token_usage);
+            match &completed.response.status {
+                // A cancelled completion is a terminal cancellation, not a
+                // successful turn, and emits no terminal blocks.
+                Status::Cancelled => state.terminal.succeed(TerminalStatus::Cancelled),
+                // `response.completed` must carry `completed`. Any other
+                // status is a protocol contradiction and fails loud before
+                // any terminal block is emitted, so a failed or unfinished
+                // response can never be reported as a successful turn.
+                Status::Completed => {
+                    if completed.response.output.is_empty() && state.saw_live_content {
+                        fail_stream(
+                            StreamError::Deserialize {
+                                message:
+                                    "response.completed reported empty output after live content deltas"
+                                        .to_owned(),
+                                raw_data: None,
+                            },
+                            state,
+                            &mut events,
+                        );
+                    } else {
+                        state.stop_reason = Some(completed_stop_reason(&completed.response.output));
+                        emit_terminal_blocks(&completed.response.output, state, &mut events);
+                        state.terminal.succeed(TerminalStatus::SawCompleted);
+                    }
+                }
+                Status::Failed | Status::InProgress | Status::Queued | Status::Incomplete => {
+                    fail_stream(
+                        StreamError::Deserialize {
+                            message: format!(
+                                "response.completed carried unexpected status {:?}",
+                                completed.response.status
+                            ),
+                            raw_data: None,
+                        },
+                        state,
+                        &mut events,
+                    );
+                }
+            }
+        }
+        ResponseStreamEvent::ResponseIncomplete(incomplete) => {
+            state.usage = incomplete.response.usage.map(to_token_usage);
+            if incomplete.response.status != Status::Incomplete {
+                fail_stream(
+                    StreamError::Deserialize {
+                        message: format!(
+                            "response.incomplete carried unexpected status {:?}",
+                            incomplete.response.status
+                        ),
+                        raw_data: None,
+                    },
+                    state,
+                    &mut events,
+                );
+            } else if incomplete.response.output.is_empty() && state.saw_live_content {
+                fail_stream(
+                    StreamError::Deserialize {
+                        message:
+                            "response.incomplete reported empty output after live content deltas"
+                                .to_owned(),
+                        raw_data: None,
+                    },
+                    state,
+                    &mut events,
+                );
+            } else {
+                let raw_reason = incomplete
+                    .response
+                    .incomplete_details
+                    .as_ref()
+                    .map(|d| d.reason.as_str());
+                match raw_reason.and_then(IncompleteReason::from_reason) {
+                    Some(r) => {
+                        state.stop_reason = Some(match r {
+                            IncompleteReason::MaxTokens => StopReason::MaxTokens,
+                            IncompleteReason::ContentFilter => StopReason::ContentFilter,
+                        });
+                        emit_terminal_blocks(&incomplete.response.output, state, &mut events);
+                        state.terminal.succeed(TerminalStatus::SawIncomplete);
+                    }
+                    None => fail_stream(
+                        StreamError::Deserialize {
+                            message: format!(
+                                "unsupported or missing response.incomplete reason: {raw_reason:?}"
+                            ),
+                            raw_data: None,
+                        },
+                        state,
+                        &mut events,
+                    ),
+                }
+            }
+        }
+        ResponseStreamEvent::ResponseFailed(failed) => {
+            let message = failed
+                .response
+                .error
+                .as_ref()
+                .map(|e| e.message.clone())
+                .unwrap_or_else(|| "responses stream failed".to_owned());
+            record_terminal_failure(message, state, &mut events);
+        }
+        // A completed reasoning item carries the encrypted payload the
+        // request asked for; without id or encrypted content (include
+        // not requested) there is nothing replayable to emit.
+        ResponseStreamEvent::ResponseOutputItemDone(done) => match &done.item {
+            OutputItem::Reasoning(item) => {
+                if let (Some(id), Some(encrypted)) =
+                    (item.id.clone(), item.encrypted_content.clone())
+                {
+                    state.record_live_content();
+                    events.push(Ok(StreamEvent::Delta(StreamDelta::ReasoningItemDelta {
+                        id,
+                        encrypted,
+                    })));
+                }
+            }
+            // Text and tool items opened a `ContentBlockStart`; close it
+            // at the matching item boundary so the live lifecycle is
+            // balanced even before the terminal complete blocks arrive.
+            OutputItem::Message(_) | OutputItem::FunctionCall(_) => {
+                events.push(Ok(StreamEvent::ContentBlockStop {
+                    index: done.output_index as usize,
+                }));
+            }
+            // Hosted items fail at `response.output_item.added`, so their
+            // done events are unreachable; the arm keeps the match
+            // exhaustive without a wildcard.
+            OutputItem::FileSearchCall(_)
             | OutputItem::FunctionCallOutput(_)
             | OutputItem::WebSearchCall(_)
             | OutputItem::ComputerCall(_)
@@ -501,96 +769,33 @@ fn parse_responses_event(
             | OutputItem::ToolSearchCall(_)
             | OutputItem::ToolSearchOutput(_) => {}
         },
-        ResponseStreamEvent::ResponseOutputTextDelta(delta) => {
-            if !delta.delta.is_empty() {
-                events.push(Ok(StreamEvent::Delta(StreamDelta::TextDelta {
-                    text: delta.delta,
-                })));
-            }
+        // Reasoning summary parts bracket the live thinking deltas, so
+        // the direct stream sees a balanced thinking lifecycle.
+        ResponseStreamEvent::ResponseReasoningSummaryPartAdded(added) => {
+            events.push(Ok(StreamEvent::ContentBlockStart {
+                index: added.output_index as usize,
+                block_type: ContentBlockType::Thinking,
+            }));
         }
-        // Summary deltas (summarized reasoning) and reasoning-text
-        // deltas (raw chain of thought, newer reasoning models) both
-        // map to the driver's ThinkingDelta channel.
-        ResponseStreamEvent::ResponseReasoningSummaryTextDelta(delta) => {
-            push_thinking_delta(delta.delta, &mut events);
-        }
-        ResponseStreamEvent::ResponseReasoningTextDelta(delta) => {
-            push_thinking_delta(delta.delta, &mut events);
-        }
-        ResponseStreamEvent::ResponseFunctionCallArgumentsDelta(delta) => {
-            if !delta.delta.is_empty() {
-                if let Some(id) = state.tool_items.get(&delta.item_id) {
-                    events.push(Ok(StreamEvent::Delta(StreamDelta::ToolInputDelta {
-                        id: ToolCallId::new(id.as_str()),
-                        partial_json: delta.delta,
-                    })));
-                }
-            }
-        }
-        // Refusals are answer-channel content: surface them as text so
-        // a safety refusal is visible instead of an empty turn.
-        ResponseStreamEvent::ResponseRefusalDelta(delta) => {
-            if !delta.delta.is_empty() {
-                events.push(Ok(StreamEvent::Delta(StreamDelta::TextDelta {
-                    text: delta.delta,
-                })));
-            }
-        }
-        // The done event duplicates the streamed refusal text.
-        ResponseStreamEvent::ResponseRefusalDone(_) => {}
-        ResponseStreamEvent::ResponseCompleted(completed) => {
-            state.usage = completed.response.usage.map(to_token_usage);
-            state.stop_reason = Some(stop_reason_for(
-                &completed.response.output,
-                completed.response.status,
-            ));
-            state.terminal.succeed(TerminalStatus::SawCompleted);
-        }
-        ResponseStreamEvent::ResponseIncomplete(incomplete) => {
-            state.usage = incomplete.response.usage.map(to_token_usage);
-            state.stop_reason = Some(StopReason::MaxTokens);
-            // PR 1 treats a valid incomplete as a success terminal; PR 2
-            // classifies the reported reason and rejects unknown ones.
-            state.terminal.succeed(TerminalStatus::SawIncomplete);
-        }
-        ResponseStreamEvent::ResponseFailed(failed) => {
-            let message = failed
-                .response
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_else(|| "responses stream failed".to_owned());
-            record_terminal_failure(message, state, &mut events);
-        }
-        // A completed reasoning item carries the encrypted payload the
-        // request asked for; without id or encrypted content (include
-        // not requested) there is nothing replayable to emit.
-        ResponseStreamEvent::ResponseOutputItemDone(done) => {
-            if let OutputItem::Reasoning(item) = done.item {
-                if let (Some(id), Some(encrypted)) = (item.id, item.encrypted_content) {
-                    events.push(Ok(StreamEvent::Delta(StreamDelta::ReasoningItemDelta {
-                        id,
-                        encrypted,
-                    })));
-                }
-            }
+        ResponseStreamEvent::ResponseReasoningSummaryPartDone(done) => {
+            events.push(Ok(StreamEvent::ContentBlockStop {
+                index: done.output_index as usize,
+            }));
         }
         // Terminal bookkeeping events without driver-facing payloads.
         ResponseStreamEvent::ResponseContentPartAdded(_)
         | ResponseStreamEvent::ResponseContentPartDone(_)
         | ResponseStreamEvent::ResponseOutputTextDone(_)
         | ResponseStreamEvent::ResponseFunctionCallArgumentsDone(_)
-        | ResponseStreamEvent::ResponseReasoningSummaryPartAdded(_)
-        | ResponseStreamEvent::ResponseReasoningSummaryPartDone(_)
         | ResponseStreamEvent::ResponseReasoningSummaryTextDone(_)
         | ResponseStreamEvent::ResponseReasoningTextDone(_) => {}
         // Lifecycle noise that carries no content for this surface.
         ResponseStreamEvent::ResponseInProgress(_) | ResponseStreamEvent::ResponseQueued(_) => {}
-        // Hosted tool-call streams (web/file search, code interpreter,
-        // MCP, image gen, computer use, shell, custom tools) are out of
-        // scope for the driver's client-side function tools; ignoring
-        // their events keeps an unexpected hosted-tool response from
-        // erroring the whole stream.
+        // Hosted tool-call progress events (web/file search, code
+        // interpreter, MCP, image gen, computer use, shell, custom tools)
+        // carry no payload for this surface. The hosted output items
+        // themselves are rejected loudly at item add and in the terminal
+        // walk, so these progress events are inert here.
         ResponseStreamEvent::ResponseFileSearchCallInProgress(_)
         | ResponseStreamEvent::ResponseFileSearchCallSearching(_)
         | ResponseStreamEvent::ResponseFileSearchCallCompleted(_)
@@ -635,6 +840,206 @@ fn push_thinking_delta(thinking: String, events: &mut Vec<Result<StreamEvent, St
     }
 }
 
+/// Provider-reported type tag for an output item, used in error messages.
+const fn output_item_kind(item: &OutputItem) -> &'static str {
+    match item {
+        OutputItem::Message(_) => "message",
+        OutputItem::FunctionCall(_) => "function_call",
+        OutputItem::Reasoning(_) => "reasoning",
+        OutputItem::FileSearchCall(_) => "file_search_call",
+        OutputItem::FunctionCallOutput(_) => "function_call_output",
+        OutputItem::WebSearchCall(_) => "web_search_call",
+        OutputItem::ComputerCall(_) => "computer_call",
+        OutputItem::ComputerCallOutput(_) => "computer_call_output",
+        OutputItem::Compaction(_) => "compaction",
+        OutputItem::ImageGenerationCall(_) => "image_generation_call",
+        OutputItem::CodeInterpreterCall(_) => "code_interpreter_call",
+        OutputItem::LocalShellCall(_) => "local_shell_call",
+        OutputItem::ShellCall(_) => "shell_call",
+        OutputItem::ShellCallOutput(_) => "shell_call_output",
+        OutputItem::ApplyPatchCall(_) => "apply_patch_call",
+        OutputItem::ApplyPatchCallOutput(_) => "apply_patch_call_output",
+        OutputItem::McpCall(_) => "mcp_call",
+        OutputItem::McpListTools(_) => "mcp_list_tools",
+        OutputItem::McpApprovalRequest(_) => "mcp_approval_request",
+        OutputItem::CustomToolCall(_) => "custom_tool_call",
+        OutputItem::CustomToolCallOutput(_) => "custom_tool_call_output",
+        OutputItem::ToolSearchCall(_) => "tool_search_call",
+        OutputItem::ToolSearchOutput(_) => "tool_search_output",
+    }
+}
+
+/// Convert one terminal `response.output` item into the ordered complete
+/// blocks the driver can represent.
+///
+/// Summary and raw reasoning text both map to thinking blocks, mirroring
+/// the live `ThinkingDelta` channel; the encrypted payload is the
+/// replayable reasoning block. Returns an error message for unsupported
+/// hosted items or malformed function-call arguments so the caller fails
+/// the stream instead of dropping or empty-filling content.
+fn output_item_blocks(item: &OutputItem) -> Result<Vec<ContentBlock>, String> {
+    let mut blocks = Vec::new();
+    match item {
+        OutputItem::Message(message) => {
+            for part in &message.content {
+                match part {
+                    OutputMessageContent::OutputText(text) if !text.text.is_empty() => {
+                        blocks.push(ContentBlock::Text {
+                            text: text.text.clone(),
+                        });
+                    }
+                    OutputMessageContent::Refusal(refusal) if !refusal.refusal.is_empty() => {
+                        blocks.push(ContentBlock::Text {
+                            text: refusal.refusal.clone(),
+                        });
+                    }
+                    OutputMessageContent::OutputText(_) | OutputMessageContent::Refusal(_) => {}
+                }
+            }
+        }
+        OutputItem::Reasoning(reasoning) => {
+            for part in &reasoning.summary {
+                let SummaryPart::SummaryText(text) = part;
+                if !text.text.is_empty() {
+                    blocks.push(ContentBlock::Thinking {
+                        text: text.text.clone(),
+                    });
+                }
+            }
+            if let Some(content) = &reasoning.content {
+                for part in content {
+                    let ReasoningItemContent::ReasoningText(text) = part;
+                    if !text.text.is_empty() {
+                        blocks.push(ContentBlock::Thinking {
+                            text: text.text.clone(),
+                        });
+                    }
+                }
+            }
+            match (&reasoning.id, &reasoning.encrypted_content) {
+                // Replayable reasoning must carry both a usable id and the
+                // encrypted payload.
+                (Some(id), Some(encrypted)) if !id.is_empty() && !encrypted.is_empty() => {
+                    blocks.push(ContentBlock::EncryptedReasoning {
+                        id: id.clone(),
+                        encrypted: encrypted.clone(),
+                    });
+                }
+                // Encrypted content without a usable id would be dropped,
+                // silently breaking multi-turn replay; fail loud instead.
+                (_, Some(encrypted)) if !encrypted.is_empty() => {
+                    return Err(
+                        "reasoning item carried encrypted content without a usable id".to_owned(),
+                    );
+                }
+                // No encrypted payload present (include not requested):
+                // absence is allowed.
+                _ => {}
+            }
+        }
+        OutputItem::FunctionCall(call) => {
+            let name = ToolName::new(&call.name)
+                .map_err(|e| format!("invalid OpenAI tool name {:?}: {e}", call.name))?;
+            let input: serde_json::Value = serde_json::from_str(&call.arguments).map_err(|e| {
+                format!(
+                    "function call {} carried invalid JSON arguments: {e}",
+                    call.call_id
+                )
+            })?;
+            blocks.push(ContentBlock::ToolUse {
+                id: ToolCallId::new(&call.call_id),
+                name,
+                input,
+            });
+        }
+        OutputItem::FileSearchCall(_)
+        | OutputItem::FunctionCallOutput(_)
+        | OutputItem::WebSearchCall(_)
+        | OutputItem::ComputerCall(_)
+        | OutputItem::ComputerCallOutput(_)
+        | OutputItem::Compaction(_)
+        | OutputItem::ImageGenerationCall(_)
+        | OutputItem::CodeInterpreterCall(_)
+        | OutputItem::LocalShellCall(_)
+        | OutputItem::ShellCall(_)
+        | OutputItem::ShellCallOutput(_)
+        | OutputItem::ApplyPatchCall(_)
+        | OutputItem::ApplyPatchCallOutput(_)
+        | OutputItem::McpCall(_)
+        | OutputItem::McpListTools(_)
+        | OutputItem::McpApprovalRequest(_)
+        | OutputItem::CustomToolCall(_)
+        | OutputItem::CustomToolCallOutput(_)
+        | OutputItem::ToolSearchCall(_)
+        | OutputItem::ToolSearchOutput(_) => {
+            return Err(format!(
+                "unsupported Responses output item: {}",
+                output_item_kind(item)
+            ));
+        }
+    }
+    Ok(blocks)
+}
+
+/// Validate and flatten a whole terminal `response.output` array into
+/// complete blocks in provider order.
+///
+/// Validation is atomic: an unsupported or malformed item fails the whole
+/// walk before any `BlockComplete` is emitted, so a partial authoritative
+/// array never reaches a collector.
+fn terminal_blocks(output: &[OutputItem]) -> Result<Vec<ContentBlock>, String> {
+    let mut blocks = Vec::new();
+    for item in output {
+        blocks.extend(output_item_blocks(item)?);
+    }
+    Ok(blocks)
+}
+
+/// Emit one `BlockComplete` per representable terminal block, with
+/// consecutive zero-based ordinals.
+///
+/// The walk is atomic: [`terminal_blocks`] validates and flattens the whole
+/// array before any `BlockComplete` is emitted, so a partial authoritative
+/// sequence never reaches a collector.
+///
+/// A terminal array yielding no representable blocks is a contradiction
+/// when live content already streamed: the collector would otherwise keep
+/// its provisional buffers and report a successful completion whose content
+/// the provider never confirmed. That fails the stream through
+/// [`fail_stream`] instead. With no live content it is a genuine empty
+/// completion and stays silent (the spec forbids a dummy block).
+fn emit_terminal_blocks(
+    output: &[OutputItem],
+    state: &mut ResponsesStreamState,
+    events: &mut Vec<Result<StreamEvent, StreamError>>,
+) {
+    match terminal_blocks(output) {
+        Ok(blocks) if blocks.is_empty() && state.saw_live_content => fail_stream(
+            StreamError::Deserialize {
+                message:
+                    "response.output produced no representable blocks after live content deltas"
+                        .to_owned(),
+                raw_data: None,
+            },
+            state,
+            events,
+        ),
+        Ok(blocks) => {
+            for (index, block) in blocks.into_iter().enumerate() {
+                events.push(Ok(StreamEvent::BlockComplete { index, block }));
+            }
+        }
+        Err(message) => fail_stream(
+            StreamError::Deserialize {
+                message,
+                raw_data: None,
+            },
+            state,
+            events,
+        ),
+    }
+}
+
 /// Mark the stream failed and surface at most one terminal error.
 ///
 /// Failure is absorbing: the status becomes [`TerminalStatus::Failed`]
@@ -645,11 +1050,12 @@ fn fail_stream(
     state: &mut ResponsesStreamState,
     events: &mut Vec<Result<StreamEvent, StreamError>>,
 ) {
-    state.terminal.fail();
-    if !state.terminal_error_surfaced {
-        state.terminal_error_surfaced = true;
-        events.push(Err(error));
+    if state.terminal != TerminalStatus::Active {
+        return;
     }
+    state.terminal.fail();
+    state.terminal_error_surfaced = true;
+    events.push(Err(error));
 }
 
 /// Record a `response.failed`/`response.error` terminal failure.
@@ -700,6 +1106,7 @@ fn responses_terminal_event(
                 },
             }))
         }
+        TerminalStatus::Cancelled => Some(Err(StreamError::Cancelled)),
         TerminalStatus::Failed => {
             if state.terminal_error_surfaced {
                 None
@@ -718,24 +1125,20 @@ fn responses_terminal_event(
     }
 }
 
-fn stop_reason_for(output: &[OutputItem], status: Status) -> StopReason {
-    match status {
-        Status::Completed => {
-            if output
-                .iter()
-                .any(|item| matches!(item, OutputItem::FunctionCall(_)))
-            {
-                StopReason::ToolUse
-            } else {
-                StopReason::EndTurn
-            }
-        }
-        // Incomplete always means a bound (today: max_output_tokens)
-        // cut the response short.
-        Status::Incomplete => StopReason::MaxTokens,
-        Status::Failed | Status::Cancelled | Status::Queued | Status::InProgress => {
-            StopReason::EndTurn
-        }
+/// Stop reason for a validated `completed` response: tool use when the
+/// terminal output carries a function call, end of turn otherwise.
+///
+/// Incomplete responses derive their stop reason from the reported
+/// incomplete reason, and every other status fails loud before reaching
+/// here, so no status fallback is needed.
+fn completed_stop_reason(output: &[OutputItem]) -> StopReason {
+    if output
+        .iter()
+        .any(|item| matches!(item, OutputItem::FunctionCall(_)))
+    {
+        StopReason::ToolUse
+    } else {
+        StopReason::EndTurn
     }
 }
 
@@ -750,6 +1153,305 @@ fn to_token_usage(usage: ResponseUsage) -> TokenUsage {
 mod tests {
     use super::*;
     use crate::types::Message;
+
+    /// Recording observer that captures only the live text and thinking
+    /// deltas the agent collector forwards.
+    #[derive(Default)]
+    struct RecordingObserver {
+        observed: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::agent::AgentObserver for RecordingObserver {
+        async fn on_event(&self, event: &crate::agent::AgentEvent) {
+            use crate::agent::AgentEvent;
+            let tag = match event {
+                AgentEvent::TextDelta { text } => format!("text:{text}"),
+                AgentEvent::ThinkingDelta { thinking } => format!("thinking:{thinking}"),
+                AgentEvent::IterationStart { .. }
+                | AgentEvent::ToolCallStart { .. }
+                | AgentEvent::ToolCallComplete { .. }
+                | AgentEvent::IterationComplete { .. }
+                | AgentEvent::LoopComplete { .. } => return,
+            };
+            self.observed
+                .lock()
+                .expect("observer mutex poisoned")
+                .push(tag);
+        }
+    }
+
+    /// Build a `StreamHandle` from Responses wire events using the real
+    /// adapter, parser, and terminal callback.
+    fn responses_handle(
+        inner_items: Vec<Result<ResponseStreamEvent, StreamError>>,
+    ) -> StreamHandle {
+        let inner = futures::stream::iter(inner_items);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let stream = crate::provider::stream_adapter::buffered_sdk_stream(
+            inner,
+            cancel.clone(),
+            ResponsesStreamState::default(),
+            |item, state| match item {
+                Ok(event) => parse_responses_event(event, state),
+                Err(e) => {
+                    let mut events = Vec::new();
+                    fail_stream(e, state, &mut events);
+                    events
+                }
+            },
+            responses_terminal_event,
+        );
+        StreamHandle::new(
+            Box::pin(stream),
+            cancel,
+            crate::types::CorrelationId::generate(),
+        )
+    }
+
+    fn delta_signature(delta: &StreamDelta) -> String {
+        match delta {
+            StreamDelta::TextDelta { text } => format!("text:{text:?}"),
+            StreamDelta::ThinkingDelta { thinking } => format!("thinking:{thinking:?}"),
+            StreamDelta::SignatureDelta { signature } => format!("signature:{signature:?}"),
+            StreamDelta::ReasoningItemDelta { id, encrypted } => {
+                format!("reasoning:{id}:{encrypted}")
+            }
+            StreamDelta::ToolUseStart { id, name } => {
+                format!("tool_start:{}:{}", id.as_str(), name.as_str())
+            }
+            StreamDelta::ToolInputDelta { id, partial_json } => {
+                format!("tool_input:{}:{partial_json}", id.as_str())
+            }
+        }
+    }
+
+    fn block_signature(block: &ContentBlock) -> String {
+        match block {
+            ContentBlock::Text { text } => format!("text:{text:?}"),
+            ContentBlock::Thinking { text } => format!("thinking:{text:?}"),
+            ContentBlock::EncryptedReasoning { id, encrypted } => {
+                format!("encrypted:{id}:{encrypted}")
+            }
+            ContentBlock::ToolUse { id, name, input } => {
+                format!("tool:{}:{}:{input}", id.as_str(), name.as_str())
+            }
+            ContentBlock::ToolResult { .. } => "tool_result".to_owned(),
+        }
+    }
+
+    fn event_signature(event: &Result<StreamEvent, StreamError>) -> String {
+        match event {
+            Err(StreamError::Cancelled) => "error:cancelled".to_owned(),
+            Err(StreamError::ConnectionLost { message, .. }) => {
+                format!("error:connection:{message}")
+            }
+            Err(StreamError::Deserialize { message, .. }) => format!("error:deserialize:{message}"),
+            Ok(StreamEvent::Started { metadata }) => {
+                format!("started:{:?}", metadata.model.as_ref().map(ModelId::as_str))
+            }
+            Ok(StreamEvent::ContentBlockStart { index, block_type }) => {
+                format!("start:{index}:{block_type:?}")
+            }
+            Ok(StreamEvent::Delta(delta)) => format!("delta:{}", delta_signature(delta)),
+            Ok(StreamEvent::ContentBlockStop { index }) => format!("stop:{index}"),
+            Ok(StreamEvent::BlockComplete { index, block }) => {
+                format!("block:{index}:{}", block_signature(block))
+            }
+            Ok(StreamEvent::Completed { metadata }) => format!(
+                "completed:{:?}:{:?}",
+                metadata.stop_reason,
+                metadata.usage.map(|u| (u.input_tokens, u.output_tokens))
+            ),
+            Ok(StreamEvent::Error { error }) => format!("error:{error:?}"),
+        }
+    }
+
+    fn reasoning_item_json() -> serde_json::Value {
+        serde_json::json!({
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{ "type": "summary_text", "text": "Weigh options." }],
+            "encrypted_content": "ENC",
+            "status": "completed"
+        })
+    }
+
+    fn message_item_json() -> serde_json::Value {
+        serde_json::json!({
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+                { "type": "output_text", "text": "Answer: done.", "annotations": [] }
+            ]
+        })
+    }
+
+    fn function_call_item_json(
+        call_id: &str,
+        id: &str,
+        name: &str,
+        arguments: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "type": "function_call",
+            "call_id": call_id,
+            "name": name,
+            "arguments": arguments,
+            "id": id,
+            "status": "completed"
+        })
+    }
+
+    fn item_added_event(
+        sequence: u64,
+        output_index: u32,
+        item: serde_json::Value,
+    ) -> ResponseStreamEvent {
+        stream_event(serde_json::json!({
+            "type": "response.output_item.added",
+            "sequence_number": sequence,
+            "output_index": output_index,
+            "item": item
+        }))
+    }
+
+    fn item_done_event(
+        sequence: u64,
+        output_index: u32,
+        item: serde_json::Value,
+    ) -> ResponseStreamEvent {
+        stream_event(serde_json::json!({
+            "type": "response.output_item.done",
+            "sequence_number": sequence,
+            "output_index": output_index,
+            "item": item
+        }))
+    }
+
+    /// The complete spec fixture: encrypted reasoning, then answer text,
+    /// then two function calls whose argument deltas interleave.
+    fn complete_response_fixture() -> Vec<ResponseStreamEvent> {
+        vec![
+            created_event(),
+            item_added_event(2, 0, reasoning_item_json()),
+            stream_event(serde_json::json!({
+                "type": "response.reasoning_summary_part.added",
+                "sequence_number": 3,
+                "item_id": "rs_1",
+                "output_index": 0,
+                "summary_index": 0,
+                "part": { "type": "summary_text", "text": "" }
+            })),
+            stream_event(serde_json::json!({
+                "type": "response.reasoning_summary_text.delta",
+                "sequence_number": 4,
+                "item_id": "rs_1",
+                "output_index": 0,
+                "summary_index": 0,
+                "delta": "Weigh options."
+            })),
+            stream_event(serde_json::json!({
+                "type": "response.reasoning_summary_part.done",
+                "sequence_number": 5,
+                "item_id": "rs_1",
+                "output_index": 0,
+                "summary_index": 0,
+                "part": { "type": "summary_text", "text": "Weigh options." }
+            })),
+            item_done_event(6, 0, reasoning_item_json()),
+            item_added_event(7, 1, message_item_json()),
+            stream_event(serde_json::json!({
+                "type": "response.output_text.delta",
+                "sequence_number": 8,
+                "item_id": "msg_1",
+                "output_index": 1,
+                "content_index": 0,
+                "delta": "Answer: done."
+            })),
+            item_done_event(9, 1, message_item_json()),
+            item_added_event(
+                10,
+                2,
+                function_call_item_json("call_1", "fc_1", "read_file", "{\"path\": \"/tmp/a\"}"),
+            ),
+            item_added_event(
+                11,
+                3,
+                function_call_item_json("call_2", "fc_2", "list_dir", "{\"dir\": \"/tmp/b\"}"),
+            ),
+            stream_event(serde_json::json!({
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 12,
+                "item_id": "fc_1",
+                "output_index": 2,
+                "delta": "{\"path\": \""
+            })),
+            stream_event(serde_json::json!({
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 13,
+                "item_id": "fc_2",
+                "output_index": 3,
+                "delta": "{\"dir\": \""
+            })),
+            stream_event(serde_json::json!({
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 14,
+                "item_id": "fc_1",
+                "output_index": 2,
+                "delta": "/tmp/a\"}"
+            })),
+            stream_event(serde_json::json!({
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 15,
+                "item_id": "fc_2",
+                "output_index": 3,
+                "delta": "/tmp/b\"}"
+            })),
+            item_done_event(
+                16,
+                2,
+                function_call_item_json("call_1", "fc_1", "read_file", "{\"path\": \"/tmp/a\"}"),
+            ),
+            item_done_event(
+                17,
+                3,
+                function_call_item_json("call_2", "fc_2", "list_dir", "{\"dir\": \"/tmp/b\"}"),
+            ),
+            stream_event(serde_json::json!({
+                "type": "response.completed",
+                "sequence_number": 18,
+                "response": {
+                    "id": "resp_1",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "completed",
+                    "output": [
+                        reasoning_item_json(),
+                        message_item_json(),
+                        function_call_item_json("call_1", "fc_1", "read_file", "{\"path\": \"/tmp/a\"}"),
+                        function_call_item_json("call_2", "fc_2", "list_dir", "{\"dir\": \"/tmp/b\"}")
+                    ],
+                    "usage": {
+                        "input_tokens": 12,
+                        "input_tokens_details": { "cached_tokens": 0 },
+                        "output_tokens": 7,
+                        "output_tokens_details": { "reasoning_tokens": 3 },
+                        "total_tokens": 19
+                    }
+                }
+            })),
+        ]
+    }
+
+    fn fixture_as_items(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<Result<ResponseStreamEvent, StreamError>> {
+        events.into_iter().map(Ok).collect()
+    }
 
     fn stream_event(json: serde_json::Value) -> ResponseStreamEvent {
         serde_json::from_value(json).expect("valid stream event JSON")
@@ -980,6 +1682,210 @@ mod tests {
 
         parse_responses_event(event, &mut state);
         assert_eq!(state.stop_reason, Some(StopReason::MaxTokens));
+    }
+
+    /// `response.completed` must carry the `completed` status. A failed,
+    /// incomplete, queued, or in-progress status is a protocol
+    /// contradiction and fails loud before any terminal block is emitted.
+    #[test]
+    fn completed_event_with_unexpected_status_fails_loud() {
+        for status in ["failed", "incomplete", "queued", "in_progress"] {
+            let mut state = ResponsesStreamState {
+                started: true,
+                ..Default::default()
+            };
+            let event = stream_event(serde_json::json!({
+                "type": "response.completed",
+                "sequence_number": 9,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": status,
+                    "output": [{
+                        "type": "message",
+                        "id": "msg_1",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{ "type": "output_text", "text": "hi", "annotations": [] }]
+                    }]
+                }
+            }));
+
+            let events = parse_responses_event(event, &mut state);
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+                "status {status} must fail loud: {events:?}"
+            );
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+                "status {status} must not emit a terminal block: {events:?}"
+            );
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+                "status {status} must not report success: {events:?}"
+            );
+            assert_eq!(state.terminal, TerminalStatus::Failed);
+        }
+    }
+
+    /// `response.incomplete` must carry the `incomplete` status; a
+    /// `completed` status on that event is a contradiction.
+    #[test]
+    fn incomplete_event_with_completed_status_fails_loud() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.incomplete",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [],
+                "incomplete_details": { "reason": "max_output_tokens" }
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "completed status on response.incomplete must fail loud: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// An encrypted reasoning payload without an id cannot be replayed;
+    /// fail loud instead of silently dropping the reasoning item.
+    #[test]
+    fn completed_encrypted_reasoning_without_id_fails_loud() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": "ENC",
+                    "status": "completed"
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "encrypted reasoning without an id must fail loud: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+            "no block may be emitted for the malformed reasoning item: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// An empty reasoning id alongside a non-empty encrypted payload is
+    /// equally unusable and fails loud.
+    #[test]
+    fn completed_encrypted_reasoning_with_empty_id_fails_loud() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "reasoning",
+                    "id": "",
+                    "summary": [],
+                    "encrypted_content": "ENC",
+                    "status": "completed"
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "empty encrypted reasoning id must fail loud: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// Absence of both id and encrypted content is allowed when the
+    /// encrypted payload was not requested; the summary still collects.
+    #[test]
+    fn completed_reasoning_without_id_or_encrypted_emits_thinking_only() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "reasoning",
+                    "summary": [{ "type": "summary_text", "text": "consider" }],
+                    "status": "completed"
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Ok(StreamEvent::BlockComplete { index: 0, block: ContentBlock::Thinking { text } })
+                    if text == "consider"
+            )),
+            "summary must still collect without an encrypted payload: {events:?}"
+        );
+        assert!(
+            events.iter().all(Result::is_ok),
+            "absent encrypted payload must not error: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::SawCompleted);
     }
 
     /// A real `response.completed` is the only way to a successful
@@ -1258,6 +2164,33 @@ mod tests {
             items.is_empty(),
             "a thinking-only assistant message replays nothing"
         );
+    }
+
+    #[test]
+    fn request_rejects_unsupported_stop_sequences() {
+        let provider = OpenAiProvider::new(crate::config::OpenAiConfig {
+            api_key: crate::config::ApiKey::new("test-key").unwrap(),
+            api: crate::config::OpenAiApi::Responses,
+            base_url: None,
+            model: crate::config::OpenAiModel::Gpt4o,
+            max_tokens: crate::types::MaxTokens::new(32).unwrap(),
+            temperature: None,
+            reasoning: None,
+            structured_output: false,
+            chat_reasoning_output: crate::config::OpenAiChatReasoningOutput::None,
+            custom_capabilities: None,
+        })
+        .unwrap();
+        let mut request = CompletionRequest::new(
+            ModelId::new("gpt-4o").unwrap(),
+            vec![Message::user("hello")],
+        );
+        assert!(provider.build_responses_request(&request).is_ok());
+        request.config.stop_sequences.push("STOP".into());
+        assert!(matches!(
+            provider.build_responses_request(&request),
+            Err(ProviderError::InvalidRequest { .. })
+        ));
     }
 
     /// The wire body must be stateless streaming: store=false,
@@ -1846,6 +2779,833 @@ mod tests {
         assert!(
             events.iter().all(Result::is_ok),
             "completed stream must have no errors: {events:?}"
+        );
+    }
+
+    /// `response.incomplete` with reason `content_filter` maps to the
+    /// `ContentFilter` stop reason.
+    #[test]
+    fn incomplete_event_content_filter_reason_maps_to_stop_reason() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.incomplete",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "incomplete",
+                "output": [],
+                "incomplete_details": { "reason": "content_filter" }
+            }
+        }));
+
+        parse_responses_event(event, &mut state);
+        assert_eq!(state.stop_reason, Some(StopReason::ContentFilter));
+        assert!(matches!(state.terminal, TerminalStatus::SawIncomplete));
+    }
+
+    /// An unknown or missing `response.incomplete` reason is a stream
+    /// error; it must not default to token exhaustion.
+    #[test]
+    fn incomplete_event_unknown_reason_fails_loud() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.incomplete",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "incomplete",
+                "output": [],
+                "incomplete_details": { "reason": "unknown_reason" }
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "unknown incomplete reason must error: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// A `response.completed` with empty `output` after live content
+    /// deltas is an error: the terminal array cannot contradict the
+    /// observed stream.
+    #[test]
+    fn completed_empty_output_after_live_content_fails() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        parse_responses_event(text_delta_event(2, "live text"), &mut state);
+        let completed = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": []
+            }
+        }));
+
+        let events = parse_responses_event(completed, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "empty output after live content must error: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// All successful terminals are absorbing: a `response.completed`
+    /// after a supported `response.incomplete` keeps the incomplete
+    /// terminal and emits no second success event.
+    #[test]
+    fn terminal_incomplete_then_completed_stays_incomplete() {
+        let mut state = ResponsesStreamState::default();
+        parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.incomplete",
+                "sequence_number": 4,
+                "response": {
+                    "id": "resp_test",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "gpt-5.2",
+                    "status": "incomplete",
+                    "output": [],
+                    "incomplete_details": { "reason": "max_output_tokens" }
+                }
+            })),
+            &mut state,
+        );
+        let events = parse_responses_event(completed_response_event(5), &mut state);
+
+        assert_eq!(state.terminal, TerminalStatus::SawIncomplete);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "post-terminal completed must be suppressed: {events:?}"
+        );
+    }
+
+    /// A successful terminal is absorbing against later failures: a
+    /// `response.failed` after `response.completed` cannot overwrite it.
+    #[test]
+    fn terminal_completed_then_failed_stays_completed() {
+        let mut state = ResponsesStreamState::default();
+        parse_responses_event(completed_response_event(4), &mut state);
+        let events = parse_responses_event(failed_response_event(5), &mut state);
+
+        assert_eq!(state.terminal, TerminalStatus::SawCompleted);
+        assert!(
+            events.iter().all(Result::is_ok),
+            "post-terminal failure must not emit an error: {events:?}"
+        );
+    }
+
+    /// A cancelled terminal is absorbing: a later `response.completed`
+    /// cannot turn it into a success, and no delta can follow it.
+    #[test]
+    fn terminal_cancelled_is_absorbing() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let cancelled = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 4,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "cancelled",
+                "output": []
+            }
+        }));
+        parse_responses_event(cancelled, &mut state);
+        let post_delta = text_delta_event(5, "late");
+        let post_completed = completed_response_event(6);
+
+        let delta_events = parse_responses_event(post_delta, &mut state);
+        let completed_events = parse_responses_event(post_completed, &mut state);
+
+        assert_eq!(state.terminal, TerminalStatus::Cancelled);
+        assert!(
+            delta_events.is_empty(),
+            "post-terminal delta must be suppressed: {delta_events:?}"
+        );
+        assert!(
+            completed_events.is_empty(),
+            "post-terminal completed must be suppressed: {completed_events:?}"
+        );
+    }
+
+    /// A function-call argument delta whose `item_id` is unknown is a
+    /// stream error; it must not be silently dropped.
+    #[test]
+    fn function_call_arguments_delta_unknown_item_id_fails_loud() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.function_call_arguments.delta",
+            "sequence_number": 5,
+            "item_id": "unknown_fc",
+            "output_index": 0,
+            "delta": "{\"path\": \"/tmp\"}"
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "unknown function-call item_id must error: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    // -----------------------------------------------------------------------
+    // Terminal complete blocks in provider order
+    // -----------------------------------------------------------------------
+
+    /// The complete fixture must produce the full driver event sequence:
+    /// live deltas and balanced lifecycle for every item, then the
+    /// authoritative `BlockComplete` array in provider order, then
+    /// `Completed` last.
+    #[tokio::test]
+    async fn complete_fixture_matches_full_event_sequence() {
+        let events = run_responses_adapter(fixture_as_items(complete_response_fixture())).await;
+        let signatures: Vec<String> = events.iter().map(event_signature).collect();
+
+        let expected = [
+            "started:Some(\"gpt-5.2\")",
+            "start:0:Thinking",
+            "delta:thinking:\"Weigh options.\"",
+            "stop:0",
+            "delta:reasoning:rs_1:ENC",
+            "start:1:Text",
+            "delta:text:\"Answer: done.\"",
+            "stop:1",
+            "start:2:ToolUse",
+            "delta:tool_start:call_1:read_file",
+            "start:3:ToolUse",
+            "delta:tool_start:call_2:list_dir",
+            "delta:tool_input:call_1:{\"path\": \"",
+            "delta:tool_input:call_2:{\"dir\": \"",
+            "delta:tool_input:call_1:/tmp/a\"}",
+            "delta:tool_input:call_2:/tmp/b\"}",
+            "stop:2",
+            "stop:3",
+            "block:0:thinking:\"Weigh options.\"",
+            "block:1:encrypted:rs_1:ENC",
+            "block:2:text:\"Answer: done.\"",
+            "block:3:tool:call_1:read_file:{\"path\":\"/tmp/a\"}",
+            "block:4:tool:call_2:list_dir:{\"dir\":\"/tmp/b\"}",
+            "completed:Some(ToolUse):Some((12, 7))",
+        ];
+
+        assert_eq!(signatures, expected, "full event sequence drifted");
+    }
+
+    /// Both collection paths (`StreamHandle::collect` and the agent's
+    /// observer-driven collector) must agree on the authoritative blocks,
+    /// and the observer must still receive the live thinking/text deltas.
+    /// The collected assistant turn then replays into the next Responses
+    /// request in wire order.
+    #[tokio::test]
+    async fn complete_fixture_both_collectors_agree_and_replay_in_order() {
+        let expected_content = vec![
+            ContentBlock::Thinking {
+                text: "Weigh options.".into(),
+            },
+            ContentBlock::EncryptedReasoning {
+                id: "rs_1".into(),
+                encrypted: "ENC".into(),
+            },
+            ContentBlock::Text {
+                text: "Answer: done.".into(),
+            },
+            ContentBlock::ToolUse {
+                id: ToolCallId::new("call_1"),
+                name: ToolName::new("read_file").unwrap(),
+                input: serde_json::json!({ "path": "/tmp/a" }),
+            },
+            ContentBlock::ToolUse {
+                id: ToolCallId::new("call_2"),
+                name: ToolName::new("list_dir").unwrap(),
+                input: serde_json::json!({ "dir": "/tmp/b" }),
+            },
+        ];
+
+        let collected = responses_handle(fixture_as_items(complete_response_fixture()))
+            .collect()
+            .await
+            .expect("direct collect succeeds");
+
+        let observer = RecordingObserver::default();
+        let collected_observer = crate::agent::collect_with_observer(
+            responses_handle(fixture_as_items(complete_response_fixture())),
+            &tokio_util::sync::CancellationToken::new(),
+            &observer,
+        )
+        .await
+        .expect("observer collect succeeds");
+
+        assert_eq!(collected.content, expected_content);
+        assert_eq!(collected_observer.content, expected_content);
+        assert_eq!(
+            collected.metadata.stop_reason,
+            Some(StopReason::ToolUse),
+            "tool response keeps ToolUse stop reason"
+        );
+        assert_eq!(
+            *observer.observed.lock().unwrap(),
+            vec![
+                "thinking:Weigh options.".to_owned(),
+                "text:Answer: done.".to_owned(),
+            ],
+            "observer must forward live thinking and text, never complete blocks"
+        );
+
+        // Replay the collected turn plus its tool outputs into the next
+        // stateless Responses request and pin the wire order.
+        let request = CompletionRequest::new(
+            ModelId::new("gpt-5.2").unwrap(),
+            vec![
+                Message::new(
+                    DriverRole::User,
+                    vec![ContentBlock::Text { text: "go".into() }],
+                ),
+                Message::new(DriverRole::Assistant, collected.content.clone()),
+                Message::new(
+                    DriverRole::Tool,
+                    vec![
+                        ContentBlock::ToolResult {
+                            tool_use_id: ToolCallId::new("call_1"),
+                            content: crate::types::ToolResultContent::Text("a".into()),
+                            is_error: false,
+                        },
+                        ContentBlock::ToolResult {
+                            tool_use_id: ToolCallId::new("call_2"),
+                            content: crate::types::ToolResultContent::Text("b".into()),
+                            is_error: false,
+                        },
+                    ],
+                ),
+            ],
+        );
+
+        let wire = serde_json::to_value(build_input_items(&request)).unwrap();
+        let items = wire.as_array().expect("input items serialize to an array");
+        assert_eq!(
+            items.len(),
+            7,
+            "user, reasoning, answer, 2 calls, 2 outputs"
+        );
+        assert_eq!(items[0]["role"], "user");
+        assert_eq!(items[1]["type"], "reasoning");
+        assert_eq!(items[1]["id"], "rs_1");
+        assert_eq!(items[1]["encrypted_content"], "ENC");
+        assert_eq!(items[2]["role"], "assistant");
+        assert_eq!(items[2]["content"], "Answer: done.");
+        assert_eq!(items[3]["type"], "function_call");
+        assert_eq!(items[3]["call_id"], "call_1");
+        assert_eq!(items[3]["name"], "read_file");
+        assert_eq!(items[3]["arguments"], "{\"path\":\"/tmp/a\"}");
+        assert_eq!(items[4]["type"], "function_call");
+        assert_eq!(items[4]["call_id"], "call_2");
+        assert_eq!(items[4]["name"], "list_dir");
+        assert_eq!(items[4]["arguments"], "{\"dir\":\"/tmp/b\"}");
+        assert_eq!(items[5]["type"], "function_call_output");
+        assert_eq!(items[5]["call_id"], "call_1");
+        assert_eq!(items[6]["type"], "function_call_output");
+        assert_eq!(items[6]["call_id"], "call_2");
+    }
+
+    /// A completed message whose only content is a refusal still yields a
+    /// text block on the answer channel.
+    #[test]
+    fn completed_refusal_emits_text_block() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "id": "msg_1",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{ "type": "refusal", "refusal": "I can't do that." }]
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Ok(StreamEvent::BlockComplete { index: 0, block: ContentBlock::Text { text } })
+                    if text == "I can't do that."
+            )),
+            "refusal must become an answer text block: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::SawCompleted);
+    }
+
+    /// A reasoning item with a summary but no encrypted payload emits a
+    /// thinking block and is not an error (include was not requested).
+    #[test]
+    fn completed_reasoning_without_encrypted_emits_thinking_only() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [{ "type": "summary_text", "text": "consider" }],
+                    "status": "completed"
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Ok(StreamEvent::BlockComplete { index: 0, block: ContentBlock::Thinking { text } })
+                    if text == "consider"
+            )),
+            "reasoning summary must become a thinking block: {events:?}"
+        );
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Ok(StreamEvent::BlockComplete {
+                    block: ContentBlock::EncryptedReasoning { .. },
+                    ..
+                })
+            )),
+            "absent encrypted content must not fabricate a replayable block: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::SawCompleted);
+    }
+
+    /// A supported incomplete response preserves its partial output and
+    /// emits terminal blocks before the EOF success terminal.
+    #[test]
+    fn incomplete_supported_emits_terminal_blocks() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.incomplete",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "incomplete",
+                "output": [{
+                    "type": "message",
+                    "id": "msg_1",
+                    "role": "assistant",
+                    "status": "incomplete",
+                    "content": [{ "type": "output_text", "text": "partial", "annotations": [] }]
+                }],
+                "incomplete_details": { "reason": "content_filter" }
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Ok(StreamEvent::BlockComplete { index: 0, block: ContentBlock::Text { text } })
+                    if text == "partial"
+            )),
+            "supported incomplete must emit its partial blocks: {events:?}"
+        );
+        assert_eq!(state.stop_reason, Some(StopReason::ContentFilter));
+        assert!(matches!(state.terminal, TerminalStatus::SawIncomplete));
+    }
+
+    /// A completed response with an empty output array and no earlier live
+    /// content collects to an empty response: no block, no error.
+    #[test]
+    fn completed_empty_output_without_live_content_has_no_blocks() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let events = parse_responses_event(completed_response_event(9), &mut state);
+
+        assert!(
+            events.iter().all(Result::is_ok),
+            "empty valid completion must not error: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+            "empty output must not fabricate a block: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::SawCompleted);
+    }
+
+    /// A non-empty terminal array whose items carry no representable
+    /// content contradicts earlier live text: fail loud, emit no block,
+    /// and never report success.
+    #[test]
+    fn completed_nonempty_output_with_no_blocks_after_live_text_fails() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        parse_responses_event(text_delta_event(2, "live text"), &mut state);
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "id": "msg_1",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{ "type": "output_text", "text": "", "annotations": [] }]
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "empty terminal content after live text must fail loud: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+            "no block may be emitted for the contradiction: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "the contradiction must not report success: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// The same contradiction holds for live tool deltas against an empty
+    /// reasoning item (non-empty output, zero representable blocks).
+    #[test]
+    fn completed_nonempty_output_with_no_blocks_after_live_tool_delta_fails() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        parse_responses_event(
+            item_added_event(
+                2,
+                0,
+                function_call_item_json("call_1", "fc_1", "read_file", "{}"),
+            ),
+            &mut state,
+        );
+        parse_responses_event(
+            stream_event(serde_json::json!({
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 3,
+                "item_id": "fc_1",
+                "output_index": 0,
+                "delta": "{}"
+            })),
+            &mut state,
+        );
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [],
+                    "status": "completed"
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "empty terminal content after live tool deltas must fail loud: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+            "no block may be emitted for the contradiction: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// A supported incomplete with the same contradiction fails loud
+    /// instead of preserving provisional live content.
+    #[test]
+    fn incomplete_nonempty_output_with_no_blocks_after_live_text_fails() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        parse_responses_event(text_delta_event(2, "live text"), &mut state);
+        let event = stream_event(serde_json::json!({
+            "type": "response.incomplete",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "incomplete",
+                "output": [{
+                    "type": "message",
+                    "id": "msg_1",
+                    "role": "assistant",
+                    "status": "incomplete",
+                    "content": [{ "type": "output_text", "text": "", "annotations": [] }]
+                }],
+                "incomplete_details": { "reason": "max_output_tokens" }
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "empty terminal content after live text must fail loud: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+            "no block may be emitted for the contradiction: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// A non-empty terminal array of empty items with no live content is a
+    /// genuine empty completion: no error and no fabricated block.
+    #[test]
+    fn completed_nonempty_empty_items_without_live_content_is_empty_completion() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_1",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{ "type": "output_text", "text": "", "annotations": [] }]
+                    },
+                    {
+                        "type": "reasoning",
+                        "id": "rs_1",
+                        "summary": [],
+                        "status": "completed"
+                    }
+                ]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events.iter().all(Result::is_ok),
+            "a genuinely empty completion must not error: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+            "empty items must not fabricate a block: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::SawCompleted);
+    }
+
+    /// Terminal traversal validates every output item before emitting any
+    /// block, so a malformed later item yields one error and zero blocks.
+    #[test]
+    fn terminal_invalid_tool_arguments_fail_loud_without_partial_blocks() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [
+                    message_item_json(),
+                    function_call_item_json("call_1", "fc_1", "read_file", "{ not json")
+                ]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "malformed tool arguments must fail loud: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::BlockComplete { .. }))),
+            "validation must be atomic: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// An unsupported hosted output item in the terminal array is a loud
+    /// error, not a silent ignore.
+    #[test]
+    fn terminal_unsupported_output_item_fails_loud() {
+        let mut state = ResponsesStreamState {
+            started: true,
+            ..Default::default()
+        };
+        let event = stream_event(serde_json::json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "gpt-5.2",
+                "status": "completed",
+                "output": [{
+                    "type": "file_search_call",
+                    "id": "fs_1",
+                    "queries": [],
+                    "status": "completed"
+                }]
+            }
+        }));
+
+        let events = parse_responses_event(event, &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "hosted output item must fail loud: {events:?}"
+        );
+        assert_eq!(state.terminal, TerminalStatus::Failed);
+    }
+
+    /// A hosted output item announced live fails the stream immediately
+    /// rather than streaming past it and failing only at EOF.
+    #[tokio::test]
+    async fn hosted_output_item_added_fails_loud() {
+        let added = stream_event(serde_json::json!({
+            "type": "response.output_item.added",
+            "sequence_number": 4,
+            "output_index": 0,
+            "item": {
+                "type": "file_search_call",
+                "id": "fs_1",
+                "queries": [],
+                "status": "in_progress"
+            }
+        }));
+        let events = run_responses_adapter(vec![Ok(created_event()), Ok(added)]).await;
+
+        let errors = events.iter().filter(|e| e.is_err()).count();
+        assert_eq!(errors, 1, "hosted item must yield one error: {events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Err(StreamError::Deserialize { .. }))),
+            "hosted item must fail as an unsupported output item: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Ok(StreamEvent::Completed { .. }))),
+            "hosted item must never emit Completed: {events:?}"
         );
     }
 }

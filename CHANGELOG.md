@@ -17,6 +17,27 @@ commit history.
   `include: ["reasoning.encrypted_content"]`). `ReasoningConfig` maps
   natively to `reasoning: { effort, summary }`. Non-OpenAI providers
   drop the encrypted-reasoning block rather than replay it.
+- OpenAI config migration: custom model IDs require explicit
+  `OPENAI_CUSTOM_TEMPERATURE`, `OPENAI_CUSTOM_REASONING`, and
+  `OPENAI_CUSTOM_STREAMING` declarations. Programmatic `OpenAiConfig`
+  literals need `api`, `chat_reasoning_output`, and `custom_capabilities`.
+  See [provider configuration](docs/PROVIDERS.md#openai) for the supported
+  values.
+- The OpenAI provider rejects requests whose model differs from its configured
+  model. Unknown `OPENAI_REASONING_EFFORT` values fail config loading rather
+  than selecting a default.
+- `o3` and `o3-mini` support streaming on Responses, but not on Chat Completions.
+- Responses rejects nonempty stop sequences because that surface does not
+  support them.
+
+## [0.1.0] - 2026-10-22
+
+- Crate renamed `agent-driver-rs` → `agent-driver` for the crates.io
+  release; the repository keeps its name. Import paths change from
+  `agent_driver_rs` to `agent_driver`.
+- First crates.io release, published by the new tag-driven workflow
+  (`.github/workflows/publish.yml`): tag, Cargo.toml version, and the
+  matching CHANGELOG entry must agree before upload.
 - Bedrock extended thinking support: `BedrockConfig.thinking`
   (`BEDROCK_THINKING_BUDGET`) sends the `additionalModelRequestFields`
   thinking block for Claude-family models; `reasoningContent` deltas from

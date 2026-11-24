@@ -63,7 +63,7 @@ pub struct SessionConfig {
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use agent_driver_rs::{SessionBuilder, SystemPrompt, ModelId};
+/// use agent_driver::{SessionBuilder, SystemPrompt, ModelId};
 ///
 /// // Build a session (provider must be set via SessionBuilder::provider)
 /// let session = SessionBuilder::new()

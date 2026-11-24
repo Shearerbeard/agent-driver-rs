@@ -1275,7 +1275,7 @@ mod tests {
                         ContentBlock::ToolUse {
                             id: ToolCallId::new("call_abc"),
                             name: ToolName::new("calculator").unwrap(),
-                            input: serde_json::json!({"x": 2, "y": 2, "operation": "add"}),
+                            input: serde_json::json!({"operation": "add", "x": 2, "y": 2}),
                         },
                     ],
                 ),
@@ -1306,7 +1306,7 @@ mod tests {
                             "type": "function",
                             "function": {
                                 "name": "calculator",
-                                "arguments": "{\"x\":2,\"y\":2,\"operation\":\"add\"}"
+                                "arguments": "{\"operation\":\"add\",\"x\":2,\"y\":2}"
                             }
                         }]
                     },

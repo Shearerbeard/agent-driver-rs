@@ -1,14 +1,13 @@
 //! Agent loop driver — the core orchestrator
 
-use std::collections::HashMap;
-
 use futures::StreamExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::AgentLoopError;
 use crate::session::Session;
 use crate::streaming::{
-    CollectedResponse, CompletionMetadata, ContentBlockType, StopReason, StreamDelta, StreamEvent,
+    CollectedResponse, CompletionMetadata, ResponseAccumulator, StopReason, StreamDelta,
+    StreamEvent,
 };
 use crate::types::{ContentBlock, Message, Role, ToolName};
 
@@ -45,9 +44,9 @@ pub struct AgentOutcome {
 /// # Example
 ///
 /// ```no_run
-/// # use agent_driver_rs::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
-/// # use agent_driver_rs::Session;
-/// # async fn example(session: &Session) -> Result<(), agent_driver_rs::AgentLoopError> {
+/// # use agent_driver::agent::{AgentLoop, AgentLoopConfig, MaxToolDepth};
+/// # use agent_driver::Session;
+/// # async fn example(session: &Session) -> Result<(), agent_driver::AgentLoopError> {
 /// // Basic usage
 /// let outcome = AgentLoop::new(session)
 ///     .run("What time is it?")
@@ -421,10 +420,9 @@ impl<'s> AgentLoop<'s> {
 
 /// Collect a stream handle into a response while forwarding events to the observer.
 ///
-/// Block types are tracked per index via a HashMap so that interleaved
-/// ContentBlockStart/ContentBlockStop pairs (across different indices)
-/// are finalized with the correct type.
-async fn collect_with_observer(
+/// Accumulation is delegated to [`ResponseAccumulator`] so the agent
+/// collector and [`StreamHandle::collect`] share the same invariants.
+pub(crate) async fn collect_with_observer(
     handle: crate::streaming::StreamHandle,
     cancellation: &CancellationToken,
     observer: &dyn AgentObserver,
@@ -432,8 +430,7 @@ async fn collect_with_observer(
     let stream = handle.into_stream();
     futures::pin_mut!(stream);
 
-    let mut response = CollectedResponse::new();
-    let mut block_types: HashMap<usize, ContentBlockType> = HashMap::new();
+    let mut accumulator = ResponseAccumulator::new();
 
     loop {
         tokio::select! {
@@ -474,33 +471,14 @@ async fn collect_with_observer(
                         }
 
                         // Apply to response accumulator
-                        match event {
-                            StreamEvent::ContentBlockStart { index, block_type } => {
-                                block_types.insert(index, block_type);
-                                if block_type == ContentBlockType::ToolUse {
-                                    response.start_tool_block(index);
-                                }
-                            }
-                            StreamEvent::Delta(delta) => {
-                                response.apply_delta(delta);
-                            }
-                            StreamEvent::ContentBlockStop { index } => {
-                                if let Some(block_type) = block_types.remove(&index) {
-                                    response.finalize_block(index, block_type);
-                                }
-                            }
-                            StreamEvent::Completed { metadata } => {
-                                response.flush_pending();
-                                response.metadata = metadata;
-                                return Ok(response);
-                            }
-                            StreamEvent::Error { error } => {
-                                return Err(AgentLoopError::Session(
-                                    crate::error::SessionError::Stream(error),
-                                ));
-                            }
-                            StreamEvent::Started { .. }
-                            | StreamEvent::BlockComplete { .. } => {}
+                        let is_completed = matches!(event, StreamEvent::Completed { .. });
+                        if let Err(error) = accumulator.apply_event(event) {
+                            return Err(AgentLoopError::Session(
+                                crate::error::SessionError::Stream(error),
+                            ));
+                        }
+                        if is_completed {
+                            return Ok(accumulator.into_response());
                         }
                     }
                     Some(Err(e)) => {
@@ -510,8 +488,8 @@ async fn collect_with_observer(
                     }
                     None => {
                         // Stream ended without Completed event
-                        response.flush_pending();
-                        return Ok(response);
+                        accumulator.flush_pending();
+                        return Ok(accumulator.into_response());
                     }
                 }
             }

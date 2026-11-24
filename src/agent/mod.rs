@@ -7,10 +7,10 @@
 //! # Example
 //!
 //! ```no_run
-//! use agent_driver_rs::agent::{AgentLoop, AgentLoopConfig};
-//! use agent_driver_rs::Session;
+//! use agent_driver::agent::{AgentLoop, AgentLoopConfig};
+//! use agent_driver::Session;
 //!
-//! # async fn example(session: &Session) -> Result<(), agent_driver_rs::AgentLoopError> {
+//! # async fn example(session: &Session) -> Result<(), agent_driver::AgentLoopError> {
 //! let outcome = AgentLoop::new(session)
 //!     .run("List all files in /tmp")
 //!     .await?;
@@ -28,3 +28,6 @@ mod observer;
 pub use config::{AgentLoopConfig, MaxToolDepth};
 pub use driver::{AgentLoop, AgentOutcome};
 pub use observer::{AgentEvent, AgentObserver, LoopStopReason, NoOpObserver};
+
+#[cfg(test)]
+pub(crate) use driver::collect_with_observer;

@@ -166,7 +166,9 @@ cd bench && cargo run --release -- -n 20 -w 3 --json
 
 ## Known issues
 
-- Four bugs — the cancellation no-op, correlation-id collisions, the retry panic, and the Anthropic zero-token bug — are fixed on the `worktree-audit-rust-standards-2026-07` branch, which lands as the first public PR ahead of external review; this snapshot does not yet include those fixes.
+- A standards audit flagged four bugs for fixing ahead of external review: the
+  cancellation no-op, correlation-id collisions, the retry panic, and the
+  Anthropic zero-token bug.
 
 ## License
 

@@ -31,6 +31,9 @@ credentials.*
 # Local board / planning state, kept outside this repo
 .boardkit/
 
+# Review packets, staged locally by gate/review tooling
+.review/
+
 # Internal planning docs live in the wiki board
 # (aura-session-docs wiki, boards/agent-driver-rs-adr); not tracked here.
 docs/internal/

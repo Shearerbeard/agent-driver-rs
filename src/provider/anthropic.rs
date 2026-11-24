@@ -101,11 +101,13 @@ impl AnthropicProvider {
             body["tools"] = ToolFormat::claude().serialize_tools(&request.tools);
         }
 
-        // Add messages
+        // Add messages. A message whose blocks all drop in serialization
+        // (e.g. an OpenAI encrypted-reasoning-only assistant turn) is
+        // omitted: the API rejects empty content arrays.
         let messages: Vec<JsonValue> = request
             .messages
             .iter()
-            .map(|msg| self.serialize_message(msg))
+            .filter_map(|msg| self.serialize_message(msg))
             .collect();
         body["messages"] = JsonValue::Array(messages);
 
@@ -120,8 +122,9 @@ impl AnthropicProvider {
         body
     }
 
-    /// Serialize a message for the API
-    fn serialize_message(&self, msg: &crate::types::Message) -> JsonValue {
+    /// Serialize a message for the API. Returns `None` when every block
+    /// is dropped and the message would serialize to empty content.
+    fn serialize_message(&self, msg: &crate::types::Message) -> Option<JsonValue> {
         let role = match msg.role {
             crate::types::Role::User => "user",
             crate::types::Role::Assistant => "assistant",
@@ -132,21 +135,24 @@ impl AnthropicProvider {
         let content: Vec<JsonValue> = msg
             .content
             .iter()
-            .map(|block| match block {
-                ContentBlock::Text { text } => serde_json::json!({
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(serde_json::json!({
                     "type": "text",
                     "text": text
-                }),
-                ContentBlock::Thinking { text } => serde_json::json!({
+                })),
+                ContentBlock::Thinking { text } => Some(serde_json::json!({
                     "type": "thinking",
                     "thinking": text
-                }),
-                ContentBlock::ToolUse { id, name, input } => serde_json::json!({
+                })),
+                ContentBlock::ToolUse { id, name, input } => Some(serde_json::json!({
                     "type": "tool_use",
                     "id": id.as_str(),
                     "name": name.as_str(),
                     "input": input
-                }),
+                })),
+                // OpenAI Responses replay token: no Anthropic wire
+                // equivalent, dropped rather than guessed at.
+                ContentBlock::EncryptedReasoning { .. } => None,
                 ContentBlock::ToolResult {
                     tool_use_id,
                     content,
@@ -155,20 +161,24 @@ impl AnthropicProvider {
                     let content_str = match content {
                         crate::types::ToolResultContent::Text(s) => s.clone(),
                     };
-                    serde_json::json!({
+                    Some(serde_json::json!({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id.as_str(),
                         "content": content_str,
                         "is_error": is_error
-                    })
+                    }))
                 }
             })
             .collect();
 
-        serde_json::json!({
+        if content.is_empty() {
+            return None;
+        }
+
+        Some(serde_json::json!({
             "role": role,
             "content": content
-        })
+        }))
     }
 
     /// Build headers for the API request.

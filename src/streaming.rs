@@ -35,6 +35,11 @@ pub enum StreamDelta {
     /// Thinking block signature (Claude extended thinking)
     SignatureDelta { signature: String },
 
+    /// A fully materialized reasoning item (OpenAI Responses encrypted
+    /// reasoning). Atomic, not incremental: the whole replayable item
+    /// arrives at once when the request asked for encrypted content.
+    ReasoningItemDelta { id: String, encrypted: String },
+
     /// Start of a tool use block
     ToolUseStart { id: ToolCallId, name: ToolName },
 
@@ -64,7 +69,12 @@ pub enum StreamEvent {
     /// Content block finished
     ContentBlockStop { index: usize },
 
-    /// Full block available (accumulated from deltas)
+    /// Authoritative complete block, in provider output order.
+    ///
+    /// Responses emits these from its terminal output array. `index` is
+    /// a consecutive zero-based ordinal independent of the live
+    /// `ContentBlockStart` and `ContentBlockStop` indexes. Collectors
+    /// replace provisional delta content with this sequence.
     BlockComplete { index: usize, block: ContentBlock },
 
     /// Stream completed successfully
@@ -153,6 +163,10 @@ pub struct CollectedResponse {
     // Internal: accumulation state for streaming
     pending_text: String,
     pending_thinking: String,
+    /// Replayable reasoning items, buffered so the flushed order is
+    /// deterministic (reasoning precedes its message content, matching
+    /// how reasoning streams arrive before the answer).
+    pending_reasoning: Vec<ContentBlock>,
     pending_tool_uses: HashMap<ToolCallId, PendingToolUse>,
     pending_tool_index: Option<usize>,
     tool_block_indices: HashMap<usize, ToolCallId>,
@@ -217,6 +231,12 @@ impl CollectedResponse {
             StreamDelta::SignatureDelta { .. } => {
                 // Signatures are metadata, not content - ignore for collection
             }
+            StreamDelta::ReasoningItemDelta { id, encrypted } => {
+                // Atomic replayable reasoning item: buffered whole, and
+                // flushed ahead of the message text it precedes.
+                self.pending_reasoning
+                    .push(ContentBlock::EncryptedReasoning { id, encrypted });
+            }
         }
     }
 
@@ -259,6 +279,7 @@ impl CollectedResponse {
     /// any accumulated content that wasn't explicitly closed with `ContentBlockStop`
     /// is captured. Some providers (e.g., OpenRouter) don't emit `ContentBlockStop`.
     pub fn flush_pending(&mut self) {
+        self.content.append(&mut self.pending_reasoning);
         if !self.pending_text.is_empty() {
             self.content.push(ContentBlock::Text {
                 text: std::mem::take(&mut self.pending_text),
@@ -290,6 +311,7 @@ impl CollectedResponse {
             .filter_map(|b| match b {
                 ContentBlock::Text { text } => Some(text.as_str()),
                 ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
@@ -305,6 +327,7 @@ impl CollectedResponse {
             .filter_map(|b| match b {
                 ContentBlock::Thinking { text } => Some(text.as_str()),
                 ContentBlock::Text { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
@@ -321,6 +344,7 @@ impl CollectedResponse {
                 ContentBlock::ToolUse { id, name, input } => Some((id, name, input)),
                 ContentBlock::Text { .. }
                 | ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolResult { .. } => None,
             })
             .collect()
@@ -362,6 +386,7 @@ impl CollectedResponse {
                     }
                 }
                 ContentBlock::Thinking { .. }
+                | ContentBlock::EncryptedReasoning { .. }
                 | ContentBlock::ToolUse { .. }
                 | ContentBlock::ToolResult { .. } => new_content.push(block),
             }
@@ -377,6 +402,116 @@ impl CollectedResponse {
         }
 
         count
+    }
+}
+
+/// Private accumulator used by the shared collectors.
+///
+/// Holds a [`CollectedResponse`] plus the live block-type tracking and
+/// authoritative-mode state that is internal to streaming collection.
+/// Keeping these fields out of [`CollectedResponse`] keeps the public
+/// response type small (it is embedded in [`AgentEvent::IterationComplete`]).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ResponseAccumulator {
+    response: CollectedResponse,
+    /// Tracks the block type announced by each live
+    /// `ContentBlockStart` so the matching `ContentBlockStop` finalizes
+    /// the correct pending buffer.
+    block_types: HashMap<usize, ContentBlockType>,
+    /// Set when at least one `StreamEvent::BlockComplete` has been
+    /// applied. Terminal complete blocks are authoritative; provisional
+    /// delta buffers must not be appended once this is set.
+    has_complete_blocks: bool,
+}
+
+impl ResponseAccumulator {
+    /// Create an empty accumulator.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Apply a single stream event to the accumulator.
+    ///
+    /// Centralizes the logic that is shared between [`StreamHandle::collect`]
+    /// and the agent's observer-driven collector. Returns an error when the
+    /// event violates accumulation invariants, such as a `BlockComplete` with
+    /// a duplicate or out-of-sequence ordinal.
+    pub(crate) fn apply_event(&mut self, event: StreamEvent) -> Result<(), StreamError> {
+        match event {
+            StreamEvent::Started { .. } => {}
+            StreamEvent::BlockComplete { index, block } => {
+                if !self.has_complete_blocks {
+                    self.enter_authoritative_mode();
+                }
+                if index != self.response.content.len() {
+                    return Err(StreamError::Deserialize {
+                        message: format!(
+                            "BlockComplete ordinal {index} out of sequence (expected {})",
+                            self.response.content.len()
+                        ),
+                        raw_data: None,
+                    });
+                }
+                self.response.content.push(block);
+            }
+            StreamEvent::Completed { metadata } => {
+                self.response.metadata = metadata;
+                if !self.has_complete_blocks {
+                    self.response.flush_pending();
+                }
+            }
+            StreamEvent::Error { error } => return Err(error),
+            StreamEvent::ContentBlockStart { .. }
+            | StreamEvent::Delta(..)
+            | StreamEvent::ContentBlockStop { .. }
+                if self.has_complete_blocks => {}
+            StreamEvent::ContentBlockStart { index, block_type } => {
+                self.block_types.insert(index, block_type);
+                if block_type == ContentBlockType::ToolUse {
+                    self.response.start_tool_block(index);
+                }
+            }
+            StreamEvent::Delta(delta) => {
+                self.response.apply_delta(delta);
+            }
+            StreamEvent::ContentBlockStop { index } => {
+                if let Some(block_type) = self.block_types.remove(&index) {
+                    self.response.finalize_block(index, block_type);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Consume the accumulator and return the collected response.
+    pub(crate) fn into_response(self) -> CollectedResponse {
+        self.response
+    }
+
+    /// Flush any pending provisional content.
+    pub(crate) fn flush_pending(&mut self) {
+        if self.has_complete_blocks {
+            return;
+        }
+        self.response.flush_pending();
+    }
+
+    /// Discard all provisional content and enter authoritative mode.
+    ///
+    /// The first `BlockComplete` proves the provider is supplying terminal
+    /// output blocks, so any content finalized from live deltas and any
+    /// pending buffers are discarded. The ordinal counter restarts from
+    /// zero against the now-empty response content vector.
+    fn enter_authoritative_mode(&mut self) {
+        self.response.content.clear();
+        self.response.pending_text.clear();
+        self.response.pending_thinking.clear();
+        self.response.pending_reasoning.clear();
+        self.response.pending_tool_uses.clear();
+        self.response.pending_tool_index = None;
+        self.response.tool_block_indices.clear();
+        self.block_types.clear();
+        self.has_complete_blocks = true;
     }
 }
 
@@ -581,9 +716,8 @@ impl StreamHandle {
     /// Collect entire stream into response (blocks until complete or cancelled)
     ///
     /// Uses tokio::select! to properly handle cancellation during await.
-    /// Block types are tracked per index via a HashMap so that interleaved
-    /// ContentBlockStart/ContentBlockStop pairs (across different indices)
-    /// are finalized with the correct type.
+    /// Complete blocks replace provisional content when the provider emits
+    /// an authoritative output sequence.
     pub async fn collect(self) -> Result<CollectedResponse, StreamError> {
         use futures::StreamExt as _;
 
@@ -594,8 +728,7 @@ impl StreamHandle {
             correlation_id,
         } = self;
 
-        let mut response = CollectedResponse::default();
-        let mut block_types: HashMap<usize, ContentBlockType> = HashMap::new();
+        let mut accumulator = ResponseAccumulator::new();
 
         loop {
             // Use select! to race stream polling against cancellation
@@ -609,39 +742,17 @@ impl StreamHandle {
 
                 event_opt = stream.next() => {
                     match event_opt {
-                        Some(Ok(event)) => match event {
-                            StreamEvent::ContentBlockStart { index, block_type } => {
-                                block_types.insert(index, block_type);
-                                if block_type == ContentBlockType::ToolUse {
-                                    response.start_tool_block(index);
-                                }
+                        Some(Ok(event)) => {
+                            let is_completed = matches!(event, StreamEvent::Completed { .. });
+                            accumulator.apply_event(event)?;
+                            if is_completed {
+                                return Ok(accumulator.into_response());
                             }
-                            StreamEvent::Delta(delta) => {
-                                response.apply_delta(delta);
-                            }
-                            StreamEvent::ContentBlockStop { index } => {
-                                if let Some(block_type) = block_types.remove(&index) {
-                                    response.finalize_block(index, block_type);
-                                }
-                            }
-                            StreamEvent::BlockComplete { .. } => {
-                                // Ignored - we use finalize_block on ContentBlockStop instead
-                            }
-                            StreamEvent::Completed { metadata } => {
-                                response.flush_pending();
-                                response.metadata = metadata;
-                                return Ok(response);
-                            }
-                            StreamEvent::Started { .. } => {}
-                            StreamEvent::Error { error } => {
-                                tracing::debug!(correlation_id = %correlation_id, ?error, "stream collect error");
-                                return Err(error);
-                            }
-                        },
+                        }
                         Some(Err(e)) => return Err(e),
                         None => {
-                            response.flush_pending();
-                            return Ok(response); // Stream ended
+                            accumulator.flush_pending();
+                            return Ok(accumulator.into_response()); // Stream ended
                         }
                     }
                 }
@@ -966,5 +1077,206 @@ mod tests {
         assert!(text.contains("Before the call."));
         assert!(text.contains("After the call."));
         assert!(!text.contains("<tool_call>"));
+    }
+
+    /// `BlockComplete` events append authoritative blocks in ordinal
+    /// order and suppress provisional delta buffers at stream end.
+    #[test]
+    fn accumulator_block_complete_authoritative_order() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 0,
+            block: ContentBlock::Text {
+                text: "first".into(),
+            },
+        })
+        .unwrap();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 1,
+            block: ContentBlock::Text {
+                text: "second".into(),
+            },
+        })
+        .unwrap();
+        acc.apply_event(StreamEvent::Completed {
+            metadata: CompletionMetadata::default(),
+        })
+        .unwrap();
+
+        let response = acc.into_response();
+        assert_eq!(response.content.len(), 2);
+        assert_eq!(response.text(), "firstsecond");
+    }
+
+    /// A `BlockComplete` ordinal that is not the next expected value is
+    /// an accumulation error (duplicate or missing block).
+    #[test]
+    fn accumulator_block_complete_rejects_out_of_sequence_ordinal() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 1,
+            block: ContentBlock::Text {
+                text: "skip".into(),
+            },
+        })
+        .unwrap_err();
+    }
+
+    /// A `BlockComplete` ordinal that repeats one already applied is a
+    /// duplicate and must be rejected.
+    #[test]
+    fn accumulator_block_complete_rejects_duplicate_ordinal() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 0,
+            block: ContentBlock::Text { text: "a".into() },
+        })
+        .unwrap();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 0,
+            block: ContentBlock::Text { text: "b".into() },
+        })
+        .unwrap_err();
+
+        let response = acc.into_response();
+        assert_eq!(response.content.len(), 1);
+        assert_eq!(response.text(), "a");
+    }
+
+    /// A `BlockComplete` ordinal that skips a value is a missing block and
+    /// must be rejected.
+    #[test]
+    fn accumulator_block_complete_rejects_missing_ordinal() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 0,
+            block: ContentBlock::Text { text: "a".into() },
+        })
+        .unwrap();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 2,
+            block: ContentBlock::Text { text: "c".into() },
+        })
+        .unwrap_err();
+
+        let response = acc.into_response();
+        assert_eq!(response.content.len(), 1);
+    }
+
+    /// Once `BlockComplete` events have been applied, pending delta
+    /// buffers must not be flushed as additional content.
+    #[test]
+    fn accumulator_block_complete_suppresses_pending_delta_flush() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::Delta(StreamDelta::TextDelta {
+            text: "provisional".into(),
+        }))
+        .unwrap();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 0,
+            block: ContentBlock::Text {
+                text: "authoritative".into(),
+            },
+        })
+        .unwrap();
+
+        acc.flush_pending();
+
+        let response = acc.into_response();
+        assert_eq!(response.content.len(), 1);
+        assert_eq!(response.text(), "authoritative");
+    }
+
+    /// A live `ContentBlockStop` that finalizes provisional content
+    /// before the first `BlockComplete` must not make ordinal 0 fail;
+    /// the first `BlockComplete` discards all provisional content and
+    /// restarts the ordinal counter.
+    #[test]
+    fn accumulator_block_complete_discards_provisional_finalized_content() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::ContentBlockStart {
+            index: 0,
+            block_type: ContentBlockType::Text,
+        })
+        .unwrap();
+        acc.apply_event(StreamEvent::Delta(StreamDelta::TextDelta {
+            text: "provisional".into(),
+        }))
+        .unwrap();
+        acc.apply_event(StreamEvent::ContentBlockStop { index: 0 })
+            .unwrap();
+
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 0,
+            block: ContentBlock::Text {
+                text: "authoritative".into(),
+            },
+        })
+        .unwrap();
+
+        let response = acc.into_response();
+        assert_eq!(response.content.len(), 1);
+        assert_eq!(response.text(), "authoritative");
+    }
+
+    /// After the first `BlockComplete`, later live
+    /// ContentBlockStart/Delta/Stop events must not append duplicate
+    /// content to the authoritative blocks.
+    #[test]
+    fn accumulator_provisional_events_after_block_complete_are_ignored() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::BlockComplete {
+            index: 0,
+            block: ContentBlock::Text {
+                text: "authoritative".into(),
+            },
+        })
+        .unwrap();
+
+        acc.apply_event(StreamEvent::ContentBlockStart {
+            index: 0,
+            block_type: ContentBlockType::Text,
+        })
+        .unwrap();
+        acc.apply_event(StreamEvent::Delta(StreamDelta::TextDelta {
+            text: "late".into(),
+        }))
+        .unwrap();
+        acc.apply_event(StreamEvent::ContentBlockStop { index: 0 })
+            .unwrap();
+
+        let response = acc.into_response();
+        assert_eq!(response.content.len(), 1);
+        assert_eq!(response.text(), "authoritative");
+    }
+
+    /// Legacy providers (no `BlockComplete`) still finalize live deltas
+    /// on `Completed` and bare EOF.
+    #[test]
+    fn accumulator_legacy_provider_finalizes_live_deltas() {
+        let mut acc = ResponseAccumulator::new();
+        acc.apply_event(StreamEvent::ContentBlockStart {
+            index: 0,
+            block_type: ContentBlockType::Text,
+        })
+        .unwrap();
+        acc.apply_event(StreamEvent::Delta(StreamDelta::TextDelta {
+            text: "legacy ".into(),
+        }))
+        .unwrap();
+        acc.apply_event(StreamEvent::Delta(StreamDelta::TextDelta {
+            text: "provider".into(),
+        }))
+        .unwrap();
+        acc.apply_event(StreamEvent::ContentBlockStop { index: 0 })
+            .unwrap();
+        acc.apply_event(StreamEvent::Completed {
+            metadata: CompletionMetadata::default(),
+        })
+        .unwrap();
+
+        let response = acc.into_response();
+        assert_eq!(response.content.len(), 1);
+        assert_eq!(response.text(), "legacy provider");
     }
 }

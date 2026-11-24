@@ -4,6 +4,32 @@ Notable project changes are recorded here for humans and cold agents. This file
 is intentionally high level; implementation detail stays in ADRs, PRs, and
 commit history.
 
+## Unreleased
+
+- OpenAI Responses API surface: `OPENAI_API=responses` (or
+  `OpenAiConfig.api`) selects the Responses API as an alternative to
+  Chat Completions on the same provider. Runs statelessly (`store:
+  false`) with the session owning history; reasoning summaries stream
+  as `ThinkingDelta`, tool calls round-trip as function items, and
+  reasoning replays across turns via the new
+  `ContentBlock::EncryptedReasoning` block and
+  `StreamDelta::ReasoningItemDelta` (requested with
+  `include: ["reasoning.encrypted_content"]`). `ReasoningConfig` maps
+  natively to `reasoning: { effort, summary }`. Non-OpenAI providers
+  drop the encrypted-reasoning block rather than replay it.
+- OpenAI config migration: custom model IDs require explicit
+  `OPENAI_CUSTOM_TEMPERATURE`, `OPENAI_CUSTOM_REASONING`, and
+  `OPENAI_CUSTOM_STREAMING` declarations. Programmatic `OpenAiConfig`
+  literals need `api`, `chat_reasoning_output`, and `custom_capabilities`.
+  See [provider configuration](docs/PROVIDERS.md#openai) for the supported
+  values.
+- The OpenAI provider rejects requests whose model differs from its configured
+  model. Unknown `OPENAI_REASONING_EFFORT` values fail config loading rather
+  than selecting a default.
+- `o3` and `o3-mini` support streaming on Responses, but not on Chat Completions.
+- Responses rejects nonempty stop sequences because that surface does not
+  support them.
+
 ## [0.1.0] - 2026-10-22
 
 - Crate renamed `agent-driver-rs` → `agent-driver` for the crates.io

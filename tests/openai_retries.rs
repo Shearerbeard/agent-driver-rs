@@ -10,7 +10,9 @@
 mod tests {
     use std::time::Duration;
 
-    use agent_driver::config::{ApiKey, OpenAiConfig, OpenAiModel};
+    use agent_driver::config::{
+        ApiKey, OpenAiApi, OpenAiChatReasoningOutput, OpenAiConfig, OpenAiModel,
+    };
     use agent_driver::provider::{
         CompletionRequest, OpenAiProvider, ProviderContext, ProviderExt as _,
     };
@@ -20,16 +22,19 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tokio_util::task::TaskTracker;
 
-    async fn exchange(status: u16, disable_retries: bool) -> usize {
+    async fn exchange(status: u16, disable_retries: bool, api: OpenAiApi) -> usize {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config = OpenAiConfig {
             api_key: ApiKey::new("offline-test-key").unwrap(),
+            api,
             base_url: Some(format!("http://{}/v1", listener.local_addr().unwrap())),
             model: OpenAiModel::Gpt4o,
             max_tokens: MaxTokens::new(32).unwrap(),
             temperature: None,
             reasoning: None,
             structured_output: false,
+            chat_reasoning_output: OpenAiChatReasoningOutput::default(),
+            custom_capabilities: None,
         };
         let provider = OpenAiProvider::new(config).unwrap();
         let provider = if disable_retries {
@@ -104,16 +109,26 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_retries_send_one_request_on_rate_limit() {
-        assert_eq!(exchange(429, true).await, 1);
+        assert_eq!(exchange(429, true, OpenAiApi::ChatCompletions).await, 1);
     }
 
     #[tokio::test]
     async fn disabled_retries_send_one_request_on_server_failure() {
-        assert_eq!(exchange(503, true).await, 1);
+        assert_eq!(exchange(503, true, OpenAiApi::ChatCompletions).await, 1);
     }
 
     #[tokio::test]
     async fn default_provider_retains_sdk_retries() {
-        assert_eq!(exchange(503, false).await, 4);
+        assert_eq!(exchange(503, false, OpenAiApi::ChatCompletions).await, 4);
+    }
+
+    #[tokio::test]
+    async fn responses_disabled_retries_send_one_request_on_rate_limit() {
+        assert_eq!(exchange(429, true, OpenAiApi::Responses).await, 1);
+    }
+
+    #[tokio::test]
+    async fn responses_disabled_retries_send_one_request_on_server_failure() {
+        assert_eq!(exchange(503, true, OpenAiApi::Responses).await, 1);
     }
 }

@@ -4,8 +4,11 @@ Notable project changes are recorded here for humans and cold agents. This file
 is intentionally high level; implementation detail stays in ADRs, PRs, and
 commit history.
 
-## Unreleased
+## [0.2.0] - 2026-11-24
 
+- Added `OpenAiProvider::without_retries()` to disable SDK and HTTP-transport
+  retries when the caller owns request accounting. Constructor defaults are
+  unchanged.
 - OpenAI Responses API surface: `OPENAI_API=responses` (or
   `OpenAiConfig.api`) selects the Responses API as an alternative to
   Chat Completions on the same provider. Runs statelessly (`store:

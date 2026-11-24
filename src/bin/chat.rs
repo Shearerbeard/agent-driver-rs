@@ -96,14 +96,12 @@ impl AgentObserver for ChatObserver {
             AgentEvent::LoopComplete {
                 reason,
                 total_iterations,
-            } => {
-                if *total_iterations > 0 {
-                    eprintln!(
-                        "\x1b[2m[loop done: {reason}, {total_iterations} tool iteration(s)]\x1b[0m"
-                    );
-                }
+            } if *total_iterations > 0 => {
+                eprintln!(
+                    "\x1b[2m[loop done: {reason}, {total_iterations} tool iteration(s)]\x1b[0m"
+                );
             }
-            AgentEvent::IterationComplete { .. } => {}
+            AgentEvent::LoopComplete { .. } | AgentEvent::IterationComplete { .. } => {}
             // AgentEvent is #[non_exhaustive] — wildcard needed for forward compatibility
             #[allow(
                 clippy::wildcard_enum_match_arm,
